@@ -36,6 +36,8 @@ Assert-Equal $metrics.Hostname 'compute-01' '主机名'
 Assert-Equal $metrics.Cpu.Utilization 37.5 'CPU 利用率'
 Assert-Equal $metrics.Memory.UsedMiB 16384 '已用内存'
 Assert-Equal @($metrics.Gpus).Count 2 'GPU 数量'
+Assert-Equal $metrics.Gpus[0].MemoryUsedMiB 12000 'GPU 已用显存'
+Assert-Equal $metrics.Gpus[0].MemoryTotalMiB 24576 'GPU 总显存'
 Assert-Equal $metrics.Gpus[1].PowerDrawW $null '无效数值转换'
 
 $threw = $false
@@ -48,4 +50,3 @@ Assert-Equal $config.Servers[0].host '3090' '第一台 SSH 别名'
 Assert-Equal $config.Servers[1].host 'a6000' '第二台 SSH 别名'
 
 Write-Output "PASS: $passed assertions"
-

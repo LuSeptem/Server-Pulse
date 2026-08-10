@@ -83,7 +83,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
             <TextBlock x:Name="UpdatedText" Text="--:--:--" Foreground="#5F6963" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center"/>
           </Grid>
         </Border>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Padding="12">
           <StackPanel x:Name="ServerPanel"/>
         </ScrollViewer>
       </Grid>
@@ -99,7 +99,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $reader = [Xml.XmlNodeReader]::new($xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$names = 'DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','MinimizeButton','CloseButton','SummaryText','UpdatedText','ServerPanel'
+$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','MinimizeButton','CloseButton','SummaryText','UpdatedText','ServerPanel'
 $ui = @{}
 foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
@@ -117,9 +117,9 @@ if (Test-Path -LiteralPath $settingsPath) {
 
 $window.Width = [Math]::Max($window.MinWidth, [double]$settings.Width)
 $window.Height = [Math]::Max($window.MinHeight, [double]$settings.Height)
-$window.Opacity = [Math]::Max(0.4, [Math]::Min(1.0, [double]$settings.Opacity))
+$window.Opacity = 1.0
 $window.Topmost = [bool]$settings.Topmost
-$ui.OpacitySlider.Value = $window.Opacity * 100
+$ui.OpacitySlider.Value = [Math]::Max(40, [Math]::Min(100, [double]$settings.Opacity * 100))
 $ui.EdgeButton.Tag = if ([bool]$settings.AutoHide) { 'active' } else { $null }
 $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null }
 
@@ -135,12 +135,23 @@ $script:hiddenAtEdge = $false
 $script:internalMove = $false
 $script:shownLeft = $null
 $script:shownTop = $null
+$script:backgroundOpacity = $ui.OpacitySlider.Value / 100
+$script:edgeRevealArmed = $false
 $script:smokeFinished = $false
 $script:smokePassed = $false
 $script:smokeError = $null
 
 function New-Brush([string]$Color) {
     return [Windows.Media.BrushConverter]::new().ConvertFromString($Color)
+}
+
+function New-AlphaBrush([string]$Color, [double]$Opacity) {
+    $base = [Windows.Media.ColorConverter]::ConvertFromString($Color)
+    $alpha = [byte][Math]::Round([Math]::Max(0.0, [Math]::Min(1.0, $Opacity)) * 255)
+    $value = [Windows.Media.Color]::FromArgb($alpha, $base.R, $base.G, $base.B)
+    $brush = [Windows.Media.SolidColorBrush]::new()
+    $brush.Color = $value
+    return $brush
 }
 
 function New-Text([string]$Text, [double]$Size, [string]$Color) {
@@ -157,10 +168,10 @@ function New-MetricCell([string]$Label) {
     $panel.Margin = [Windows.Thickness]::new(0, 0, 10, 0)
     $labelBlock = New-Text $Label 8 '#6C7770'
     $labelBlock.Margin = [Windows.Thickness]::new(0, 0, 0, 3)
-    $valueBlock = New-Text '—' 21 '#EDF1EE'
+    $valueBlock = New-Text '—' 16 '#D8DEDA'
     $valueBlock.FontWeight = 'SemiBold'
     $bar = [Windows.Controls.ProgressBar]::new()
-    $bar.Height = 3
+    $bar.Height = 2
     $bar.Minimum = 0
     $bar.Maximum = 100
     $bar.Margin = [Windows.Thickness]::new(0, 7, 0, 0)
@@ -174,7 +185,7 @@ function New-MetricCell([string]$Label) {
 
 function Add-ServerCard($server) {
     $surface = [Windows.Controls.Border]::new()
-    $surface.Background = New-Brush '#171A18'
+    $surface.Background = New-AlphaBrush '#171A18' $script:backgroundOpacity
     $surface.BorderBrush = New-Brush '#2B302D'
     $surface.BorderThickness = [Windows.Thickness]::new(1)
     $surface.CornerRadius = [Windows.CornerRadius]::new(8)
@@ -201,14 +212,14 @@ function Add-ServerCard($server) {
     $meta.Margin = [Windows.Thickness]::new(0, 5, 0, 12)
     [Windows.Controls.Grid]::SetRow($meta, 1); [void]$layout.Children.Add($meta)
 
-    $metricsGrid = [Windows.Controls.Primitives.UniformGrid]::new(); $metricsGrid.Columns = 3
-    $cpu = New-MetricCell 'CPU'; $memory = New-MetricCell 'MEM'; $gpu = New-MetricCell 'GPU AVG'
-    [void]$metricsGrid.Children.Add($cpu.Panel); [void]$metricsGrid.Children.Add($memory.Panel); [void]$metricsGrid.Children.Add($gpu.Panel)
+    $metricsGrid = [Windows.Controls.Primitives.UniformGrid]::new(); $metricsGrid.Columns = 2
+    $cpu = New-MetricCell 'CPU'; $memory = New-MetricCell 'MEM'
+    [void]$metricsGrid.Children.Add($cpu.Panel); [void]$metricsGrid.Children.Add($memory.Panel)
     [Windows.Controls.Grid]::SetRow($metricsGrid, 2); [void]$layout.Children.Add($metricsGrid)
 
-    $details = [Windows.Controls.StackPanel]::new(); $details.Margin = [Windows.Thickness]::new(0, 11, 0, 0)
-    $gpuSummary = New-Text '等待 GPU 数据' 8 '#717B75'
-    $gpuWrap = [Windows.Controls.WrapPanel]::new(); $gpuWrap.Margin = [Windows.Thickness]::new(0, 7, 0, 0)
+    $details = [Windows.Controls.StackPanel]::new(); $details.Margin = [Windows.Thickness]::new(0, 13, 0, 0)
+    $gpuSummary = New-Text 'GPU · 等待数据' 11 '#DCE3DE'; $gpuSummary.FontWeight = 'SemiBold'
+    $gpuWrap = [Windows.Controls.WrapPanel]::new(); $gpuWrap.Margin = [Windows.Thickness]::new(0, 9, 0, 0)
     $error = New-Text '' 8 '#FF7B72'; $error.TextWrapping = 'Wrap'; $error.Margin = [Windows.Thickness]::new(0, 7, 0, 0); $error.Visibility = 'Collapsed'
     [void]$details.Children.Add($gpuSummary); [void]$details.Children.Add($gpuWrap); [void]$details.Children.Add($error)
     [Windows.Controls.Grid]::SetRow($details, 3); [void]$layout.Children.Add($details)
@@ -216,12 +227,26 @@ function Add-ServerCard($server) {
     $surface.Child = $layout
     [void]$ui.ServerPanel.Children.Add($surface)
     $script:cards[[string]$server.id] = @{
-        Surface=$surface; State=$state; Meta=$meta; Cpu=$cpu; Memory=$memory; Gpu=$gpu;
+        Surface=$surface; State=$state; Meta=$meta; Cpu=$cpu; Memory=$memory;
         GpuSummary=$gpuSummary; GpuWrap=$gpuWrap; Error=$error
     }
 }
 
 foreach ($server in $config.Servers) { Add-ServerCard $server }
+
+function Set-BackgroundOpacity([double]$Value) {
+    $script:backgroundOpacity = [Math]::Max(0.4, [Math]::Min(1.0, $Value))
+    $window.Opacity = 1.0
+    $ui.WindowSurface.Background = New-AlphaBrush '#0D100E' $script:backgroundOpacity
+    foreach ($card in $script:cards.Values) {
+        $card.Surface.Background = New-AlphaBrush '#171A18' $script:backgroundOpacity
+        foreach ($chip in $card.GpuWrap.Children) {
+            $chip.Background = New-AlphaBrush '#222724' $script:backgroundOpacity
+        }
+    }
+}
+
+Set-BackgroundOpacity $script:backgroundOpacity
 
 function Format-Percent($Value) {
     if ($null -eq $Value) { return '—' }
@@ -250,8 +275,8 @@ function Update-ServerCard($server) {
     $card.Error.Text = if ($online) { '' } else { [string]$server.Error }
     if (-not $online -or $null -eq $server.Metrics) {
         $card.Meta.Text = "SSH  $($server.Host)"
-        Set-Metric $card.Cpu $null; Set-Metric $card.Memory $null; Set-Metric $card.Gpu $null
-        $card.GpuSummary.Text = '暂无指标'
+        Set-Metric $card.Cpu $null; Set-Metric $card.Memory $null
+        $card.GpuSummary.Text = 'GPU · 暂无指标'
         $card.GpuWrap.Children.Clear()
         return
     }
@@ -261,16 +286,24 @@ function Update-ServerCard($server) {
     Set-Metric $card.Cpu $metrics.Cpu.Utilization
     Set-Metric $card.Memory $metrics.Memory.Percent
     $gpus = @($metrics.Gpus)
-    $gpuValues = @($gpus | Where-Object { $null -ne $_.Utilization } | ForEach-Object { [double]$_.Utilization })
-    $gpuAverage = if ($gpuValues.Count) { ($gpuValues | Measure-Object -Average).Average } else { $null }
-    Set-Metric $card.Gpu $gpuAverage
     $used = ($gpus | Where-Object { $null -ne $_.MemoryUsedMiB } | Measure-Object MemoryUsedMiB -Sum).Sum
     $total = ($gpus | Where-Object { $null -ne $_.MemoryTotalMiB } | Measure-Object MemoryTotalMiB -Sum).Sum
-    $card.GpuSummary.Text = "{0} GPU   ·   显存 {1} / {2}   ·   内存 {3} / {4}" -f $gpus.Count, (Format-Memory $used), (Format-Memory $total), (Format-Memory $metrics.Memory.UsedMiB), (Format-Memory $metrics.Memory.TotalMiB)
+    $card.GpuSummary.Text = "GPU  {0} 块   ·   总显存 {1} / {2}" -f $gpus.Count, (Format-Memory $used), (Format-Memory $total)
     $card.GpuWrap.Children.Clear()
     foreach ($gpu in $gpus) {
-        $chip = [Windows.Controls.Border]::new(); $chip.Background = New-Brush '#222724'; $chip.CornerRadius = [Windows.CornerRadius]::new(4); $chip.Margin = [Windows.Thickness]::new(0,0,5,5); $chip.Padding = [Windows.Thickness]::new(6,3,6,3)
-        $chip.Child = New-Text ("{0}  {1}  {2:0}°" -f [int]$gpu.Index, (Format-Percent $gpu.Utilization), [double]$gpu.TemperatureC) 8 '#AAB3AD'
+        $chip = [Windows.Controls.Border]::new(); $chip.Width = 164; $chip.Background = New-AlphaBrush '#222724' $script:backgroundOpacity; $chip.CornerRadius = [Windows.CornerRadius]::new(6); $chip.Margin = [Windows.Thickness]::new(0,0,7,7); $chip.Padding = [Windows.Thickness]::new(9,7,9,8)
+        $gpuPanel = [Windows.Controls.StackPanel]::new()
+        $gpuHeader = [Windows.Controls.Grid]::new(); [void]$gpuHeader.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new()); $gpuHeaderRight = [Windows.Controls.ColumnDefinition]::new(); $gpuHeaderRight.Width = 'Auto'; [void]$gpuHeader.ColumnDefinitions.Add($gpuHeaderRight)
+        $gpuLabel = New-Text ("GPU {0}" -f [int]$gpu.Index) 10 '#DCE3DE'; $gpuLabel.FontWeight = 'SemiBold'
+        $gpuTemp = New-Text ("{0:0}°C" -f [double]$gpu.TemperatureC) 9 '#8A958E'; $gpuTemp.HorizontalAlignment = 'Right'; [Windows.Controls.Grid]::SetColumn($gpuTemp,1)
+        [void]$gpuHeader.Children.Add($gpuLabel); [void]$gpuHeader.Children.Add($gpuTemp)
+        $loadValue = New-Text (Format-Percent $gpu.Utilization) 19 '#F2F5F3'; $loadValue.FontWeight = 'SemiBold'; $loadValue.Margin = [Windows.Thickness]::new(0,5,0,3)
+        $loadBar = [Windows.Controls.ProgressBar]::new(); $loadBar.Minimum=0; $loadBar.Maximum=100; $loadBar.Height=3; $loadBar.Value=if($null -eq $gpu.Utilization){0}else{[double]$gpu.Utilization}; $loadBar.Background=New-Brush '#343B36'; $loadBar.Foreground=New-Brush '#A7D948'
+        $vramPercent = if ($gpu.MemoryTotalMiB -and [double]$gpu.MemoryTotalMiB -gt 0) { [double]$gpu.MemoryUsedMiB * 100 / [double]$gpu.MemoryTotalMiB } else { 0 }
+        $vramText = New-Text ("显存  {0} / {1}" -f (Format-Memory $gpu.MemoryUsedMiB), (Format-Memory $gpu.MemoryTotalMiB)) 9 '#B5BDB8'; $vramText.Margin = [Windows.Thickness]::new(0,7,0,3)
+        $vramBar = [Windows.Controls.ProgressBar]::new(); $vramBar.Minimum=0; $vramBar.Maximum=100; $vramBar.Height=3; $vramBar.Value=$vramPercent; $vramBar.Background=New-Brush '#343B36'; $vramBar.Foreground=New-Brush '#79C8D8'
+        [void]$gpuPanel.Children.Add($gpuHeader); [void]$gpuPanel.Children.Add($loadValue); [void]$gpuPanel.Children.Add($loadBar); [void]$gpuPanel.Children.Add($vramText); [void]$gpuPanel.Children.Add($vramBar)
+        $chip.Child = $gpuPanel
         [void]$card.GpuWrap.Children.Add($chip)
     }
 }
@@ -280,7 +313,7 @@ function Save-Settings {
     $left = if ($script:hiddenAtEdge) { $script:shownLeft } else { $window.Left }
     $top = if ($script:hiddenAtEdge) { $script:shownTop } else { $window.Top }
     [PSCustomObject]@{
-        Opacity=[Math]::Round($window.Opacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
+        Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
         Width=$window.Width; Height=$window.Height; Left=$left; Top=$top
     } | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8
 }
@@ -305,6 +338,7 @@ function Hide-ToEdge {
     elseif ($script:dockSide -eq 'right') { $window.Left = $work.Left + $work.Width - 7 }
     elseif ($script:dockSide -eq 'top') { $window.Top = $work.Top - $window.ActualHeight + 7 }
     $script:hiddenAtEdge = $true
+    $script:edgeRevealArmed = $false
     $script:internalMove = $false
 }
 
@@ -313,20 +347,29 @@ function Show-FromEdge {
     $script:internalMove = $true
     $window.Left = $script:shownLeft; $window.Top = $script:shownTop
     $script:hiddenAtEdge = $false
+    $script:edgeRevealArmed = $false
     $script:internalMove = $false
 }
 
 $hideTimer = [Windows.Threading.DispatcherTimer]::new(); $hideTimer.Interval = [TimeSpan]::FromMilliseconds(700)
 $hideTimer.Add_Tick({ $hideTimer.Stop(); Hide-ToEdge })
+$dockDetectTimer = [Windows.Threading.DispatcherTimer]::new(); $dockDetectTimer.Interval = [TimeSpan]::FromMilliseconds(160)
+$dockDetectTimer.Add_Tick({ $dockDetectTimer.Stop(); Schedule-EdgeHide })
 function Schedule-EdgeHide {
     if ($script:internalMove -or $script:hiddenAtEdge) { return }
     $work = Get-WorkArea
     $script:dockSide = $null
-    if ([Math]::Abs($window.Left - $work.Left) -le 16) { $script:dockSide = 'left'; $window.Left = $work.Left }
-    elseif ([Math]::Abs(($window.Left + $window.ActualWidth) - ($work.Left + $work.Width)) -le 16) { $script:dockSide = 'right'; $window.Left = $work.Left + $work.Width - $window.ActualWidth }
-    elseif ([Math]::Abs($window.Top - $work.Top) -le 16) { $script:dockSide = 'top'; $window.Top = $work.Top }
+    $targetLeft = $window.Left; $targetTop = $window.Top
+    if ([Math]::Abs($window.Left - $work.Left) -le 28) { $script:dockSide = 'left'; $targetLeft = $work.Left }
+    elseif ([Math]::Abs(($window.Left + $window.ActualWidth) - ($work.Left + $work.Width)) -le 28) { $script:dockSide = 'right'; $targetLeft = $work.Left + $work.Width - $window.ActualWidth }
+    elseif ([Math]::Abs($window.Top - $work.Top) -le 28) { $script:dockSide = 'top'; $targetTop = $work.Top }
     $hideTimer.Stop()
-    if ($script:dockSide -and $ui.EdgeButton.Tag -eq 'active') { $hideTimer.Start() }
+    if ($script:dockSide -and $ui.EdgeButton.Tag -eq 'active') {
+        $script:internalMove = $true
+        $window.Left = $targetLeft; $window.Top = $targetTop
+        $script:internalMove = $false
+        $hideTimer.Start()
+    }
 }
 
 $cursorTimer = [Windows.Threading.DispatcherTimer]::new(); $cursorTimer.Interval = [TimeSpan]::FromMilliseconds(120)
@@ -337,6 +380,10 @@ $cursorTimer.Add_Tick({
     $touches = if ($script:dockSide -eq 'left') { $x -le $work.Left + 8 -and $y -ge $script:shownTop -and $y -le $script:shownTop + $window.ActualHeight }
         elseif ($script:dockSide -eq 'right') { $x -ge $work.Left + $work.Width - 8 -and $y -ge $script:shownTop -and $y -le $script:shownTop + $window.ActualHeight }
         else { $y -le $work.Top + 8 -and $x -ge $script:shownLeft -and $x -le $script:shownLeft + $window.ActualWidth }
+    if (-not $script:edgeRevealArmed) {
+        if (-not $touches) { $script:edgeRevealArmed = $true }
+        return
+    }
     if ($touches) { Show-FromEdge }
 })
 
@@ -346,8 +393,14 @@ function Save-NativeScreenshot {
     $dpi = [Windows.Media.VisualTreeHelper]::GetDpi($window)
     $width = [Math]::Max(1, [int]($window.ActualWidth * $dpi.DpiScaleX))
     $height = [Math]::Max(1, [int]($window.ActualHeight * $dpi.DpiScaleY))
-    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new($width, $height, $dpi.PixelsPerInchX, $dpi.PixelsPerInchY, [Windows.Media.PixelFormats]::Pbgra32)
-    $bitmap.Render($window)
+    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new($width, $height, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
+    $visual = [Windows.Media.DrawingVisual]::new()
+    $context = $visual.RenderOpen()
+    $context.PushTransform([Windows.Media.ScaleTransform]::new($dpi.DpiScaleX, $dpi.DpiScaleY))
+    $context.DrawRectangle([Windows.Media.VisualBrush]::new($window), $null, [Windows.Rect]::new(0, 0, $window.ActualWidth, $window.ActualHeight))
+    $context.Pop()
+    $context.Close()
+    $bitmap.Render($visual)
     $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new(); $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
     $stream = [IO.File]::Create((Join-Path $directory 'native-window.png'))
     try { $encoder.Save($stream) } finally { $stream.Dispose() }
@@ -359,13 +412,18 @@ function Complete-SmokeTest {
     try {
         $window.UpdateLayout()
         Save-NativeScreenshot
-        $originalOpacity = $window.Opacity; $window.Opacity = 0.8
-        if ([Math]::Abs($window.Opacity - 0.8) -gt 0.01) { throw '透明度验证失败' }
+        $originalOpacity = $script:backgroundOpacity; Set-BackgroundOpacity 0.55
+        if ($window.Opacity -ne 1.0) { throw '文字层透明度不应改变' }
+        if ($ui.WindowSurface.Background.Color.A -ge 255) { throw "背景透明度验证失败（Alpha=$($ui.WindowSurface.Background.Color.A)，Value=$script:backgroundOpacity）" }
         $originalWidth = $window.Width; $window.Width = $originalWidth + 20
         if ($window.Width -le $originalWidth) { throw '尺寸调节验证失败' }
-        $window.Width = $originalWidth; $window.Opacity = $originalOpacity
-        $work = Get-WorkArea; $window.Left = $work.Left; $script:dockSide = 'left'; Hide-ToEdge
+        $window.Width = $originalWidth; Set-BackgroundOpacity $originalOpacity
+        $work = Get-WorkArea; $window.Left = $work.Left + 20; Schedule-EdgeHide
+        if ($script:dockSide -ne 'left' -or -not $hideTimer.IsEnabled) { throw '贴边吸附检测失败' }
+        $hideTimer.Stop(); Hide-ToEdge
         if (-not $script:hiddenAtEdge) { throw '贴边隐藏验证失败' }
+        if ($script:edgeRevealArmed) { throw '贴边后不应立即允许唤回' }
+        $script:edgeRevealArmed = $true
         Show-FromEdge
         $script:smokePassed = $true
         $window.Close()
@@ -421,9 +479,13 @@ $ui.DragArea.Add_MouseLeftButtonDown({
     param($sender, $event)
     if ($event.ChangedButton -eq 'Left') { $window.DragMove(); Schedule-EdgeHide }
 })
-$window.Add_LocationChanged({ if (-not $script:internalMove) { $hideTimer.Stop() } })
+$window.Add_LocationChanged({
+    if (-not $script:internalMove -and -not $script:hiddenAtEdge) {
+        $hideTimer.Stop(); $dockDetectTimer.Stop(); $dockDetectTimer.Start()
+    }
+})
 $window.Add_MouseLeave({ if ($script:dockSide -and -not $script:hiddenAtEdge -and $ui.EdgeButton.Tag -eq 'active') { $hideTimer.Start() } })
-$ui.OpacitySlider.Add_ValueChanged({ $window.Opacity = [Math]::Max(0.4, $ui.OpacitySlider.Value / 100) })
+$ui.OpacitySlider.Add_ValueChanged({ Set-BackgroundOpacity ($ui.OpacitySlider.Value / 100) })
 $ui.EdgeButton.Add_Click({
     if ($ui.EdgeButton.Tag -eq 'active') { $ui.EdgeButton.Tag = $null; $hideTimer.Stop(); Show-FromEdge }
     else { $ui.EdgeButton.Tag = 'active'; Schedule-EdgeHide }
@@ -439,7 +501,7 @@ $window.Add_Loaded({
     $cursorTimer.Start(); $pollTimer.Start(); Start-Collection
 })
 $window.Add_Closing({
-    $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop()
+    $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
     if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { $script:collectionProcess.Kill() }
     if (-not $SmokeTest) { Save-Settings }
 })
