@@ -39,6 +39,13 @@ pnpm install
 
 项目在 `pnpm-workspace.yaml` 中只允许 Electron 执行依赖安装脚本，用于下载与当前平台匹配的桌面运行时；不会放开其他依赖的构建脚本。
 
+如果当前网络无法访问 Electron 的默认 GitHub 发布源，可按 Electron 官方安装文档使用中国 CDN 镜像后重试：
+
+```powershell
+$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
+pnpm install
+```
+
 启动桌面浮窗：
 
 ```powershell
