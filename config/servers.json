@@ -1,0 +1,19 @@
+{
+  "port": 4173,
+  "bind": "127.0.0.1",
+  "pollIntervalMs": 5000,
+  "sshTimeoutMs": 8000,
+  "servers": [
+    {
+      "id": "3090",
+      "label": "RTX 3090",
+      "host": "3090"
+    },
+    {
+      "id": "a6000",
+      "label": "RTX A6000",
+      "host": "a6000"
+    }
+  ]
+}
+

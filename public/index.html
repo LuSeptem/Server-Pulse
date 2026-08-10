@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0b0d0c">
+    <title>Server Pulse · 计算节点监控</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="window-bar" aria-label="浮窗控制栏">
+      <div class="window-drag"><span class="drag-grip"></span><span>SERVER PULSE / FLOAT</span></div>
+      <div class="window-actions">
+        <label class="opacity-control" title="调整浮窗透明度">
+          <span>透明度</span>
+          <input id="window-opacity" type="range" min="40" max="100" step="5" value="95">
+          <output id="window-opacity-value">95%</output>
+        </label>
+        <button id="window-edge" type="button" title="启用或关闭贴边自动隐藏">贴边</button>
+        <button id="window-pin" type="button" title="启用或关闭始终置顶">置顶</button>
+        <button id="window-minimize" type="button" aria-label="最小化">—</button>
+        <button id="window-close" type="button" aria-label="关闭">×</button>
+      </div>
+    </div>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Server Pulse 首页">
+        <span class="brand-mark"><i></i><i></i><i></i></span>
+        <span>SERVER<br>PULSE</span>
+      </a>
+      <div class="headline">
+        <p>COMPUTE NODE OBSERVATORY</p>
+        <h1>算力节点<span>实时遥测</span></h1>
+      </div>
+      <div class="connection" id="connection-status" data-state="connecting">
+        <span class="connection-dot"></span>
+        <div><strong>正在连接</strong><small>EVENT STREAM</small></div>
+      </div>
+    </header>
+
+    <main>
+      <section class="summary" aria-label="集群摘要">
+        <div class="summary-intro">
+          <span class="eyebrow">FLEET / OVERVIEW</span>
+          <p>通过 SSH 读取计算节点状态。数据只在本机处理，不写入数据库。</p>
+        </div>
+        <dl class="summary-stat"><dt>在线节点</dt><dd id="online-count">0 / 2</dd></dl>
+        <dl class="summary-stat"><dt>GPU 数量</dt><dd id="gpu-count">—</dd></dl>
+        <dl class="summary-stat"><dt>更新时间</dt><dd id="last-update">等待数据</dd></dl>
+      </section>
+
+      <section class="server-grid" id="server-grid" aria-live="polite"></section>
+
+      <footer>
+        <span>SERVER PULSE / LOCAL CONTROL PLANE</span>
+        <span>刷新周期 <b id="poll-rate">—</b></span>
+      </footer>
+    </main>
+
+    <template id="server-template">
+      <article class="server-card is-connecting">
+        <div class="card-rail"><span></span></div>
+        <header class="card-header">
+          <div>
+            <span class="node-id"></span>
+            <h2 class="node-label"></h2>
+          </div>
+          <div class="node-state"><i></i><span></span></div>
+        </header>
+        <div class="node-meta">
+          <span class="hostname">等待 SSH 响应</span>
+          <span class="latency">— ms</span>
+        </div>
+        <div class="resource-grid">
+          <section class="gauge cpu-gauge">
+            <div class="gauge-label"><span>CPU</span><strong>—</strong></div>
+            <div class="meter"><i></i></div>
+            <small>PROCESSOR LOAD</small>
+          </section>
+          <section class="gauge memory-gauge">
+            <div class="gauge-label"><span>MEM</span><strong>—</strong></div>
+            <div class="meter"><i></i></div>
+            <small class="memory-detail">等待数据</small>
+          </section>
+        </div>
+        <div class="history-panel">
+          <div class="history-title"><span>60 秒趋势</span><span>CPU / MEM / GPU</span></div>
+          <svg class="sparkline" viewBox="0 0 600 90" preserveAspectRatio="none" role="img" aria-label="资源占用趋势"></svg>
+        </div>
+        <div class="gpu-list"></div>
+        <div class="offline-message" hidden></div>
+        <div class="card-foot">
+          <span class="load-average">LOAD — / — / —</span>
+          <span class="uptime">UP —</span>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

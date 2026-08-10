@@ -1,0 +1,20 @@
+{
+  "name": "server-monitoring",
+  "version": "1.0.0",
+  "private": true,
+  "main": "electron/main.js",
+  "description": "通过 SSH 实时监控多台服务器的 GPU、CPU 和内存占用",
+  "scripts": {
+    "start": "electron .",
+    "start:web": "node server.js",
+    "test": "node --test test/collector.test.js",
+    "test:desktop": "electron . --smoke-test"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^43.3.0"
+  }
+}
