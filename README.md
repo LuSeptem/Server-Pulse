@@ -13,7 +13,7 @@ Server Pulse 是一个原生 Windows WPF 监控浮窗，直接通过本机 `ssh.
 - 可贴到屏幕左侧、右侧或顶部自动隐藏，仅保留 7 像素；收起后先把鼠标移开边缘，再次触碰对应边缘即可恢复。
 - 自动保存透明度、尺寸、位置、置顶和贴边开关。
 - 每 5 秒并行采集两台服务器，采集过程在隐藏的独立 PowerShell 进程中运行，不阻塞窗口。
-- CPU 与系统内存以紧凑辅助指标显示。
+- CPU 与系统内存以紧凑辅助指标显示，并紧贴服务器名称与主机信息，减少纵向留白。
 - GPU 是主要信息区：逐卡大号显示利用率，并显示显存已用/总量、独立显存进度条和温度；服务器标题处汇总总显存。
 - 单台服务器连接失败不会影响另一台，错误会显示在对应节点卡片中。
 
@@ -52,7 +52,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 
 ## 窗口操作
 
-- **移动**：按住顶栏空白处拖动。
+- **移动**：按住顶栏空白处拖动。窗口使用应用内坐标拖拽，不调用 Windows 系统窗口移动，因此拖到屏幕边缘时不会触发系统的半屏排列/Snap Assist。
 - **调整尺寸**：拖动窗口右下角的点阵手柄。
 - **查看更多 GPU**：窗口较小时，在节点区域使用鼠标滚轮纵向滚动；滚动条保持隐藏以减少视觉干扰。
 - **背景透明度**：拖动顶栏滑块，范围为 40%–100%；文字和指标不会随之变淡。
@@ -67,6 +67,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 ```
 
 删除该文件即可恢复默认尺寸、位置和背景透明度。
+
+新版使用应用内拖拽后，设置格式升级为版本 2；首次运行会自动丢弃旧版 Windows 半屏排列遗留的异常尺寸与位置，恢复为 420 × 560。此后的手动缩放和位置会继续正常保存。
 
 ## 配置
 
@@ -119,7 +121,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ServerPulse.Test
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1 -SmokeTest
 ```
 
-冒烟模式会实际运行一次 SSH 采集，验证 WPF 窗口、尺寸调整、仅背景透明、逐卡显存数据，以及左侧贴边隐藏的防反弹状态，然后按当前系统 DPI 合成原生窗口截图，写入已忽略的 `tests/artifacts/native-window.png` 并自动退出。
+冒烟模式会实际运行一次 SSH 采集，验证 WPF 窗口、应用内坐标拖拽、尺寸调整、仅背景透明、逐卡显存数据，以及左侧贴边隐藏的防反弹状态，然后按当前系统 DPI 合成原生窗口截图，写入已忽略的 `tests/artifacts/native-window.png` 并自动退出。
 
 单独检查采集器：
 

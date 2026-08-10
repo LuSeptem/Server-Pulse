@@ -105,12 +105,16 @@ foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
 $settingsDirectory = Join-Path $env:LOCALAPPDATA 'ServerPulse'
 $settingsPath = Join-Path $settingsDirectory 'settings.json'
-$settings = [PSCustomObject]@{ Opacity = 0.94; AutoHide = $true; Topmost = $true; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
+$settings = [PSCustomObject]@{ Version = 2; Opacity = 0.94; AutoHide = $true; Topmost = $true; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
 if (Test-Path -LiteralPath $settingsPath) {
     try {
         $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $currentLayout = $saved.PSObject.Properties.Name -contains 'Version' -and [int]$saved.Version -ge 2
         foreach ($property in $settings.PSObject.Properties.Name) {
             if ($saved.PSObject.Properties.Name -contains $property) { $settings.$property = $saved.$property }
+        }
+        if (-not $currentLayout) {
+            $settings.Width = 420.0; $settings.Height = 560.0; $settings.Left = $null; $settings.Top = $null
         }
     } catch { }
 }
@@ -137,6 +141,12 @@ $script:shownLeft = $null
 $script:shownTop = $null
 $script:backgroundOpacity = $ui.OpacitySlider.Value / 100
 $script:edgeRevealArmed = $false
+$script:isDragging = $false
+$script:dragStartCursor = $null
+$script:dragStartLeft = 0.0
+$script:dragStartTop = 0.0
+$script:dragScaleX = 1.0
+$script:dragScaleY = 1.0
 $script:smokeFinished = $false
 $script:smokePassed = $false
 $script:smokeError = $null
@@ -165,16 +175,16 @@ function New-Text([string]$Text, [double]$Size, [string]$Color) {
 
 function New-MetricCell([string]$Label) {
     $panel = [Windows.Controls.StackPanel]::new()
-    $panel.Margin = [Windows.Thickness]::new(0, 0, 10, 0)
+    $panel.Margin = [Windows.Thickness]::new(0, 0, 9, 0)
     $labelBlock = New-Text $Label 8 '#6C7770'
-    $labelBlock.Margin = [Windows.Thickness]::new(0, 0, 0, 3)
-    $valueBlock = New-Text '—' 16 '#D8DEDA'
+    $labelBlock.Margin = [Windows.Thickness]::new(0, 0, 0, 1)
+    $valueBlock = New-Text '—' 14 '#D8DEDA'
     $valueBlock.FontWeight = 'SemiBold'
     $bar = [Windows.Controls.ProgressBar]::new()
     $bar.Height = 2
     $bar.Minimum = 0
     $bar.Maximum = 100
-    $bar.Margin = [Windows.Thickness]::new(0, 7, 0, 0)
+    $bar.Margin = [Windows.Thickness]::new(0, 4, 0, 0)
     $bar.Background = New-Brush '#2B312D'
     $bar.Foreground = New-Brush '#A7D948'
     [void]$panel.Children.Add($labelBlock)
@@ -189,7 +199,7 @@ function Add-ServerCard($server) {
     $surface.BorderBrush = New-Brush '#2B302D'
     $surface.BorderThickness = [Windows.Thickness]::new(1)
     $surface.CornerRadius = [Windows.CornerRadius]::new(8)
-    $surface.Padding = [Windows.Thickness]::new(14)
+    $surface.Padding = [Windows.Thickness]::new(12)
     $surface.Margin = [Windows.Thickness]::new(0, 0, 0, 10)
 
     $layout = [Windows.Controls.Grid]::new()
@@ -209,7 +219,7 @@ function Add-ServerCard($server) {
     [Windows.Controls.Grid]::SetRow($header, 0); [void]$layout.Children.Add($header)
 
     $meta = New-Text ("SSH  {0}" -f $server.host) 8 '#626C66'
-    $meta.Margin = [Windows.Thickness]::new(0, 5, 0, 12)
+    $meta.Margin = [Windows.Thickness]::new(0, 3, 0, 6)
     [Windows.Controls.Grid]::SetRow($meta, 1); [void]$layout.Children.Add($meta)
 
     $metricsGrid = [Windows.Controls.Primitives.UniformGrid]::new(); $metricsGrid.Columns = 2
@@ -217,9 +227,9 @@ function Add-ServerCard($server) {
     [void]$metricsGrid.Children.Add($cpu.Panel); [void]$metricsGrid.Children.Add($memory.Panel)
     [Windows.Controls.Grid]::SetRow($metricsGrid, 2); [void]$layout.Children.Add($metricsGrid)
 
-    $details = [Windows.Controls.StackPanel]::new(); $details.Margin = [Windows.Thickness]::new(0, 13, 0, 0)
+    $details = [Windows.Controls.StackPanel]::new(); $details.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
     $gpuSummary = New-Text 'GPU · 等待数据' 11 '#DCE3DE'; $gpuSummary.FontWeight = 'SemiBold'
-    $gpuWrap = [Windows.Controls.WrapPanel]::new(); $gpuWrap.Margin = [Windows.Thickness]::new(0, 9, 0, 0)
+    $gpuWrap = [Windows.Controls.WrapPanel]::new(); $gpuWrap.Margin = [Windows.Thickness]::new(0, 7, 0, 0)
     $error = New-Text '' 8 '#FF7B72'; $error.TextWrapping = 'Wrap'; $error.Margin = [Windows.Thickness]::new(0, 7, 0, 0); $error.Visibility = 'Collapsed'
     [void]$details.Children.Add($gpuSummary); [void]$details.Children.Add($gpuWrap); [void]$details.Children.Add($error)
     [Windows.Controls.Grid]::SetRow($details, 3); [void]$layout.Children.Add($details)
@@ -313,7 +323,7 @@ function Save-Settings {
     $left = if ($script:hiddenAtEdge) { $script:shownLeft } else { $window.Left }
     $top = if ($script:hiddenAtEdge) { $script:shownTop } else { $window.Top }
     [PSCustomObject]@{
-        Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
+        Version=2; Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
         Width=$window.Width; Height=$window.Height; Left=$left; Top=$top
     } | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8
 }
@@ -327,6 +337,23 @@ function Get-WorkArea {
         Width=$screen.WorkingArea.Width/$dpi.DpiScaleX; Height=$screen.WorkingArea.Height/$dpi.DpiScaleY
         ScaleX=$dpi.DpiScaleX; ScaleY=$dpi.DpiScaleY
     }
+}
+
+function Update-ManualDragPosition($Cursor) {
+    if (-not $script:isDragging) { return }
+    $deltaX = ($Cursor.X - $script:dragStartCursor.X) / $script:dragScaleX
+    $deltaY = ($Cursor.Y - $script:dragStartCursor.Y) / $script:dragScaleY
+    $script:internalMove = $true
+    $window.Left = $script:dragStartLeft + $deltaX
+    $window.Top = $script:dragStartTop + $deltaY
+    $script:internalMove = $false
+}
+
+function Stop-ManualDrag {
+    if (-not $script:isDragging) { return }
+    $script:isDragging = $false
+    [void][Windows.Input.Mouse]::Capture($null)
+    Schedule-EdgeHide
 }
 
 function Hide-ToEdge {
@@ -418,6 +445,12 @@ function Complete-SmokeTest {
         $originalWidth = $window.Width; $window.Width = $originalWidth + 20
         if ($window.Width -le $originalWidth) { throw '尺寸调节验证失败' }
         $window.Width = $originalWidth; Set-BackgroundOpacity $originalOpacity
+        $dragLeft = $window.Left; $dragTop = $window.Top
+        $script:isDragging = $true; $script:dragStartCursor = [PSCustomObject]@{X=100;Y=100}; $script:dragStartLeft=$dragLeft; $script:dragStartTop=$dragTop; $script:dragScaleX=1.0; $script:dragScaleY=1.0
+        Update-ManualDragPosition ([PSCustomObject]@{X=132;Y=118})
+        $script:isDragging = $false
+        if ([Math]::Abs($window.Left - ($dragLeft + 32)) -gt 1.0 -or [Math]::Abs($window.Top - ($dragTop + 18)) -gt 1.0) { throw "自定义拖拽验证失败（起点=$dragLeft,$dragTop；实际=$($window.Left),$($window.Top)）" }
+        $script:internalMove = $true; $window.Left=$dragLeft; $window.Top=$dragTop; $script:internalMove = $false
         $work = Get-WorkArea; $window.Left = $work.Left + 20; Schedule-EdgeHide
         if ($script:dockSide -ne 'left' -or -not $hideTimer.IsEnabled) { throw '贴边吸附检测失败' }
         $hideTimer.Stop(); Hide-ToEdge
@@ -477,7 +510,30 @@ $pollTimer.Add_Tick({
 
 $ui.DragArea.Add_MouseLeftButtonDown({
     param($sender, $event)
-    if ($event.ChangedButton -eq 'Left') { $window.DragMove(); Schedule-EdgeHide }
+    if ($event.ChangedButton -eq 'Left') {
+        $dpi = [Windows.Media.VisualTreeHelper]::GetDpi($window)
+        $script:isDragging = $true
+        $script:dragStartCursor = [Windows.Forms.Cursor]::Position
+        $script:dragStartLeft = $window.Left
+        $script:dragStartTop = $window.Top
+        $script:dragScaleX = $dpi.DpiScaleX
+        $script:dragScaleY = $dpi.DpiScaleY
+        $hideTimer.Stop(); $dockDetectTimer.Stop()
+        [void][Windows.Input.Mouse]::Capture($ui.DragArea)
+        $event.Handled = $true
+    }
+})
+$ui.DragArea.Add_MouseMove({
+    if ($script:isDragging -and [Windows.Input.Mouse]::LeftButton -eq [Windows.Input.MouseButtonState]::Pressed) {
+        Update-ManualDragPosition ([Windows.Forms.Cursor]::Position)
+    }
+})
+$ui.DragArea.Add_MouseLeftButtonUp({ Stop-ManualDrag })
+$ui.DragArea.Add_LostMouseCapture({
+    if ($script:isDragging -and [Windows.Input.Mouse]::LeftButton -ne [Windows.Input.MouseButtonState]::Pressed) {
+        $script:isDragging = $false
+        Schedule-EdgeHide
+    }
 })
 $window.Add_LocationChanged({
     if (-not $script:internalMove -and -not $script:hiddenAtEdge) {

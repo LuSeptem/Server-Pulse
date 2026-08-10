@@ -49,4 +49,8 @@ Assert-Equal @($config.Servers).Count 2 '服务器配置数量'
 Assert-Equal $config.Servers[0].host '3090' '第一台 SSH 别名'
 Assert-Equal $config.Servers[1].host 'a6000' '第二台 SSH 别名'
 
+$mainScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw -Encoding UTF8
+Assert-Equal ([bool]($mainScript -match '\.DragMove\(')) $false '禁止调用会触发 Windows Snap Assist 的 DragMove'
+Assert-Equal ([bool]($mainScript -match 'Update-ManualDragPosition')) $true '使用应用内坐标拖拽'
+
 Write-Output "PASS: $passed assertions"
