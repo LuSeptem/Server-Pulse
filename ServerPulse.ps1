@@ -387,9 +387,9 @@ function Schedule-EdgeHide {
     $work = Get-WorkArea
     $script:dockSide = $null
     $targetLeft = $window.Left; $targetTop = $window.Top
-    if ([Math]::Abs($window.Left - $work.Left) -le 28) { $script:dockSide = 'left'; $targetLeft = $work.Left }
-    elseif ([Math]::Abs(($window.Left + $window.ActualWidth) - ($work.Left + $work.Width)) -le 28) { $script:dockSide = 'right'; $targetLeft = $work.Left + $work.Width - $window.ActualWidth }
-    elseif ([Math]::Abs($window.Top - $work.Top) -le 28) { $script:dockSide = 'top'; $targetTop = $work.Top }
+    if ($window.Left -le $work.Left + 28) { $script:dockSide = 'left'; $targetLeft = $work.Left }
+    elseif ($window.Left + $window.ActualWidth -ge $work.Left + $work.Width - 28) { $script:dockSide = 'right'; $targetLeft = $work.Left + $work.Width - $window.ActualWidth }
+    elseif ($window.Top -le $work.Top + 28) { $script:dockSide = 'top'; $targetTop = $work.Top }
     $hideTimer.Stop()
     if ($script:dockSide -and $ui.EdgeButton.Tag -eq 'active') {
         $script:internalMove = $true
@@ -451,13 +451,28 @@ function Complete-SmokeTest {
         $script:isDragging = $false
         if ([Math]::Abs($window.Left - ($dragLeft + 32)) -gt 1.0 -or [Math]::Abs($window.Top - ($dragTop + 18)) -gt 1.0) { throw "自定义拖拽验证失败（起点=$dragLeft,$dragTop；实际=$($window.Left),$($window.Top)）" }
         $script:internalMove = $true; $window.Left=$dragLeft; $window.Top=$dragTop; $script:internalMove = $false
-        $work = Get-WorkArea; $window.Left = $work.Left + 20; Schedule-EdgeHide
-        if ($script:dockSide -ne 'left' -or -not $hideTimer.IsEnabled) { throw '贴边吸附检测失败' }
+        $work = Get-WorkArea
+        $window.Left = $work.Left + 200; $window.Top = $work.Top + 80
+        $script:isDragging = $true
+        $script:dragStartCursor = [PSCustomObject]@{X=($window.Left + 110) * $work.ScaleX;Y=($window.Top + 16) * $work.ScaleY}
+        $script:dragStartLeft = $window.Left; $script:dragStartTop = $window.Top; $script:dragScaleX=$work.ScaleX; $script:dragScaleY=$work.ScaleY
+        Update-ManualDragPosition ([PSCustomObject]@{X=$work.Left * $work.ScaleX;Y=$script:dragStartCursor.Y})
+        $script:isDragging = $false; Schedule-EdgeHide
+        if ($script:dockSide -ne 'left' -or -not $hideTimer.IsEnabled) { throw "左侧越界贴边检测失败（Left=$($window.Left)）" }
         $hideTimer.Stop(); Hide-ToEdge
-        if (-not $script:hiddenAtEdge) { throw '贴边隐藏验证失败' }
+        if (-not $script:hiddenAtEdge) { throw '左侧贴边隐藏验证失败' }
         if ($script:edgeRevealArmed) { throw '贴边后不应立即允许唤回' }
-        $script:edgeRevealArmed = $true
-        Show-FromEdge
+        $script:edgeRevealArmed = $true; Show-FromEdge
+        $window.Left = $work.Left + $work.Width - $window.ActualWidth - 200
+        $script:isDragging = $true
+        $script:dragStartCursor = [PSCustomObject]@{X=($window.Left + 110) * $work.ScaleX;Y=($window.Top + 16) * $work.ScaleY}
+        $script:dragStartLeft = $window.Left; $script:dragStartTop = $window.Top; $script:dragScaleX=$work.ScaleX; $script:dragScaleY=$work.ScaleY
+        Update-ManualDragPosition ([PSCustomObject]@{X=($work.Left + $work.Width) * $work.ScaleX;Y=$script:dragStartCursor.Y})
+        $script:isDragging = $false; Schedule-EdgeHide
+        if ($script:dockSide -ne 'right' -or -not $hideTimer.IsEnabled) { throw "右侧越界贴边检测失败（Right=$($window.Left + $window.ActualWidth)）" }
+        $hideTimer.Stop(); Hide-ToEdge
+        if (-not $script:hiddenAtEdge) { throw '右侧贴边隐藏验证失败' }
+        $script:edgeRevealArmed = $true; Show-FromEdge
         $script:smokePassed = $true
         $window.Close()
     } catch {

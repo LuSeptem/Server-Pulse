@@ -56,7 +56,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 - **调整尺寸**：拖动窗口右下角的点阵手柄。
 - **查看更多 GPU**：窗口较小时，在节点区域使用鼠标滚轮纵向滚动；滚动条保持隐藏以减少视觉干扰。
 - **背景透明度**：拖动顶栏滑块，范围为 40%–100%；文字和指标不会随之变淡。
-- **贴边隐藏**：绿色“边”表示已启用。把窗口拖到屏幕左、右或上边缘，窗口吸附后约 0.7 秒自动收起。为防止松开鼠标时立刻反弹，收起后需要先把鼠标移离边缘，再次触碰对应边缘才会恢复。
+- **贴边隐藏**：绿色“边”表示已启用。把窗口拖到屏幕左、右或上边缘，窗口边框到达或随鼠标越过屏幕边界时都会吸附，约 0.7 秒后自动收起。为防止松开鼠标时立刻反弹，收起后需要先把鼠标移离边缘，再次触碰对应边缘才会恢复。
 - **置顶**：绿色“置”表示窗口始终置顶。
 - **最小化/关闭**：使用顶栏右侧的 `—` 与 `×`。
 
@@ -121,7 +121,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ServerPulse.Test
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1 -SmokeTest
 ```
 
-冒烟模式会实际运行一次 SSH 采集，验证 WPF 窗口、应用内坐标拖拽、尺寸调整、仅背景透明、逐卡显存数据，以及左侧贴边隐藏的防反弹状态，然后按当前系统 DPI 合成原生窗口截图，写入已忽略的 `tests/artifacts/native-window.png` 并自动退出。
+冒烟模式会实际运行一次 SSH 采集，验证 WPF 窗口、应用内坐标拖拽、尺寸调整、仅背景透明、逐卡显存数据，以及左右两侧越界贴边隐藏和防反弹状态，然后按当前系统 DPI 合成原生窗口截图，写入已忽略的 `tests/artifacts/native-window.png` 并自动退出。
 
 单独检查采集器：
 
