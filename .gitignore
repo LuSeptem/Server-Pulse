@@ -1,7 +1,5 @@
-node_modules/
-.pnpm-store/
 .DS_Store
 Thumbs.db
 *.log
 .env
-test/artifacts/
+tests/artifacts/
