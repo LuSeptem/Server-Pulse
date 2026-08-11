@@ -184,6 +184,32 @@ function ConvertFrom-HistoryMinuteText {
     return $null
 }
 
+function ConvertFrom-HistoryDateParts {
+    param($Year, $Month, $Day, $Hour, $Minute)
+
+    $invalid = [Collections.Generic.List[string]]::new()
+    $values = @{}
+    foreach ($field in @(
+        [PSCustomObject]@{Name='Year';Value=$Year;Minimum=2000;Maximum=9999},
+        [PSCustomObject]@{Name='Month';Value=$Month;Minimum=1;Maximum=12},
+        [PSCustomObject]@{Name='Day';Value=$Day;Minimum=1;Maximum=31},
+        [PSCustomObject]@{Name='Hour';Value=$Hour;Minimum=0;Maximum=23},
+        [PSCustomObject]@{Name='Minute';Value=$Minute;Minimum=0;Maximum=59}
+    )) {
+        $number = 0
+        if (-not [int]::TryParse(([string]$field.Value).Trim(), [ref]$number) -or $number -lt $field.Minimum -or $number -gt $field.Maximum) {
+            $invalid.Add($field.Name)
+        } else { $values[$field.Name] = $number }
+    }
+    if (-not $invalid.Contains('Year') -and -not $invalid.Contains('Month') -and -not $invalid.Contains('Day')) {
+        if ($values.Day -gt [DateTime]::DaysInMonth($values.Year,$values.Month)) { $invalid.Add('Day') }
+    }
+    $value = if ($invalid.Count -eq 0) {
+        [datetime]::new($values.Year,$values.Month,$values.Day,$values.Hour,$values.Minute,0)
+    } else { $null }
+    return [PSCustomObject]@{ Value=$value; InvalidFields=@($invalid) }
+}
+
 function Get-ServerPulseHistoryRecords {
     param(
         [Parameter(Mandatory)]$Recorder,
@@ -219,6 +245,33 @@ function New-HistoryText {
     $block.FontSize = $Size
     $block.Foreground = New-HistoryBrush $Color
     return $block
+}
+
+function Set-HistoryDateFields {
+    param([Parameter(Mandatory)]$Ui, [Parameter(Mandatory)][string]$Prefix, [Parameter(Mandatory)][datetime]$Value)
+
+    $Ui["${Prefix}YearBox"].Text = $Value.Year.ToString('D4')
+    $Ui["${Prefix}MonthBox"].Text = $Value.Month.ToString('D2')
+    $Ui["${Prefix}DayBox"].Text = $Value.Day.ToString('D2')
+    $Ui["${Prefix}HourBox"].Text = $Value.Hour.ToString('D2')
+    $Ui["${Prefix}MinuteBox"].Text = $Value.Minute.ToString('D2')
+}
+
+function Set-HistoryDateInputValidation {
+    param([Parameter(Mandatory)]$Ui, [Parameter(Mandatory)][string]$Prefix)
+
+    $result = ConvertFrom-HistoryDateParts -Year $Ui["${Prefix}YearBox"].Text -Month $Ui["${Prefix}MonthBox"].Text -Day $Ui["${Prefix}DayBox"].Text -Hour $Ui["${Prefix}HourBox"].Text -Minute $Ui["${Prefix}MinuteBox"].Text
+    foreach ($field in @('Year','Month','Day','Hour','Minute')) {
+        $box = $Ui["${Prefix}${field}Box"]; $mark = $Ui["${Prefix}${field}Error"]
+        if ($result.InvalidFields -contains $field) {
+            $box.BorderBrush=New-HistoryBrush '#FF5E5E'; $box.Background=New-HistoryBrush '#281718'; $box.Foreground=New-HistoryBrush '#FFE2E2'
+            $mark.Visibility='Visible'
+        } else {
+            $box.BorderBrush=New-HistoryBrush '#39413C'; $box.Background=New-HistoryBrush '#171C19'; $box.Foreground=New-HistoryBrush '#D4DBD7'
+            $mark.Visibility='Collapsed'
+        }
+    }
+    return $result
 }
 
 function ConvertTo-HistoryRecordTime {
@@ -407,7 +460,7 @@ function Show-ServerPulseHistoryWindow {
     [xml]$historyXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Server Pulse · 占用记录" Width="920" Height="680" MinWidth="700" MinHeight="460"
+        Title="Server Pulse · 占用记录" Width="940" Height="710" MinWidth="760" MinHeight="500"
         WindowStyle="None" ResizeMode="CanResizeWithGrip" AllowsTransparency="True" Background="Transparent"
         WindowStartupLocation="CenterOwner" FontFamily="Bahnschrift, Microsoft YaHei UI" Foreground="#E7EBE8">
   <Window.Resources>
@@ -417,14 +470,14 @@ function Show-ServerPulseHistoryWindow {
       <Setter Property="Height" Value="26"/><Setter Property="Padding" Value="10,0"/><Setter Property="FontSize" Value="9"/><Setter Property="Cursor" Value="Hand"/>
     </Style>
     <Style x:Key="HistoryInput" TargetType="TextBox">
-      <Setter Property="Width" Value="126"/><Setter Property="Height" Value="26"/><Setter Property="Foreground" Value="#D4DBD7"/>
+      <Setter Property="Height" Value="26"/><Setter Property="Foreground" Value="#D4DBD7"/>
       <Setter Property="Background" Value="#171C19"/><Setter Property="BorderBrush" Value="#39413C"/><Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Padding" Value="7,0"/><Setter Property="VerticalContentAlignment" Value="Center"/><Setter Property="FontSize" Value="9"/>
+      <Setter Property="Padding" Value="0"/><Setter Property="TextAlignment" Value="Center"/><Setter Property="VerticalContentAlignment" Value="Center"/><Setter Property="FontSize" Value="9"/>
     </Style>
   </Window.Resources>
   <Border Background="#FA0D100E" BorderBrush="#3A423D" BorderThickness="1" CornerRadius="12">
     <Grid>
-      <Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition Height="54"/><RowDefinition Height="*"/><RowDefinition Height="24"/></Grid.RowDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition Height="94"/><RowDefinition Height="*"/><RowDefinition Height="24"/></Grid.RowDefinitions>
       <Grid x:Name="HistoryDragArea" Margin="14,5,8,3">
         <TextBlock Text="占用记录" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
         <TextBlock Text="MINUTE ARCHIVE" FontSize="8" Foreground="#66716A" Margin="76,0,0,0" VerticalAlignment="Center"/>
@@ -432,15 +485,41 @@ function Show-ServerPulseHistoryWindow {
       </Grid>
       <Border Grid.Row="1" BorderBrush="#252B27" BorderThickness="0,1,0,1" Padding="14,0">
         <Grid>
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="开始" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,5,0"/>
-            <TextBox x:Name="HistoryStartBox" Style="{StaticResource HistoryInput}" ToolTip="yyyy-MM-dd HH:mm"/>
-            <TextBlock Text="结束" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="12,0,5,0"/>
-            <TextBox x:Name="HistoryEndBox" Style="{StaticResource HistoryInput}" ToolTip="yyyy-MM-dd HH:mm"/>
-            <Button x:Name="HistoryQueryButton" Content="查询" Style="{StaticResource HistoryButton}" Margin="10,0,0,0"/>
-            <Button x:Name="HistoryHourButton" Content="最近 1 小时" Style="{StaticResource HistoryButton}" Margin="6,0,0,0"/>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="47"/><RowDefinition Height="47"/></Grid.RowDefinitions>
+          <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="开始" FontSize="9" Foreground="#8C9790" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,9,0"/>
+            <TextBox x:Name="HistoryStartYearBox" Style="{StaticResource HistoryInput}" Width="44" MaxLength="4"/>
+            <TextBlock x:Name="HistoryStartYearError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="年" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryStartMonthBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryStartMonthError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="月" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryStartDayBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryStartDayError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="日" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryStartHourBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryStartHourError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="时" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryStartMinuteBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryStartMinuteError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="分" FontSize="8" Foreground="#707B74" VerticalAlignment="Center"/>
           </StackPanel>
-          <TextBlock x:Name="HistoryRangeStatus" Text="" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="8" Foreground="#78837C"/>
+          <StackPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="结束" FontSize="9" Foreground="#8C9790" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,9,0"/>
+            <TextBox x:Name="HistoryEndYearBox" Style="{StaticResource HistoryInput}" Width="44" MaxLength="4"/>
+            <TextBlock x:Name="HistoryEndYearError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="年" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryEndMonthBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryEndMonthError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="月" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryEndDayBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryEndDayError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="日" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryEndHourBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryEndHourError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="时" FontSize="8" Foreground="#707B74" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="HistoryEndMinuteBox" Style="{StaticResource HistoryInput}" Width="28" MaxLength="2"/>
+            <TextBlock x:Name="HistoryEndMinuteError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="2,0,2,0"/><TextBlock Text="分" FontSize="8" Foreground="#707B74" VerticalAlignment="Center"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Grid.RowSpan="2" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock x:Name="HistoryRangeStatus" Text="" HorizontalAlignment="Right" FontSize="8" Foreground="#78837C" Margin="0,0,0,7"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button x:Name="HistoryQueryButton" Content="查询" Style="{StaticResource HistoryButton}"/>
+              <Button x:Name="HistoryHourButton" Content="最近 1 小时" Style="{StaticResource HistoryButton}" Margin="6,0,0,0"/>
+            </StackPanel>
+          </StackPanel>
         </Grid>
       </Border>
       <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
@@ -457,19 +536,28 @@ function Show-ServerPulseHistoryWindow {
     $reader = [Xml.XmlNodeReader]::new($historyXaml)
     $historyWindow = [Windows.Markup.XamlReader]::Load($reader)
     $historyWindow.Owner = $Owner; $historyWindow.Topmost = $Owner.Topmost
-    $names = 'HistoryDragArea','HistoryCloseButton','HistoryStartBox','HistoryEndBox','HistoryQueryButton','HistoryHourButton','HistoryRangeStatus','HistoryPanel','HistoryFooterText'
+    $names = @('HistoryDragArea','HistoryCloseButton','HistoryQueryButton','HistoryHourButton','HistoryRangeStatus','HistoryPanel','HistoryFooterText')
+    foreach ($prefix in @('HistoryStart','HistoryEnd')) {
+        foreach ($field in @('Year','Month','Day','Hour','Minute')) { $names += "${prefix}${field}Box"; $names += "${prefix}${field}Error" }
+    }
     $ui = @{}; foreach ($name in $names) { $ui[$name] = $historyWindow.FindName($name) }
+    foreach ($prefix in @('HistoryStart','HistoryEnd')) {
+        $ui["${prefix}YearBox"].ToolTip='2000–9999'; $ui["${prefix}MonthBox"].ToolTip='1–12'
+        $ui["${prefix}DayBox"].ToolTip='按年、月校验实际天数'; $ui["${prefix}HourBox"].ToolTip='0–23'; $ui["${prefix}MinuteBox"].ToolTip='0–59'
+    }
 
     $end = [DateTime]::Now; $end = [datetime]::new($end.Year,$end.Month,$end.Day,$end.Hour,$end.Minute,0)
     $start = $end.AddHours(-1)
-    $ui.HistoryStartBox.Text = $start.ToString('yyyy-MM-dd HH:mm'); $ui.HistoryEndBox.Text = $end.ToString('yyyy-MM-dd HH:mm')
+    Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start
+    Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $end
 
     $render = {
-        $rangeStart = ConvertFrom-HistoryMinuteText $ui.HistoryStartBox.Text
-        $rangeEnd = ConvertFrom-HistoryMinuteText $ui.HistoryEndBox.Text
-        if ($null -eq $rangeStart -or $null -eq $rangeEnd) {
-            $ui.HistoryRangeStatus.Text='时间格式应为 yyyy-MM-dd HH:mm'; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'; return
+        $startResult = Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
+        $endResult = Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd'
+        if ($null -eq $startResult.Value -or $null -eq $endResult.Value) {
+            $ui.HistoryRangeStatus.Text='请修正红色时间字段'; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'; return
         }
+        $rangeStart = $startResult.Value; $rangeEnd = $endResult.Value
         if ($rangeEnd -lt $rangeStart) {
             $ui.HistoryRangeStatus.Text='结束时间不能早于开始时间'; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'; return
         }
@@ -492,14 +580,24 @@ function Show-ServerPulseHistoryWindow {
     $ui.HistoryDragArea.Add_MouseLeftButtonUp({ $drag.Active=$false;[void][Windows.Input.Mouse]::Capture($null) })
     $ui.HistoryCloseButton.Add_Click({ $historyWindow.Close() })
     $ui.HistoryQueryButton.Add_Click($render)
-    $ui.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);$ui.HistoryStartBox.Text=$now.AddHours(-1).ToString('yyyy-MM-dd HH:mm');$ui.HistoryEndBox.Text=$now.ToString('yyyy-MM-dd HH:mm');&$render })
-    $ui.HistoryStartBox.Add_PreviewKeyDown({ param($sender,$event); if($event.Key -eq 'Enter'){&$render;$event.Handled=$true} })
-    $ui.HistoryEndBox.Add_PreviewKeyDown({ param($sender,$event); if($event.Key -eq 'Enter'){&$render;$event.Handled=$true} })
+    $ui.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $now;&$render })
+    foreach ($prefix in @('HistoryStart','HistoryEnd')) {
+        foreach ($field in @('Year','Month','Day','Hour','Minute')) {
+            $currentPrefix = $prefix
+            $box = $ui["${prefix}${field}Box"]
+            $box.Add_TextChanged({ [void](Set-HistoryDateInputValidation -Ui $ui -Prefix $currentPrefix) }.GetNewClosure())
+            $box.Add_PreviewKeyDown({ param($sender,$event); if($event.Key -eq 'Enter'){&$render;$event.Handled=$true} }.GetNewClosure())
+        }
+    }
     &$render
     if ($SmokeTest) {
         $historyWindow.Show(); $historyWindow.UpdateLayout()
+        $ui.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
+        $validationPassed=($null -eq $invalidResult.Value -and $ui.HistoryStartMonthError.Visibility -eq 'Visible' -and $ui.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
+        Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start; &$render; $historyWindow.UpdateLayout()
         if ($ScreenshotPath) { Save-HistoryWindowScreenshot -Window $historyWindow -Path $ScreenshotPath }
-        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=[string]$ui.HistoryStartBox.Text;End=[string]$ui.HistoryEndBox.Text}
+        $startValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart').Value; $endValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd').Value
+        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed}
         $historyWindow.Close(); return $result
     }
     [void]$historyWindow.ShowDialog()

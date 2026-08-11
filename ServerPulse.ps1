@@ -43,6 +43,30 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="HistoryAccentButton" TargetType="Button">
+      <Setter Property="Foreground" Value="#0B0E0C"/>
+      <Setter Property="Background" Value="#A7D948"/>
+      <Setter Property="BorderBrush" Value="#BCEB62"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Height" Value="24"/>
+      <Setter Property="MinWidth" Value="44"/>
+      <Setter Property="FontSize" Value="9"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#B9EC58"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#91C235"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
   <Border x:Name="WindowSurface" Background="#F20D100E" BorderBrush="#343A36" BorderThickness="1" CornerRadius="12">
     <Grid>
@@ -85,7 +109,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="SummaryText" Text="等待首次采集" Foreground="#939D97" FontSize="10" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-              <Button x:Name="HistoryButton" Content="记录" Style="{StaticResource QuietButton}" MinWidth="38" Height="24" FontSize="8" Margin="0,0,8,0" ToolTip="查看占用记录"/>
+              <Button x:Name="HistoryButton" Content="记录" Style="{StaticResource HistoryAccentButton}" Margin="0,0,8,0" ToolTip="查看占用记录"/>
               <TextBlock Text="刷新" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="0,0,4,0"/>
               <TextBox x:Name="RefreshIntervalBox" Width="32" Height="20" MaxLength="3" Text="5" TextAlignment="Center"
                        VerticalContentAlignment="Center" Padding="2,0" FontSize="9" Foreground="#C5CDC8"
@@ -493,7 +517,7 @@ function Complete-SmokeTest {
         $historyRecord = Get-CurrentHistoryMinuteRecord $script:historyRecorder
         if ($null -eq $historyRecord -or @($historyRecord.Servers).Count -ne 2) { throw '历史分钟记录验证失败' }
         $historySmoke = Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder -ScreenshotPath (Join-Path $scriptRoot 'tests\artifacts\history-window.png') -SmokeTest
-        if ($historySmoke.PanelCount -lt 1 -or -not (ConvertFrom-HistoryMinuteText $historySmoke.Start) -or -not (ConvertFrom-HistoryMinuteText $historySmoke.End)) { throw '历史窗口与默认时间范围验证失败' }
+        if ($historySmoke.PanelCount -lt 1 -or -not (ConvertFrom-HistoryMinuteText $historySmoke.Start) -or -not (ConvertFrom-HistoryMinuteText $historySmoke.End) -or -not $historySmoke.ValidationPassed) { throw '历史窗口、默认时间范围与红框校验失败' }
         $dragLeft = $window.Left; $dragTop = $window.Top
         $script:isDragging = $true; $script:dragStartCursor = [PSCustomObject]@{X=100;Y=100}; $script:dragStartLeft=$dragLeft; $script:dragStartTop=$dragTop; $script:dragScaleX=1.0; $script:dragScaleY=1.0
         Update-ManualDragPosition ([PSCustomObject]@{X=132;Y=118})
