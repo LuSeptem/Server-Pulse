@@ -515,6 +515,38 @@ function Register-HistoryWindowCloseButton {
     })
 }
 
+function Register-HistoryWindowDragArea {
+    param([Parameter(Mandatory)]$DragArea)
+
+    $DragArea.Tag=[PSCustomObject]@{Active=$false;Cursor=$null;Left=0.0;Top=0.0;ScaleX=1.0;ScaleY=1.0}
+    $DragArea.Add_MouseLeftButtonDown({
+        param($sender,$event)
+        if ($event.ChangedButton -ne 'Left') { return }
+        $state=$sender.Tag; $targetWindow=[Windows.Window]::GetWindow($sender)
+        if ($null -eq $state -or $null -eq $targetWindow) { return }
+        $dpi=[Windows.Media.VisualTreeHelper]::GetDpi($targetWindow)
+        $state.Active=$true; $state.Cursor=[Windows.Forms.Cursor]::Position; $state.Left=$targetWindow.Left; $state.Top=$targetWindow.Top; $state.ScaleX=$dpi.DpiScaleX; $state.ScaleY=$dpi.DpiScaleY
+        [void][Windows.Input.Mouse]::Capture($sender); $event.Handled=$true
+    })
+    $DragArea.Add_MouseMove({
+        param($sender,$event)
+        $state=$sender.Tag
+        if ($null -eq $state -or -not $state.Active) { return }
+        $targetWindow=[Windows.Window]::GetWindow($sender)
+        if ($null -eq $targetWindow) { return }
+        $cursor=[Windows.Forms.Cursor]::Position
+        $targetWindow.Left=$state.Left+(($cursor.X-$state.Cursor.X)/$state.ScaleX)
+        $targetWindow.Top=$state.Top+(($cursor.Y-$state.Cursor.Y)/$state.ScaleY)
+    })
+    $DragArea.Add_MouseLeftButtonUp({
+        param($sender,$event)
+        if ($null -ne $sender.Tag) { $sender.Tag.Active=$false }
+        [void][Windows.Input.Mouse]::Capture($null)
+    })
+    $DragArea.Add_LostMouseCapture({ param($sender,$event); if ($null -ne $sender.Tag) { $sender.Tag.Active=$false } })
+    return $DragArea.Tag
+}
+
 function Show-ServerPulseHistoryWindow {
     param(
         [Parameter(Mandatory)]$Owner,
@@ -656,10 +688,7 @@ function Show-ServerPulseHistoryWindow {
             $ui.HistoryFooterText.Text='请检查本地历史记录文件后重试'
         }
     }.GetNewClosure()
-    $drag = [PSCustomObject]@{Active=$false;Cursor=$null;Left=0.0;Top=0.0;ScaleX=1.0;ScaleY=1.0}
-    $ui.HistoryDragArea.Add_MouseLeftButtonDown({ param($sender,$event); if($event.ChangedButton -eq 'Left'){$dpi=[Windows.Media.VisualTreeHelper]::GetDpi($historyWindow);$drag.Active=$true;$drag.Cursor=[Windows.Forms.Cursor]::Position;$drag.Left=$historyWindow.Left;$drag.Top=$historyWindow.Top;$drag.ScaleX=$dpi.DpiScaleX;$drag.ScaleY=$dpi.DpiScaleY;[void][Windows.Input.Mouse]::Capture($ui.HistoryDragArea);$event.Handled=$true} })
-    $ui.HistoryDragArea.Add_MouseMove({ if($drag.Active -and [Windows.Input.Mouse]::LeftButton -eq 'Pressed'){$cursor=[Windows.Forms.Cursor]::Position;$historyWindow.Left=$drag.Left+(($cursor.X-$drag.Cursor.X)/$drag.ScaleX);$historyWindow.Top=$drag.Top+(($cursor.Y-$drag.Cursor.Y)/$drag.ScaleY)} })
-    $ui.HistoryDragArea.Add_MouseLeftButtonUp({ $drag.Active=$false;[void][Windows.Input.Mouse]::Capture($null) })
+    [void](Register-HistoryWindowDragArea -DragArea $ui.HistoryDragArea)
     Register-HistoryWindowCloseButton -Button $ui.HistoryCloseButton
     $ui.HistoryQueryButton.Add_Click($render)
     $ui.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $now;&$render }.GetNewClosure())

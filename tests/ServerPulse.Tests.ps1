@@ -119,10 +119,28 @@ Assert-Equal ([bool]($mainScript -match 'Update-ManualDragPosition')) $true '使
 $historyScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($historyScript -match 'HistoryCloseButton\.Add_Click\(\{\s*\$historyWindow\.Close')) $false '历史关闭回调不得依赖动态窗口变量'
 Assert-Equal ([bool]($historyScript -match '\[Windows\.Window\]::GetWindow\(\$sender\)')) $true '历史关闭回调从按钮解析所属窗口'
-Add-Type -AssemblyName PresentationFramework
+Assert-Equal ([bool]($historyScript -match 'HistoryDragArea\.Add_Mouse[^\r\n]+\$drag')) $false '历史拖拽回调不得依赖动态拖拽变量'
+Assert-Equal ([bool]($historyScript -match 'Register-HistoryWindowDragArea')) $true '历史拖拽事件使用独立注册函数'
+Add-Type -AssemblyName PresentationFramework,System.Windows.Forms
 $closeTestWindow=[Windows.Window]::new(); $closeTestButton=[Windows.Controls.Button]::new(); $closeTestWindow.Content=$closeTestButton
 Register-HistoryWindowCloseButton -Button $closeTestButton
 $closeTestWindow.Show(); $closeTestButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
 Assert-Equal $closeTestWindow.IsVisible $false '关闭事件注册作用域结束后仍可关闭所属窗口'
+$dragTestWindow=[Windows.Window]::new(); $dragTestArea=[Windows.Controls.Grid]::new(); $dragTestWindow.Content=$dragTestArea
+$dragTestState=Register-HistoryWindowDragArea -DragArea $dragTestArea
+$dragTestWindow.Show()
+$dragDown=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left); $dragDown.RoutedEvent=[Windows.UIElement]::MouseLeftButtonDownEvent
+$dragTestArea.RaiseEvent($dragDown)
+Assert-Equal $dragTestState.Active $true '拖拽事件注册作用域结束后仍可开始拖动'
+$dragTestWindow.Left=100; $dragTestWindow.Top=100; $dragTestState.Left=100; $dragTestState.Top=100
+$dragCursor=[Windows.Forms.Cursor]::Position; $dragTestState.Cursor=[PSCustomObject]@{X=$dragCursor.X-24;Y=$dragCursor.Y-16}; $dragTestState.ScaleX=1.0; $dragTestState.ScaleY=1.0
+$dragMove=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $dragMove.RoutedEvent=[Windows.UIElement]::MouseMoveEvent
+$dragTestArea.RaiseEvent($dragMove)
+Assert-Equal ([Math]::Round($dragTestWindow.Left)) 124 '历史窗口拖动更新横向坐标'
+Assert-Equal ([Math]::Round($dragTestWindow.Top)) 116 '历史窗口拖动更新纵向坐标'
+$dragUp=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left); $dragUp.RoutedEvent=[Windows.UIElement]::MouseLeftButtonUpEvent
+$dragTestArea.RaiseEvent($dragUp)
+Assert-Equal $dragTestState.Active $false '释放鼠标后结束历史窗口拖动'
+$dragTestWindow.Close()
 
 Write-Output "PASS: $passed assertions"
