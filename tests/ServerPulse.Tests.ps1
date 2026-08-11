@@ -116,5 +116,13 @@ try {
 $mainScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($mainScript -match '\.DragMove\(')) $false '禁止调用会触发 Windows Snap Assist 的 DragMove'
 Assert-Equal ([bool]($mainScript -match 'Update-ManualDragPosition')) $true '使用应用内坐标拖拽'
+$historyScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1') -Raw -Encoding UTF8
+Assert-Equal ([bool]($historyScript -match 'HistoryCloseButton\.Add_Click\(\{\s*\$historyWindow\.Close')) $false '历史关闭回调不得依赖动态窗口变量'
+Assert-Equal ([bool]($historyScript -match '\[Windows\.Window\]::GetWindow\(\$sender\)')) $true '历史关闭回调从按钮解析所属窗口'
+Add-Type -AssemblyName PresentationFramework
+$closeTestWindow=[Windows.Window]::new(); $closeTestButton=[Windows.Controls.Button]::new(); $closeTestWindow.Content=$closeTestButton
+Register-HistoryWindowCloseButton -Button $closeTestButton
+$closeTestWindow.Show(); $closeTestButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+Assert-Equal $closeTestWindow.IsVisible $false '关闭事件注册作用域结束后仍可关闭所属窗口'
 
 Write-Output "PASS: $passed assertions"

@@ -505,6 +505,16 @@ function Save-HistoryWindowScreenshot {
     $stream=[IO.File]::Create($Path); try{$encoder.Save($stream)}finally{$stream.Dispose()}
 }
 
+function Register-HistoryWindowCloseButton {
+    param([Parameter(Mandatory)]$Button)
+
+    $Button.Add_Click({
+        param($sender,$event)
+        $targetWindow=[Windows.Window]::GetWindow($sender)
+        if ($null -ne $targetWindow) { $targetWindow.Close() }
+    })
+}
+
 function Show-ServerPulseHistoryWindow {
     param(
         [Parameter(Mandatory)]$Owner,
@@ -650,7 +660,7 @@ function Show-ServerPulseHistoryWindow {
     $ui.HistoryDragArea.Add_MouseLeftButtonDown({ param($sender,$event); if($event.ChangedButton -eq 'Left'){$dpi=[Windows.Media.VisualTreeHelper]::GetDpi($historyWindow);$drag.Active=$true;$drag.Cursor=[Windows.Forms.Cursor]::Position;$drag.Left=$historyWindow.Left;$drag.Top=$historyWindow.Top;$drag.ScaleX=$dpi.DpiScaleX;$drag.ScaleY=$dpi.DpiScaleY;[void][Windows.Input.Mouse]::Capture($ui.HistoryDragArea);$event.Handled=$true} })
     $ui.HistoryDragArea.Add_MouseMove({ if($drag.Active -and [Windows.Input.Mouse]::LeftButton -eq 'Pressed'){$cursor=[Windows.Forms.Cursor]::Position;$historyWindow.Left=$drag.Left+(($cursor.X-$drag.Cursor.X)/$drag.ScaleX);$historyWindow.Top=$drag.Top+(($cursor.Y-$drag.Cursor.Y)/$drag.ScaleY)} })
     $ui.HistoryDragArea.Add_MouseLeftButtonUp({ $drag.Active=$false;[void][Windows.Input.Mouse]::Capture($null) })
-    $ui.HistoryCloseButton.Add_Click({ $historyWindow.Close() })
+    Register-HistoryWindowCloseButton -Button $ui.HistoryCloseButton
     $ui.HistoryQueryButton.Add_Click($render)
     $ui.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $now;&$render }.GetNewClosure())
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
@@ -735,21 +745,22 @@ function Show-ServerPulseHistoryWindow {
             if ($closeAncestor -eq $ui.HistoryDragArea) { $closeSeparatedFromDragArea=$false; break }
             $closeAncestor=[Windows.Media.VisualTreeHelper]::GetParent($closeAncestor)
         }
-        $closeState=[PSCustomObject]@{Button=$ui.HistoryCloseButton;Completed=$false;Error=$null}
+        $historyWindow.Hide()
+        $script:historyCloseSmokeState=[PSCustomObject]@{Button=$ui.HistoryCloseButton;Window=$historyWindow;Completed=$false;ClosedByHandler=$false;Error=$null}
         [void]$historyWindow.Dispatcher.BeginInvoke([Action]{
-            try { $closeState.Button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent)) }
-            catch { $closeState.Error=$_.Exception.Message }
-            finally { $closeState.Completed=$true }
-        }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::Background)
-        $closeDeadline=[DateTime]::UtcNow.AddSeconds(3)
-        while (-not $closeState.Completed -and [DateTime]::UtcNow -lt $closeDeadline) {
-            $closeFrame=[Windows.Threading.DispatcherFrame]::new()
-            [void]$historyWindow.Dispatcher.BeginInvoke([Action]{ $closeFrame.Continue=$false }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::ApplicationIdle)
-            [Windows.Threading.Dispatcher]::PushFrame($closeFrame)
-        }
-        $closeButtonPassed=($closeState.Completed -and -not $historyWindow.IsVisible)
-        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeState.Error;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea}
-        if ($historyWindow.IsVisible) { $historyWindow.Close() }
+            try { $script:historyCloseSmokeState.Button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent)) }
+            catch { $script:historyCloseSmokeState.Error=$_.Exception.Message }
+            finally {
+                $script:historyCloseSmokeState.ClosedByHandler=-not $script:historyCloseSmokeState.Window.IsVisible
+                $script:historyCloseSmokeState.Completed=$true
+                if ($script:historyCloseSmokeState.Window.IsVisible) { $script:historyCloseSmokeState.Window.Close() }
+            }
+        },[Windows.Threading.DispatcherPriority]::Background)
+        [void]$historyWindow.ShowDialog()
+        $closeButtonPassed=($script:historyCloseSmokeState.Completed -and $script:historyCloseSmokeState.ClosedByHandler)
+        $closeButtonError=$script:historyCloseSmokeState.Error
+        Remove-Variable -Name historyCloseSmokeState -Scope Script -ErrorAction SilentlyContinue
+        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeButtonError;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea}
         return $result
     }
     [void]$historyWindow.ShowDialog()
