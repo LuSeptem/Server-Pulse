@@ -534,10 +534,13 @@ function Show-ServerPulseHistoryWindow {
   <Border Background="#FA0D100E" BorderBrush="#3A423D" BorderThickness="1" CornerRadius="12">
     <Grid>
       <Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition Height="94"/><RowDefinition Height="*"/><RowDefinition Height="24"/></Grid.RowDefinitions>
-      <Grid x:Name="HistoryDragArea" Margin="14,5,8,3">
-        <TextBlock Text="占用记录" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-        <TextBlock Text="MINUTE ARCHIVE" FontSize="8" Foreground="#66716A" Margin="76,0,0,0" VerticalAlignment="Center"/>
-        <Button x:Name="HistoryCloseButton" Content="×" Width="34" Height="30" HorizontalAlignment="Right" Background="Transparent" BorderThickness="0" Foreground="#8C9690" FontSize="14" Cursor="Hand"/>
+      <Grid Margin="14,5,8,3">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions>
+        <Grid x:Name="HistoryDragArea" Grid.Column="0" Background="Transparent">
+          <TextBlock Text="占用记录" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          <TextBlock Text="MINUTE ARCHIVE" FontSize="8" Foreground="#66716A" Margin="76,0,0,0" VerticalAlignment="Center"/>
+        </Grid>
+        <Button x:Name="HistoryCloseButton" Grid.Column="1" Content="×" Width="34" Height="30" Background="Transparent" BorderThickness="0" Foreground="#8C9690" FontSize="14" Cursor="Hand"/>
       </Grid>
       <Border Grid.Row="1" BorderBrush="#252B27" BorderThickness="0,1,0,1" Padding="14,0">
         <Grid>
@@ -722,8 +725,32 @@ function Show-ServerPulseHistoryWindow {
         [void]$ui.HistoryPanel.Children.Remove($hoverTestCard)
         if ($ScreenshotPath) { Save-HistoryWindowScreenshot -Window $historyWindow -Path $ScreenshotPath }
         $startValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart').Value; $endValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd').Value
-        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError}
-        $historyWindow.Close(); return $result
+        $closeCenter=$ui.HistoryCloseButton.TransformToAncestor($historyWindow).Transform([Windows.Point]::new($ui.HistoryCloseButton.ActualWidth/2,$ui.HistoryCloseButton.ActualHeight/2))
+        $closeHit=$historyWindow.InputHitTest($closeCenter); $closeHitNode=$closeHit
+        while ($null -ne $closeHitNode -and $closeHitNode -ne $ui.HistoryCloseButton) { $closeHitNode=[Windows.Media.VisualTreeHelper]::GetParent($closeHitNode) }
+        $closeHitTestPassed=($closeHitNode -eq $ui.HistoryCloseButton)
+        $closeHitElement=if($null -ne $closeHit){"$($closeHit.GetType().Name):$($closeHit.Name)"}else{'none'}
+        $closeAncestor=$ui.HistoryCloseButton; $closeSeparatedFromDragArea=$true
+        while ($null -ne $closeAncestor) {
+            if ($closeAncestor -eq $ui.HistoryDragArea) { $closeSeparatedFromDragArea=$false; break }
+            $closeAncestor=[Windows.Media.VisualTreeHelper]::GetParent($closeAncestor)
+        }
+        $closeState=[PSCustomObject]@{Button=$ui.HistoryCloseButton;Completed=$false;Error=$null}
+        [void]$historyWindow.Dispatcher.BeginInvoke([Action]{
+            try { $closeState.Button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent)) }
+            catch { $closeState.Error=$_.Exception.Message }
+            finally { $closeState.Completed=$true }
+        }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::Background)
+        $closeDeadline=[DateTime]::UtcNow.AddSeconds(3)
+        while (-not $closeState.Completed -and [DateTime]::UtcNow -lt $closeDeadline) {
+            $closeFrame=[Windows.Threading.DispatcherFrame]::new()
+            [void]$historyWindow.Dispatcher.BeginInvoke([Action]{ $closeFrame.Continue=$false }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+            [Windows.Threading.Dispatcher]::PushFrame($closeFrame)
+        }
+        $closeButtonPassed=($closeState.Completed -and -not $historyWindow.IsVisible)
+        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeState.Error;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea}
+        if ($historyWindow.IsVisible) { $historyWindow.Close() }
+        return $result
     }
     [void]$historyWindow.ShowDialog()
 }
