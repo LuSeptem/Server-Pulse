@@ -156,6 +156,32 @@ if (Test-Path -LiteralPath $settingsPath) {
     } catch { }
 }
 
+function Write-ServerPulseErrorLog {
+    param([Parameter(Mandatory)][Exception]$Exception, [string]$Context='UI event')
+
+    if (-not (Test-Path -LiteralPath $settingsDirectory)) { [void](New-Item -ItemType Directory -Path $settingsDirectory -Force) }
+    $logPath=Join-Path $settingsDirectory 'error.log'
+    $entry="[{0}] {1}`r`n{2}`r`n`r`n" -f [DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss.fff'),$Context,$Exception.ToString()
+    [IO.File]::AppendAllText($logPath,$entry,[Text.UTF8Encoding]::new($true))
+    return $logPath
+}
+
+$window.Dispatcher.Add_UnhandledException({
+    param($sender,$eventArgs)
+    try {
+        if ($SmokeTest -and $eventArgs.Exception.Message -eq 'ServerPulse dispatcher containment probe') {
+            $script:dispatcherProbeHandled=$true
+        } else {
+            $logPath=Write-ServerPulseErrorLog -Exception $eventArgs.Exception -Context 'DispatcherUnhandledException'
+            $ui.SummaryText.Text='界面操作发生异常，软件已保持运行'
+            $ui.SummaryText.ToolTip="错误详情已写入 $logPath"
+        }
+    } catch {
+        $ui.SummaryText.Text='界面操作发生异常，软件已保持运行'
+    }
+    $eventArgs.Handled=$true
+})
+
 $window.Width = [Math]::Max($window.MinWidth, [double]$settings.Width)
 $window.Height = [Math]::Max($window.MinHeight, [double]$settings.Height)
 $window.Opacity = 1.0
@@ -519,7 +545,14 @@ function Complete-SmokeTest {
         $historySmoke = Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder -ScreenshotPath (Join-Path $scriptRoot 'tests\artifacts\history-window.png') -SmokeTest
         if (-not $historySmoke.QueryClickPassed) { throw "历史查询按钮事件失败：$($historySmoke.QueryClickError)" }
         if (-not $historySmoke.QueryFailureContained) { throw '历史查询异常未被窗口内提示安全拦截' }
+        if (-not $historySmoke.ChangedRangeQueryPassed) { throw "修改时间后的历史查询失败：$($historySmoke.ChangedRangeQueryError)" }
         if ($historySmoke.PanelCount -lt 1 -or -not (ConvertFrom-HistoryMinuteText $historySmoke.Start) -or -not (ConvertFrom-HistoryMinuteText $historySmoke.End) -or -not $historySmoke.ValidationPassed) { throw '历史窗口、默认时间范围与红框校验失败' }
+        $script:dispatcherProbeHandled = $false
+        [void]$window.Dispatcher.BeginInvoke([Action]{ throw 'ServerPulse dispatcher containment probe' },[Windows.Threading.DispatcherPriority]::Background)
+        $probeFrame=[Windows.Threading.DispatcherFrame]::new()
+        [void]$window.Dispatcher.BeginInvoke([Action]{ $probeFrame.Continue=$false }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+        [Windows.Threading.Dispatcher]::PushFrame($probeFrame)
+        if (-not $script:dispatcherProbeHandled) { throw '未处理的 UI 事件异常未被安全拦截' }
         $dragLeft = $window.Left; $dragTop = $window.Top
         $script:isDragging = $true; $script:dragStartCursor = [PSCustomObject]@{X=100;Y=100}; $script:dragStartLeft=$dragLeft; $script:dragStartTop=$dragTop; $script:dragScaleX=1.0; $script:dragScaleY=1.0
         Update-ManualDragPosition ([PSCustomObject]@{X=132;Y=118})

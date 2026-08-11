@@ -630,12 +630,28 @@ function Show-ServerPulseHistoryWindow {
             $Recorder.Directory=$originalHistoryDirectory
             Remove-Item -LiteralPath $invalidHistoryDirectory -Recurse -Force -ErrorAction SilentlyContinue
         }
+        Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start.AddMinutes(1)
+        Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $end
+        $changedQueryState=[PSCustomObject]@{Button=$ui.HistoryQueryButton;Completed=$false;Passed=$true;Error=$null}
+        [void]$historyWindow.Dispatcher.BeginInvoke([Action]{
+            try { $changedQueryState.Button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent)) }
+            catch { $changedQueryState.Passed=$false; $changedQueryState.Error=$_.Exception.Message }
+            finally { $changedQueryState.Completed=$true }
+        }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::Background)
+        $changedQueryDeadline=[DateTime]::UtcNow.AddSeconds(3)
+        while (-not $changedQueryState.Completed -and [DateTime]::UtcNow -lt $changedQueryDeadline) {
+            $changedQueryFrame=[Windows.Threading.DispatcherFrame]::new()
+            [void]$historyWindow.Dispatcher.BeginInvoke([Action]{ $changedQueryFrame.Continue=$false }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+            [Windows.Threading.Dispatcher]::PushFrame($changedQueryFrame)
+        }
+        if (-not $changedQueryState.Completed) { $changedQueryState.Passed=$false; $changedQueryState.Error='修改时间后的异步查询点击超时' }
+        $changedRangeQueryPassed=($changedQueryState.Passed -and $historyWindow.IsVisible)
         $ui.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
         $validationPassed=($null -eq $invalidResult.Value -and $ui.HistoryStartMonthError.Visibility -eq 'Visible' -and $ui.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
         Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start; &$render; $historyWindow.UpdateLayout()
         if ($ScreenshotPath) { Save-HistoryWindowScreenshot -Window $historyWindow -Path $ScreenshotPath }
         $startValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart').Value; $endValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd').Value
-        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained}
+        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error}
         $historyWindow.Close(); return $result
     }
     [void]$historyWindow.ShowDialog()
