@@ -85,6 +85,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="SummaryText" Text="等待首次采集" Foreground="#939D97" FontSize="10" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button x:Name="HistoryButton" Content="记录" Style="{StaticResource QuietButton}" MinWidth="38" Height="24" FontSize="8" Margin="0,0,8,0" ToolTip="查看占用记录"/>
               <TextBlock Text="刷新" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="0,0,4,0"/>
               <TextBox x:Name="RefreshIntervalBox" Width="32" Height="20" MaxLength="3" Text="5" TextAlignment="Center"
                        VerticalContentAlignment="Center" Padding="2,0" FontSize="9" Foreground="#C5CDC8"
@@ -111,7 +112,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $reader = [Xml.XmlNodeReader]::new($xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','MinimizeButton','CloseButton','SummaryText','RefreshIntervalBox','UpdatedText','ServerPanel'
+$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','MinimizeButton','CloseButton','SummaryText','HistoryButton','RefreshIntervalBox','UpdatedText','ServerPanel'
 $ui = @{}
 foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
@@ -140,11 +141,15 @@ $ui.EdgeButton.Tag = if ([bool]$settings.AutoHide) { 'active' } else { $null }
 $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null }
 
 . (Join-Path $scriptRoot 'src\ServerPulse.Core.ps1')
+. (Join-Path $scriptRoot 'src\ServerPulse.History.ps1')
 $config = Get-ServerPulseConfig -Path $configPath
 $configuredInterval = ConvertTo-RefreshIntervalSeconds ([Math]::Round($config.PollIntervalMs / 1000))
 $savedInterval = ConvertTo-RefreshIntervalSeconds $settings.RefreshIntervalSeconds
 $script:refreshIntervalSeconds = if ($null -ne $savedInterval) { $savedInterval } elseif ($null -ne $configuredInterval) { $configuredInterval } else { 5 }
 $ui.RefreshIntervalBox.Text = [string]$script:refreshIntervalSeconds
+$historyDirectory = Join-Path $settingsDirectory 'history'
+$script:historyRecorder = New-ServerPulseHistoryRecorder -Directory $historyDirectory -RetentionDays $config.HistoryRetentionDays
+if (-not $SmokeTest) { try { Remove-ExpiredServerPulseHistory $script:historyRecorder } catch { } }
 $script:cards = @{}
 $script:collectionProcess = $null
 $script:stdoutTask = $null
@@ -485,6 +490,10 @@ function Complete-SmokeTest {
         if (Set-RefreshInterval 'invalid') { throw '无效刷新间隔不应生效' }
         if ($script:refreshIntervalSeconds -ne 12 -or $ui.RefreshIntervalBox.Text -ne '12') { throw '无效刷新间隔应恢复当前值' }
         [void](Set-RefreshInterval $originalInterval)
+        $historyRecord = Get-CurrentHistoryMinuteRecord $script:historyRecorder
+        if ($null -eq $historyRecord -or @($historyRecord.Servers).Count -ne 2) { throw '历史分钟记录验证失败' }
+        $historySmoke = Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder -ScreenshotPath (Join-Path $scriptRoot 'tests\artifacts\history-window.png') -SmokeTest
+        if ($historySmoke.PanelCount -lt 1 -or -not (ConvertFrom-HistoryMinuteText $historySmoke.Start) -or -not (ConvertFrom-HistoryMinuteText $historySmoke.End)) { throw '历史窗口与默认时间范围验证失败' }
         $dragLeft = $window.Left; $dragTop = $window.Top
         $script:isDragging = $true; $script:dragStartCursor = [PSCustomObject]@{X=100;Y=100}; $script:dragStartLeft=$dragLeft; $script:dragStartTop=$dragTop; $script:dragScaleX=1.0; $script:dragScaleY=1.0
         Update-ManualDragPosition ([PSCustomObject]@{X=132;Y=118})
@@ -541,6 +550,7 @@ $pollTimer.Add_Tick({
         if ($stdout) {
             try {
                 $snapshot = $stdout | ConvertFrom-Json
+                try { Add-ServerPulseHistorySnapshot -Recorder $script:historyRecorder -Snapshot $snapshot } catch { $ui.HistoryButton.ToolTip = "历史记录失败：$($_.Exception.Message)" }
                 $servers = @($snapshot.Servers)
                 foreach ($server in $servers) { Update-ServerCard $server }
                 $online = @($servers | Where-Object { $_.Status -eq 'online' }).Count
@@ -607,6 +617,10 @@ $ui.RefreshIntervalBox.Add_PreviewKeyDown({
     }
 })
 $ui.RefreshIntervalBox.Add_LostKeyboardFocus({ [void](Set-RefreshInterval $ui.RefreshIntervalBox.Text -Persist) })
+$ui.HistoryButton.Add_Click({
+    try { Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder }
+    catch { $ui.SummaryText.Text = "历史记录错误：$($_.Exception.Message)" }
+})
 $ui.EdgeButton.Add_Click({
     if ($ui.EdgeButton.Tag -eq 'active') { $ui.EdgeButton.Tag = $null; $hideTimer.Stop(); Show-FromEdge }
     else { $ui.EdgeButton.Tag = 'active'; Schedule-EdgeHide }
@@ -624,6 +638,7 @@ $window.Add_Loaded({
 $window.Add_Closing({
     $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
     if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { $script:collectionProcess.Kill() }
+    if (-not $SmokeTest) { try { [void](Flush-ServerPulseHistoryRecorder $script:historyRecorder) } catch { } }
     if (-not $SmokeTest) { Save-Settings }
 })
 

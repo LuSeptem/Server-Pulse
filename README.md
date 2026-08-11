@@ -13,6 +13,8 @@ Server Pulse 是一个原生 Windows WPF 监控浮窗，直接通过本机 `ssh.
 - 可贴到屏幕左侧、右侧或顶部自动隐藏，仅保留 7 像素；收起后先把鼠标移开边缘，再次触碰对应边缘即可恢复。
 - 自动保存透明度、尺寸、位置、置顶、贴边开关和刷新间隔。
 - 可在浮窗中手动设置 1–300 秒的刷新间隔；两台服务器始终并行采集，采集过程不阻塞窗口。
+- 按分钟聚合并保存所有采集指标：CPU、系统内存、LOAD、运行时间、延迟，以及每张 GPU 的利用率、显存、温度、功耗/上限和风扇。
+- 原生历史窗口支持分钟精度的起止时间查询，默认显示最近 1 小时，并按服务器和 GPU 显示曲线。
 - CPU 与系统内存以紧凑辅助指标显示，并紧贴服务器名称与主机信息，减少纵向留白。
 - GPU 是主要信息区：逐卡大号显示利用率，并显示显存已用/总量、独立显存进度条和温度；服务器标题处汇总总显存。
 - 单台服务器连接失败不会影响另一台，错误会显示在对应节点卡片中。
@@ -57,6 +59,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 - **查看更多 GPU**：窗口较小时，在节点区域使用鼠标滚轮纵向滚动；滚动条保持隐藏以减少视觉干扰。
 - **背景透明度**：拖动顶栏滑块，范围为 40%–100%；文字和指标不会随之变淡。
 - **刷新间隔**：在状态栏的“刷新”输入框中填写 `1`–`300` 秒，按 Enter 或移开焦点后生效；无效输入会恢复当前值。
+- **占用记录**：点击状态栏的“记录”打开历史窗口。起止时间格式为 `yyyy-MM-dd HH:mm`，可直接精确到分钟查询；“最近 1 小时”按钮可恢复默认范围。
 - **贴边隐藏**：绿色“边”表示已启用。把窗口拖到屏幕左、右或上边缘，窗口边框到达或随鼠标越过屏幕边界时都会吸附，约 0.7 秒后自动收起。为防止松开鼠标时立刻反弹，收起后需要先把鼠标移离边缘，再次触碰对应边缘才会恢复。
 - **置顶**：绿色“置”表示窗口始终置顶。
 - **最小化/关闭**：使用顶栏右侧的 `—` 与 `×`。
@@ -71,6 +74,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 
 新版使用应用内拖拽后，设置格式升级为版本 2；首次运行会自动丢弃旧版 Windows 半屏排列遗留的异常尺寸与位置，恢复为 420 × 560。此后的手动缩放和位置会继续正常保存。
 
+历史记录按天保存在 `%LOCALAPPDATA%\ServerPulse\history\yyyy-MM-dd.json`。每个文件保存当天的分钟平均值，默认保留 30 天；删除 `history` 目录只会清空历史，不影响窗口设置。
+
 ## 配置
 
 服务器配置位于 `config/servers.json`：
@@ -79,6 +84,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 {
   "pollIntervalMs": 5000,
   "sshTimeoutMs": 8000,
+  "historyRetentionDays": 30,
   "servers": [
     { "id": "3090", "label": "RTX 3090", "host": "3090" },
     { "id": "a6000", "label": "RTX A6000", "host": "a6000" }
@@ -89,6 +95,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 - `host` 是 `~/.ssh/config` 中的主机别名，只允许字母、数字、点、下划线和连字符。
 - `pollIntervalMs` 是未保存过手动设置时的默认采集间隔；浮窗中的秒数设置会优先使用并自动保存。
 - `sshTimeoutMs` 是单台服务器每次 SSH 采集的超时上限。
+- `historyRetentionDays` 是本地分钟历史的保留天数，默认为 30；过期的按天文件会在启动时清理。
 
 ## 实现结构
 
@@ -104,7 +111,8 @@ ServerPulse.ps1（原生 WPF 浮窗）
 - `Start Server Pulse.vbs`：无控制台启动器。
 - `src/Collect-Metrics.ps1`：并行 SSH 采集并输出 JSON 快照。
 - `src/ServerPulse.Core.ps1`：配置校验、CSV 与指标解析。
-- `tests/ServerPulse.Tests.ps1`：原生解析和配置测试。
+- `src/ServerPulse.History.ps1`：分钟聚合、按天持久化、时间范围查询和原生历史曲线窗口。
+- `tests/ServerPulse.Tests.ps1`：指标解析、配置、分钟聚合与历史持久化测试。
 
 PowerShell 脚本使用 UTF-8 BOM 保存，以兼容 Windows PowerShell 5.1 对中文源码的读取方式。
 
@@ -122,7 +130,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ServerPulse.Test
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1 -SmokeTest
 ```
 
-冒烟模式会实际运行一次 SSH 采集，验证 WPF 窗口、应用内坐标拖拽、刷新间隔输入与校验、尺寸调整、仅背景透明、逐卡显存数据，以及左右两侧越界贴边隐藏和防反弹状态，然后按当前系统 DPI 合成原生窗口截图，写入已忽略的 `tests/artifacts/native-window.png` 并自动退出。
+冒烟模式会实际运行一次 SSH 采集，验证 WPF 主窗口与历史窗口、应用内坐标拖拽、刷新间隔、分钟历史聚合、默认最近一小时、仅背景透明、逐卡显存数据和贴边隐藏，然后生成 `tests/artifacts/native-window.png` 与 `tests/artifacts/history-window.png` 并自动退出。
 
 单独检查采集器：
 

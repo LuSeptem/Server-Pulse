@@ -127,9 +127,13 @@ function Get-ServerPulseConfig {
         }
         $ids[[string]$server.id] = $true
     }
+    $historyRetentionDays = if ($config.PSObject.Properties.Name -contains 'historyRetentionDays' -and $config.historyRetentionDays) {
+        [Math]::Max(1, [int]$config.historyRetentionDays)
+    } else { 30 }
     return [PSCustomObject]@{
-        PollIntervalMs = if ($config.pollIntervalMs) { [int]$config.pollIntervalMs } else { 5000 }
-        SshTimeoutMs   = if ($config.sshTimeoutMs) { [int]$config.sshTimeoutMs } else { 8000 }
-        Servers        = $servers
+        PollIntervalMs       = if ($config.pollIntervalMs) { [int]$config.pollIntervalMs } else { 5000 }
+        SshTimeoutMs         = if ($config.sshTimeoutMs) { [int]$config.sshTimeoutMs } else { 8000 }
+        HistoryRetentionDays = $historyRetentionDays
+        Servers              = $servers
     }
 }

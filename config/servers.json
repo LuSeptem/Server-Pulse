@@ -1,6 +1,7 @@
 {
   "pollIntervalMs": 5000,
   "sshTimeoutMs": 8000,
+  "historyRetentionDays": 30,
   "servers": [
     {
       "id": "3090",
