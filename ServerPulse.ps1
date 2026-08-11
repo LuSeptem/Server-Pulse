@@ -546,6 +546,8 @@ function Complete-SmokeTest {
         if (-not $historySmoke.QueryClickPassed) { throw "历史查询按钮事件失败：$($historySmoke.QueryClickError)" }
         if (-not $historySmoke.QueryFailureContained) { throw '历史查询异常未被窗口内提示安全拦截' }
         if (-not $historySmoke.ChangedRangeQueryPassed) { throw "修改时间后的历史查询失败：$($historySmoke.ChangedRangeQueryError)" }
+        if (-not $historySmoke.NormalRenderPassed) { throw '历史图表正常渲染失败' }
+        if (-not $historySmoke.HoverInteractionPassed) { throw "历史图表悬停交互失败：$($historySmoke.HoverInteractionError)" }
         if ($historySmoke.PanelCount -lt 1 -or -not (ConvertFrom-HistoryMinuteText $historySmoke.Start) -or -not (ConvertFrom-HistoryMinuteText $historySmoke.End) -or -not $historySmoke.ValidationPassed) { throw '历史窗口、默认时间范围与红框校验失败' }
         $script:dispatcherProbeHandled = $false
         [void]$window.Dispatcher.BeginInvoke([Action]{ throw 'ServerPulse dispatcher containment probe' },[Windows.Threading.DispatcherPriority]::Background)

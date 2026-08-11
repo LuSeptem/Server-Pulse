@@ -279,6 +279,38 @@ function ConvertTo-HistoryRecordTime {
     return [datetime]::ParseExact([string]$Record.Timestamp, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Get-HistoryNearestChartPoint {
+    param(
+        [Parameter(Mandatory)][object[]]$Series,
+        [Parameter(Mandatory)][datetime]$Start,
+        [Parameter(Mandatory)][datetime]$End,
+        [Parameter(Mandatory)][double]$CursorX,
+        [Parameter(Mandatory)][double]$CursorY,
+        [double]$Width=242,
+        [double]$Height=76
+    )
+
+    $duration=[Math]::Max(60.0,($End-$Start).TotalSeconds)
+    $plotBottom=[Math]::Max(4.0,$Height-2.0)
+    $plotHeight=[Math]::Max(1.0,$Height-6.0)
+    $nearest=$null; $nearestDistance=[double]::PositiveInfinity
+    foreach ($item in $Series) {
+        foreach ($point in @($item.Points)) {
+            if ($null -eq $point.Value) { continue }
+            $x=[Math]::Max(0,[Math]::Min($Width,(($point.Time-$Start).TotalSeconds/$duration)*$Width))
+            $value=[Math]::Max(0,[Math]::Min(100,[double]$point.Value))
+            $y=$plotBottom-($value/100*$plotHeight)
+            $distance=[Math]::Pow($x-$CursorX,2)+[Math]::Pow($y-$CursorY,2)
+            if ($distance -lt $nearestDistance) {
+                $suffix=if($item.PSObject.Properties.Name -contains 'Suffix'){[string]$item.Suffix}else{''}
+                $nearestDistance=$distance
+                $nearest=[PSCustomObject]@{Name=[string]$item.Name;Suffix=$suffix;Color=[string]$item.Color;Time=[datetime]$point.Time;Value=[double]$point.Value;X=$x;Y=$y;DistanceSquared=$distance}
+            }
+        }
+    }
+    return $nearest
+}
+
 function New-HistoryChartCard {
     param(
         [Parameter(Mandatory)][string]$Title,
@@ -296,7 +328,6 @@ function New-HistoryChartCard {
     $card.BorderBrush = New-HistoryBrush '#303732'
     $card.BorderThickness = [Windows.Thickness]::new(1)
     $card.CornerRadius = [Windows.CornerRadius]::new(7)
-    $card.ToolTip = $Subtitle
 
     $layout = [Windows.Controls.Grid]::new()
     $row1 = [Windows.Controls.RowDefinition]::new(); $row1.Height = 'Auto'
@@ -320,6 +351,7 @@ function New-HistoryChartCard {
     [Windows.Controls.Grid]::SetRow($header,0); [void]$layout.Children.Add($header)
 
     $canvas = [Windows.Controls.Canvas]::new(); $canvas.Width = 242; $canvas.Height = 76; $canvas.Margin = [Windows.Thickness]::new(0,7,0,5)
+    $canvas.Background=New-HistoryBrush '#00131714'; $canvas.Cursor='Cross'; $canvas.ClipToBounds=$false
     foreach ($y in @(2.0,38.0,74.0)) {
         $line = [Windows.Shapes.Line]::new(); $line.X1=0; $line.X2=242; $line.Y1=$y; $line.Y2=$y
         $line.Stroke = New-HistoryBrush '#2B312D'; $line.StrokeThickness=1
@@ -347,6 +379,30 @@ function New-HistoryChartCard {
             [void]$canvas.Children.Add($dot)
         }
     }
+    $hoverGuide=[Windows.Shapes.Line]::new(); $hoverGuide.Y1=2; $hoverGuide.Y2=74; $hoverGuide.Stroke=New-HistoryBrush '#6F7B73'; $hoverGuide.StrokeThickness=1; $hoverGuide.Opacity=0.7; $hoverGuide.Visibility='Collapsed'; $hoverGuide.IsHitTestVisible=$false
+    $hoverDashes=[Windows.Media.DoubleCollection]::new(); $hoverDashes.Add(2.0); $hoverDashes.Add(3.0); $hoverGuide.StrokeDashArray=$hoverDashes; [Windows.Controls.Panel]::SetZIndex($hoverGuide,20); [void]$canvas.Children.Add($hoverGuide)
+    $hoverMarker=[Windows.Shapes.Ellipse]::new(); $hoverMarker.Width=9; $hoverMarker.Height=9; $hoverMarker.Fill=New-HistoryBrush '#131714'; $hoverMarker.StrokeThickness=2; $hoverMarker.Visibility='Collapsed'; $hoverMarker.IsHitTestVisible=$false
+    [Windows.Controls.Panel]::SetZIndex($hoverMarker,22); [void]$canvas.Children.Add($hoverMarker)
+    $hoverPopup=[Windows.Controls.Border]::new(); $hoverPopup.Width=118; $hoverPopup.Height=37; $hoverPopup.Padding=[Windows.Thickness]::new(7,4,7,4); $hoverPopup.Background=New-HistoryBrush '#F20D110F'; $hoverPopup.BorderBrush=New-HistoryBrush '#455047'; $hoverPopup.BorderThickness=[Windows.Thickness]::new(1); $hoverPopup.CornerRadius=[Windows.CornerRadius]::new(5); $hoverPopup.Visibility='Collapsed'; $hoverPopup.IsHitTestVisible=$false
+    $hoverPopup.Effect=[Windows.Media.Effects.DropShadowEffect]@{Color=[Windows.Media.Colors]::Black;BlurRadius=8;ShadowDepth=2;Opacity=0.45}
+    $hoverStack=[Windows.Controls.StackPanel]::new(); $hoverTime=New-HistoryText '' 7 '#77837B'; $hoverValue=New-HistoryText '' 9 '#EDF2EF'; $hoverValue.FontWeight='SemiBold'; [void]$hoverStack.Children.Add($hoverTime); [void]$hoverStack.Children.Add($hoverValue); $hoverPopup.Child=$hoverStack
+    [Windows.Controls.Panel]::SetZIndex($hoverPopup,24); [void]$canvas.Children.Add($hoverPopup)
+    $hoverState=[PSCustomObject]@{Kind='HistoryChart';Canvas=$canvas;Guide=$hoverGuide;Marker=$hoverMarker;Popup=$hoverPopup;TimeBlock=$hoverTime;ValueBlock=$hoverValue;Series=$Series;Start=$Start;End=$End;Resolver=${function:Get-HistoryNearestChartPoint};BrushConverter=[Windows.Media.BrushConverter]::new()}
+    $canvas.Tag=$hoverState; $card.Tag=$hoverState
+    $canvas.Add_MouseMove({
+        param($sender,$event)
+        $cursor=$event.GetPosition($sender)
+        $point=& $hoverState.Resolver -Series $hoverState.Series -Start $hoverState.Start -End $hoverState.End -CursorX $cursor.X -CursorY $cursor.Y -Width $sender.Width -Height $sender.Height
+        if ($null -eq $point) { return }
+        $hoverState.Guide.X1=$point.X; $hoverState.Guide.X2=$point.X
+        [Windows.Controls.Canvas]::SetLeft($hoverState.Marker,$point.X-4.5); [Windows.Controls.Canvas]::SetTop($hoverState.Marker,$point.Y-4.5)
+        $hoverState.Marker.Stroke=$hoverState.BrushConverter.ConvertFromString($point.Color)
+        $hoverState.TimeBlock.Text=$point.Time.ToString('MM-dd HH:mm')
+        $hoverState.ValueBlock.Text=("{0}  {1:0.##}{2}" -f $point.Name,$point.Value,$point.Suffix)
+        $popupLeft=if($point.X -gt 120){$point.X-124}else{$point.X+7}; [Windows.Controls.Canvas]::SetLeft($hoverState.Popup,[Math]::Max(0,[Math]::Min(124,$popupLeft))); [Windows.Controls.Canvas]::SetTop($hoverState.Popup,4)
+        $hoverState.Guide.Visibility='Visible'; $hoverState.Marker.Visibility='Visible'; $hoverState.Popup.Visibility='Visible'
+    }.GetNewClosure())
+    $canvas.Add_MouseLeave({ $hoverState.Guide.Visibility='Collapsed'; $hoverState.Marker.Visibility='Collapsed'; $hoverState.Popup.Visibility='Collapsed' }.GetNewClosure())
     [Windows.Controls.Grid]::SetRow($canvas,1); [void]$layout.Children.Add($canvas)
 
     $footer = [Windows.Controls.Grid]::new()
@@ -649,9 +705,24 @@ function Show-ServerPulseHistoryWindow {
         $ui.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
         $validationPassed=($null -eq $invalidResult.Value -and $ui.HistoryStartMonthError.Visibility -eq 'Visible' -and $ui.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
         Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start; &$render; $historyWindow.UpdateLayout()
+        $normalRenderPassed=($ui.HistoryRangeStatus.Text -ne '查询失败')
+        $hoverTestSeries=@([PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Latest=72;Points=@([PSCustomObject]@{Time=$start.AddMinutes(30);Value=72})})
+        $hoverTestCard=New-HistoryChartCard -Title 'HOVER TEST' -Subtitle '' -Series $hoverTestSeries -Start $start -End $end
+        [void]$ui.HistoryPanel.Children.Add($hoverTestCard); $historyWindow.UpdateLayout()
+        $hoverInteractionPassed=$false; $hoverInteractionError=$null
+        try {
+            $mouseMove=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $mouseMove.RoutedEvent=[Windows.UIElement]::MouseMoveEvent
+            $hoverTestCard.Tag.Canvas.RaiseEvent($mouseMove)
+            $shown=($hoverTestCard.Tag.Marker.Visibility -eq 'Visible' -and $hoverTestCard.Tag.Popup.Visibility -eq 'Visible' -and $hoverTestCard.Tag.ValueBlock.Text -match '^GPU')
+            $mouseLeave=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $mouseLeave.RoutedEvent=[Windows.UIElement]::MouseLeaveEvent
+            $hoverTestCard.Tag.Canvas.RaiseEvent($mouseLeave)
+            $hidden=($hoverTestCard.Tag.Marker.Visibility -eq 'Collapsed' -and $hoverTestCard.Tag.Popup.Visibility -eq 'Collapsed')
+            $hoverInteractionPassed=($shown -and $hidden)
+        } catch { $hoverInteractionError=$_.Exception.Message }
+        [void]$ui.HistoryPanel.Children.Remove($hoverTestCard)
         if ($ScreenshotPath) { Save-HistoryWindowScreenshot -Window $historyWindow -Path $ScreenshotPath }
         $startValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart').Value; $endValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd').Value
-        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error}
+        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError}
         $historyWindow.Close(); return $result
     }
     [void]$historyWindow.ShowDialog()

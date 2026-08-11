@@ -56,6 +56,16 @@ Assert-Equal ((ConvertFrom-HistoryDateParts -Year 2026 -Month 2 -Day 29 -Hour 0 
 Assert-Equal ((ConvertFrom-HistoryDateParts -Year 2026 -Month 1 -Day 1 -Hour 24 -Minute 0).InvalidFields -contains 'Hour') $true '小时越界校验'
 Assert-Equal ((ConvertFrom-HistoryDateParts -Year 2026 -Month 1 -Day 1 -Hour 0 -Minute 60).InvalidFields -contains 'Minute') $true '分钟越界校验'
 
+$hoverSeries = @(
+    [PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Points=@([PSCustomObject]@{Time=[datetime]'2026-08-11 09:15';Value=20})},
+    [PSCustomObject]@{Name='VRAM';Suffix='%';Color='#79C8D8';Points=@([PSCustomObject]@{Time=[datetime]'2026-08-11 09:45';Value=80},[PSCustomObject]@{Time=[datetime]'2026-08-11 09:50';Value=$null})}
+)
+$nearestHoverPoint = Get-HistoryNearestChartPoint -Series $hoverSeries -Start ([datetime]'2026-08-11 09:00') -End ([datetime]'2026-08-11 10:00') -CursorX 180 -CursorY 18
+Assert-Equal $nearestHoverPoint.Name 'VRAM' '折线图选择鼠标最近指标'
+Assert-Equal $nearestHoverPoint.Time.ToString('HH:mm') '09:45' '折线图最近点时间'
+Assert-Equal $nearestHoverPoint.Value 80 '折线图最近点数值'
+Assert-Equal $nearestHoverPoint.Suffix '%' '折线图最近点单位'
+
 $threw = $false
 try { ConvertFrom-ServerMetricsOutput -Output 'HOSTNAME=node-only' | Out-Null } catch { $threw = $true }
 Assert-Equal $threw $true '不完整输出校验'
