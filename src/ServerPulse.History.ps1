@@ -551,7 +551,7 @@ function Show-ServerPulseHistoryWindow {
     Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start
     Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $end
 
-    $render = {
+    $renderCore = {
         $startResult = Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
         $endResult = Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd'
         if ($null -eq $startResult.Value -or $null -eq $endResult.Value) {
@@ -573,14 +573,27 @@ function Show-ServerPulseHistoryWindow {
         $minutes = [Math]::Max(0,[int][Math]::Round(($rangeEnd-$rangeStart).TotalMinutes))
         $ui.HistoryRangeStatus.Text="$($records.Count) 个分钟点 · $minutes 分钟"; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
         $ui.HistoryFooterText.Text='本地按分钟平均保存 CPU、MEM、LOAD、GPU、显存、温度、功耗与风扇'
-    }
+    }.GetNewClosure()
+    $render = {
+        try { & $renderCore }
+        catch {
+            $message=[string]$_.Exception.Message
+            if ($message.Length -gt 140) { $message=$message.Substring(0,137) + '...' }
+            $ui.HistoryPanel.Children.Clear()
+            $errorText=New-HistoryText ("无法读取占用记录`n{0}" -f $message) 12 '#FF8A80'
+            $errorText.TextAlignment='Center'; $errorText.TextWrapping='Wrap'; $errorText.HorizontalAlignment='Center'; $errorText.Margin=[Windows.Thickness]::new(18,90,18,0)
+            [void]$ui.HistoryPanel.Children.Add($errorText)
+            $ui.HistoryRangeStatus.Text='查询失败'; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
+            $ui.HistoryFooterText.Text='请检查本地历史记录文件后重试'
+        }
+    }.GetNewClosure()
     $drag = [PSCustomObject]@{Active=$false;Cursor=$null;Left=0.0;Top=0.0;ScaleX=1.0;ScaleY=1.0}
     $ui.HistoryDragArea.Add_MouseLeftButtonDown({ param($sender,$event); if($event.ChangedButton -eq 'Left'){$dpi=[Windows.Media.VisualTreeHelper]::GetDpi($historyWindow);$drag.Active=$true;$drag.Cursor=[Windows.Forms.Cursor]::Position;$drag.Left=$historyWindow.Left;$drag.Top=$historyWindow.Top;$drag.ScaleX=$dpi.DpiScaleX;$drag.ScaleY=$dpi.DpiScaleY;[void][Windows.Input.Mouse]::Capture($ui.HistoryDragArea);$event.Handled=$true} })
     $ui.HistoryDragArea.Add_MouseMove({ if($drag.Active -and [Windows.Input.Mouse]::LeftButton -eq 'Pressed'){$cursor=[Windows.Forms.Cursor]::Position;$historyWindow.Left=$drag.Left+(($cursor.X-$drag.Cursor.X)/$drag.ScaleX);$historyWindow.Top=$drag.Top+(($cursor.Y-$drag.Cursor.Y)/$drag.ScaleY)} })
     $ui.HistoryDragArea.Add_MouseLeftButtonUp({ $drag.Active=$false;[void][Windows.Input.Mouse]::Capture($null) })
     $ui.HistoryCloseButton.Add_Click({ $historyWindow.Close() })
     $ui.HistoryQueryButton.Add_Click($render)
-    $ui.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $now;&$render })
+    $ui.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $now;&$render }.GetNewClosure())
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
         foreach ($field in @('Year','Month','Day','Hour','Minute')) {
             $currentPrefix = $prefix
@@ -592,12 +605,37 @@ function Show-ServerPulseHistoryWindow {
     &$render
     if ($SmokeTest) {
         $historyWindow.Show(); $historyWindow.UpdateLayout()
+        $originalHistoryDirectory=$Recorder.Directory
+        $invalidHistoryDirectory=Join-Path ([IO.Path]::GetTempPath()) ("serverpulse-invalid-history-{0}" -f [guid]::NewGuid().ToString('N'))
+        [void](New-Item -ItemType Directory -Path $invalidHistoryDirectory)
+        Set-Content -LiteralPath (Join-Path $invalidHistoryDirectory ($end.ToString('yyyy-MM-dd') + '.json')) -Value '{ invalid json' -Encoding UTF8
+        $queryState=[PSCustomObject]@{Button=$ui.HistoryQueryButton;Completed=$false;Passed=$true;Error=$null}
+        try {
+            $Recorder.Directory=$invalidHistoryDirectory
+            [void]$historyWindow.Dispatcher.BeginInvoke([Action]{
+                try { $queryState.Button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent)) }
+                catch { $queryState.Passed=$false; $queryState.Error=$_.Exception.Message }
+                finally { $queryState.Completed=$true }
+            }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::Background)
+            $queryDeadline=[DateTime]::UtcNow.AddSeconds(3)
+            while (-not $queryState.Completed -and [DateTime]::UtcNow -lt $queryDeadline) {
+                $frame=[Windows.Threading.DispatcherFrame]::new()
+                [void]$historyWindow.Dispatcher.BeginInvoke([Action]{ $frame.Continue=$false }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+                [Windows.Threading.Dispatcher]::PushFrame($frame)
+            }
+            if (-not $queryState.Completed) { $queryState.Passed=$false; $queryState.Error='异步查询点击超时' }
+            $queryClickPassed=$queryState.Passed; $queryClickError=$queryState.Error
+            $queryFailureContained=($queryClickPassed -and $ui.HistoryRangeStatus.Text -eq '查询失败' -and $ui.HistoryPanel.Children.Count -eq 1)
+        } finally {
+            $Recorder.Directory=$originalHistoryDirectory
+            Remove-Item -LiteralPath $invalidHistoryDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
         $ui.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
         $validationPassed=($null -eq $invalidResult.Value -and $ui.HistoryStartMonthError.Visibility -eq 'Visible' -and $ui.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
         Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start; &$render; $historyWindow.UpdateLayout()
         if ($ScreenshotPath) { Save-HistoryWindowScreenshot -Window $historyWindow -Path $ScreenshotPath }
         $startValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart').Value; $endValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd').Value
-        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed}
+        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained}
         $historyWindow.Close(); return $result
     }
     [void]$historyWindow.ShowDialog()

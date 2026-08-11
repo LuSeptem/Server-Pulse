@@ -517,6 +517,8 @@ function Complete-SmokeTest {
         $historyRecord = Get-CurrentHistoryMinuteRecord $script:historyRecorder
         if ($null -eq $historyRecord -or @($historyRecord.Servers).Count -ne 2) { throw '历史分钟记录验证失败' }
         $historySmoke = Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder -ScreenshotPath (Join-Path $scriptRoot 'tests\artifacts\history-window.png') -SmokeTest
+        if (-not $historySmoke.QueryClickPassed) { throw "历史查询按钮事件失败：$($historySmoke.QueryClickError)" }
+        if (-not $historySmoke.QueryFailureContained) { throw '历史查询异常未被窗口内提示安全拦截' }
         if ($historySmoke.PanelCount -lt 1 -or -not (ConvertFrom-HistoryMinuteText $historySmoke.Start) -or -not (ConvertFrom-HistoryMinuteText $historySmoke.End) -or -not $historySmoke.ValidationPassed) { throw '历史窗口、默认时间范围与红框校验失败' }
         $dragLeft = $window.Left; $dragTop = $window.Top
         $script:isDragging = $true; $script:dragStartCursor = [PSCustomObject]@{X=100;Y=100}; $script:dragStartLeft=$dragLeft; $script:dragStartTop=$dragTop; $script:dragScaleX=1.0; $script:dragScaleY=1.0
