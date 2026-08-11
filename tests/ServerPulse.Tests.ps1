@@ -40,6 +40,12 @@ Assert-Equal $metrics.Gpus[0].MemoryUsedMiB 12000 'GPU 已用显存'
 Assert-Equal $metrics.Gpus[0].MemoryTotalMiB 24576 'GPU 总显存'
 Assert-Equal $metrics.Gpus[1].PowerDrawW $null '无效数值转换'
 
+Assert-Equal (ConvertTo-RefreshIntervalSeconds '1') 1 '最小刷新间隔'
+Assert-Equal (ConvertTo-RefreshIntervalSeconds '300') 300 '最大刷新间隔'
+Assert-Equal (ConvertTo-RefreshIntervalSeconds '0') $null '拒绝过小刷新间隔'
+Assert-Equal (ConvertTo-RefreshIntervalSeconds '301') $null '拒绝过大刷新间隔'
+Assert-Equal (ConvertTo-RefreshIntervalSeconds 'fast') $null '拒绝非数字刷新间隔'
+
 $threw = $false
 try { ConvertFrom-ServerMetricsOutput -Output 'HOSTNAME=node-only' | Out-Null } catch { $threw = $true }
 Assert-Equal $threw $true '不完整输出校验'

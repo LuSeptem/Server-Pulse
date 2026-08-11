@@ -13,6 +13,16 @@ function ConvertTo-MetricNumber {
     return $null
 }
 
+function ConvertTo-RefreshIntervalSeconds {
+    param([AllowNull()]$Value)
+
+    if ($null -eq $Value) { return $null }
+    $seconds = 0
+    if (-not [int]::TryParse(([string]$Value).Trim(), [ref]$seconds)) { return $null }
+    if ($seconds -lt 1 -or $seconds -gt 300) { return $null }
+    return $seconds
+}
+
 function Split-MetricCsvLine {
     param([Parameter(Mandatory)][string]$Line)
 
@@ -123,4 +133,3 @@ function Get-ServerPulseConfig {
         Servers        = $servers
     }
 }
-

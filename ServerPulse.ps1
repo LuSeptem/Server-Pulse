@@ -79,8 +79,20 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
         </Grid.RowDefinitions>
         <Border BorderBrush="#242925" BorderThickness="0,1,0,1" Padding="15,0">
           <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
             <TextBlock x:Name="SummaryText" Text="等待首次采集" Foreground="#939D97" FontSize="10" VerticalAlignment="Center"/>
-            <TextBlock x:Name="UpdatedText" Text="--:--:--" Foreground="#5F6963" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="刷新" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="0,0,4,0"/>
+              <TextBox x:Name="RefreshIntervalBox" Width="32" Height="20" MaxLength="3" Text="5" TextAlignment="Center"
+                       VerticalContentAlignment="Center" Padding="2,0" FontSize="9" Foreground="#C5CDC8"
+                       Background="#1A1F1C" BorderBrush="#343B36" BorderThickness="1" CaretBrush="#A7D948"
+                       SelectionBrush="#A7D948" ToolTip="刷新间隔：1–300 秒，回车生效"/>
+              <TextBlock Text="s" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="3,0,10,0"/>
+              <TextBlock x:Name="UpdatedText" Text="--:--:--" Foreground="#5F6963" FontSize="9" VerticalAlignment="Center"/>
+            </StackPanel>
           </Grid>
         </Border>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Padding="12">
@@ -99,13 +111,13 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $reader = [Xml.XmlNodeReader]::new($xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','MinimizeButton','CloseButton','SummaryText','UpdatedText','ServerPanel'
+$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','MinimizeButton','CloseButton','SummaryText','RefreshIntervalBox','UpdatedText','ServerPanel'
 $ui = @{}
 foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
 $settingsDirectory = Join-Path $env:LOCALAPPDATA 'ServerPulse'
 $settingsPath = Join-Path $settingsDirectory 'settings.json'
-$settings = [PSCustomObject]@{ Version = 2; Opacity = 0.94; AutoHide = $true; Topmost = $true; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
+$settings = [PSCustomObject]@{ Version = 2; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
 if (Test-Path -LiteralPath $settingsPath) {
     try {
         $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -129,6 +141,10 @@ $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null }
 
 . (Join-Path $scriptRoot 'src\ServerPulse.Core.ps1')
 $config = Get-ServerPulseConfig -Path $configPath
+$configuredInterval = ConvertTo-RefreshIntervalSeconds ([Math]::Round($config.PollIntervalMs / 1000))
+$savedInterval = ConvertTo-RefreshIntervalSeconds $settings.RefreshIntervalSeconds
+$script:refreshIntervalSeconds = if ($null -ne $savedInterval) { $savedInterval } elseif ($null -ne $configuredInterval) { $configuredInterval } else { 5 }
+$ui.RefreshIntervalBox.Text = [string]$script:refreshIntervalSeconds
 $script:cards = @{}
 $script:collectionProcess = $null
 $script:stdoutTask = $null
@@ -324,8 +340,27 @@ function Save-Settings {
     $top = if ($script:hiddenAtEdge) { $script:shownTop } else { $window.Top }
     [PSCustomObject]@{
         Version=2; Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
+        RefreshIntervalSeconds=$script:refreshIntervalSeconds
         Width=$window.Width; Height=$window.Height; Left=$left; Top=$top
     } | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+}
+
+function Set-RefreshInterval {
+    param($Value, [switch]$Persist)
+
+    $seconds = ConvertTo-RefreshIntervalSeconds $Value
+    if ($null -eq $seconds) {
+        $ui.RefreshIntervalBox.Text = [string]$script:refreshIntervalSeconds
+        return $false
+    }
+    $changed = $seconds -ne $script:refreshIntervalSeconds
+    $script:refreshIntervalSeconds = $seconds
+    $ui.RefreshIntervalBox.Text = [string]$seconds
+    if (-not $script:collectionProcess) {
+        $script:nextCollection = [DateTime]::UtcNow.AddSeconds($seconds)
+    }
+    if ($Persist -and $changed -and -not $SmokeTest) { Save-Settings }
+    return $true
 }
 
 function Get-WorkArea {
@@ -445,6 +480,11 @@ function Complete-SmokeTest {
         $originalWidth = $window.Width; $window.Width = $originalWidth + 20
         if ($window.Width -le $originalWidth) { throw '尺寸调节验证失败' }
         $window.Width = $originalWidth; Set-BackgroundOpacity $originalOpacity
+        $originalInterval = $script:refreshIntervalSeconds
+        if (-not (Set-RefreshInterval 12) -or $script:refreshIntervalSeconds -ne 12 -or $ui.RefreshIntervalBox.Text -ne '12') { throw '刷新间隔调节验证失败' }
+        if (Set-RefreshInterval 'invalid') { throw '无效刷新间隔不应生效' }
+        if ($script:refreshIntervalSeconds -ne 12 -or $ui.RefreshIntervalBox.Text -ne '12') { throw '无效刷新间隔应恢复当前值' }
+        [void](Set-RefreshInterval $originalInterval)
         $dragLeft = $window.Left; $dragTop = $window.Top
         $script:isDragging = $true; $script:dragStartCursor = [PSCustomObject]@{X=100;Y=100}; $script:dragStartLeft=$dragLeft; $script:dragStartTop=$dragTop; $script:dragScaleX=1.0; $script:dragScaleY=1.0
         Update-ManualDragPosition ([PSCustomObject]@{X=132;Y=118})
@@ -518,7 +558,7 @@ $pollTimer.Add_Tick({
                 }
             } catch { $ui.SummaryText.Text = "采集结果错误：$($_.Exception.Message)" }
         } elseif ($stderr) { $ui.SummaryText.Text = "采集器错误：$stderr" }
-        $script:nextCollection = [DateTime]::UtcNow.AddMilliseconds($config.PollIntervalMs)
+        $script:nextCollection = [DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
     }
     if (-not $script:collectionProcess -and [DateTime]::UtcNow -ge $script:nextCollection) { Start-Collection }
 })
@@ -557,6 +597,16 @@ $window.Add_LocationChanged({
 })
 $window.Add_MouseLeave({ if ($script:dockSide -and -not $script:hiddenAtEdge -and $ui.EdgeButton.Tag -eq 'active') { $hideTimer.Start() } })
 $ui.OpacitySlider.Add_ValueChanged({ Set-BackgroundOpacity ($ui.OpacitySlider.Value / 100) })
+$ui.RefreshIntervalBox.Add_PreviewTextInput({ param($sender,$event); if ($event.Text -notmatch '^\d+$') { $event.Handled = $true } })
+$ui.RefreshIntervalBox.Add_PreviewKeyDown({
+    param($sender,$event)
+    if ($event.Key -eq [Windows.Input.Key]::Enter) {
+        [void](Set-RefreshInterval $ui.RefreshIntervalBox.Text -Persist)
+        [Windows.Input.Keyboard]::ClearFocus()
+        $event.Handled = $true
+    }
+})
+$ui.RefreshIntervalBox.Add_LostKeyboardFocus({ [void](Set-RefreshInterval $ui.RefreshIntervalBox.Text -Persist) })
 $ui.EdgeButton.Add_Click({
     if ($ui.EdgeButton.Tag -eq 'active') { $ui.EdgeButton.Tag = $null; $hideTimer.Stop(); Show-FromEdge }
     else { $ui.EdgeButton.Tag = 'active'; Schedule-EdgeHide }
