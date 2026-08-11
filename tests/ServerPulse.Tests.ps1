@@ -58,14 +58,16 @@ Assert-Equal ((ConvertFrom-HistoryDateParts -Year 2026 -Month 1 -Day 1 -Hour 24 
 Assert-Equal ((ConvertFrom-HistoryDateParts -Year 2026 -Month 1 -Day 1 -Hour 0 -Minute 60).InvalidFields -contains 'Minute') $true '分钟越界校验'
 
 $hoverSeries = @(
-    [PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Points=@([PSCustomObject]@{Time=[datetime]'2026-08-11 09:15';Value=20})},
-    [PSCustomObject]@{Name='VRAM';Suffix='%';Color='#79C8D8';Points=@([PSCustomObject]@{Time=[datetime]'2026-08-11 09:45';Value=80},[PSCustomObject]@{Time=[datetime]'2026-08-11 09:50';Value=$null})}
+    [PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Points=@([PSCustomObject]@{Time=[datetime]'2026-08-11 09:15';Value=20},[PSCustomObject]@{Time=[datetime]'2026-08-11 09:45';Value=55})},
+    [PSCustomObject]@{Name='VRAM';Suffix='%';Color='#79C8D8';Points=@([PSCustomObject]@{Time=[datetime]'2026-08-11 09:45';Value=80},[PSCustomObject]@{Time=[datetime]'2026-08-11 09:50';Value=$null})},
+    [PSCustomObject]@{Name='TEMP';Suffix='°C';Color='#E4B64B';Points=@([PSCustomObject]@{Time=[datetime]'2026-08-11 09:45';Value=64})}
 )
-$nearestHoverPoint = Get-HistoryNearestChartPoint -Series $hoverSeries -Start ([datetime]'2026-08-11 09:00') -End ([datetime]'2026-08-11 10:00') -CursorX 180 -CursorY 18
-Assert-Equal $nearestHoverPoint.Name 'VRAM' '折线图选择鼠标最近指标'
-Assert-Equal $nearestHoverPoint.Time.ToString('HH:mm') '09:45' '折线图最近点时间'
-Assert-Equal $nearestHoverPoint.Value 80 '折线图最近点数值'
-Assert-Equal $nearestHoverPoint.Suffix '%' '折线图最近点单位'
+$hoverSample = Get-HistoryChartHoverSample -Series $hoverSeries -Start ([datetime]'2026-08-11 09:00') -End ([datetime]'2026-08-11 10:00') -CursorX 180
+Assert-Equal $hoverSample.Time.ToString('yyyy-MM-dd HH:mm') '2026-08-11 09:45' '折线图按横轴选择具体分钟'
+Assert-Equal @($hoverSample.Values).Count 3 '折线图同时返回同一横轴全部指标'
+Assert-Equal $hoverSample.Values[0].Name 'GPU' '折线图保持指标顺序'
+Assert-Equal $hoverSample.Values[1].Value 80 '折线图返回同分钟显存值'
+Assert-Equal $hoverSample.Values[2].Suffix '°C' '折线图返回同分钟温度单位'
 
 $threw = $false
 try { ConvertFrom-ServerMetricsOutput -Output 'HOSTNAME=node-only' | Out-Null } catch { $threw = $true }
@@ -143,5 +145,21 @@ $dragUp=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::Primary
 $dragTestArea.RaiseEvent($dragUp)
 Assert-Equal $dragTestState.Active $false '释放鼠标后结束历史窗口拖动'
 $dragTestWindow.Close()
+
+$wpfHoverTime=[datetime]'2026-08-11 09:45'
+$wpfHoverSeries=@(
+    [PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Latest=55;Points=@([PSCustomObject]@{Time=$wpfHoverTime;Value=55})},
+    [PSCustomObject]@{Name='VRAM';Suffix='%';Color='#79C8D8';Latest=80;Points=@([PSCustomObject]@{Time=$wpfHoverTime;Value=80})},
+    [PSCustomObject]@{Name='TEMP';Suffix='°C';Color='#E4B64B';Latest=64;Points=@([PSCustomObject]@{Time=$wpfHoverTime;Value=64})}
+)
+$wpfHoverWindow=[Windows.Window]::new(); $wpfHoverCard=New-HistoryChartCard -Title 'GPU 0' -Subtitle '' -Series $wpfHoverSeries -Start $wpfHoverTime.AddMinutes(-30) -End $wpfHoverTime.AddMinutes(30); $wpfHoverWindow.Content=$wpfHoverCard
+$wpfHoverWindow.Show(); $wpfHoverWindow.UpdateLayout()
+$wpfHoverMove=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverMove.RoutedEvent=[Windows.UIElement]::MouseMoveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverMove)
+Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count 3 'WPF 悬停同时标记同分钟三条曲线'
+Assert-Equal $wpfHoverCard.Tag.TimeBlock.Text '2026-08-11 09:45' 'WPF 悬停显示完整具体时间'
+Assert-Equal ([bool]($wpfHoverCard.Tag.ValueBlock.Text -match '^GPU 55%.*VRAM 80%.*TEMP 64°C$')) $true 'WPF 悬停同时显示同分钟全部结果'
+$wpfHoverLeave=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverLeave.RoutedEvent=[Windows.UIElement]::MouseLeaveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
+Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -ne 'Collapsed' }).Count 0 '鼠标移出后隐藏全部悬停标记'
+$wpfHoverWindow.Close()
 
 Write-Output "PASS: $passed assertions"
