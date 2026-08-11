@@ -23,6 +23,29 @@ function ConvertTo-RefreshIntervalSeconds {
     return $seconds
 }
 
+function Format-Memory {
+    param([AllowNull()]$MiB)
+
+    if ($null -eq $MiB) { return '—' }
+    if ([double]$MiB -ge 1024) { return ('{0:0.0} GB' -f ([double]$MiB / 1024)) }
+    return ('{0:0} MB' -f [double]$MiB)
+}
+
+function Format-MemoryUsage {
+    param(
+        [AllowNull()]$Percent,
+        [AllowNull()]$UsedMiB,
+        [AllowNull()]$TotalMiB
+    )
+
+    if ($null -eq $Percent) { return '—' }
+    if ($null -eq $UsedMiB -or $null -eq $TotalMiB) { return ('{0:0}%' -f [double]$Percent) }
+    if ([double]$TotalMiB -ge 1024) {
+        return ('{0:0}% · {1:0.0}/{2:0.0} GB' -f [double]$Percent, ([double]$UsedMiB / 1024), ([double]$TotalMiB / 1024))
+    }
+    return ('{0:0}% · {1:0}/{2:0} MB' -f [double]$Percent, [double]$UsedMiB, [double]$TotalMiB)
+}
+
 function Split-MetricCsvLine {
     param([Parameter(Mandatory)][string]$Line)
 

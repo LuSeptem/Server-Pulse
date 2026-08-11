@@ -334,12 +334,6 @@ function Format-Percent($Value) {
     return ('{0:0}%' -f [double]$Value)
 }
 
-function Format-Memory($MiB) {
-    if ($null -eq $MiB) { return '—' }
-    if ([double]$MiB -ge 1024) { return ('{0:0.0} GB' -f ([double]$MiB / 1024)) }
-    return ('{0:0} MB' -f [double]$MiB)
-}
-
 function Set-Metric($cell, $value) {
     $cell.Value.Text = Format-Percent $value
     $cell.Bar.Value = if ($null -eq $value) { 0 } else { [Math]::Max(0, [Math]::Min(100, [double]$value)) }
@@ -366,6 +360,7 @@ function Update-ServerCard($server) {
     $card.Meta.Text = "{0}   ·   {1} ms   ·   LOAD {2:0.00}" -f $metrics.Hostname, $server.LatencyMs, [double]$metrics.Load.One
     Set-Metric $card.Cpu $metrics.Cpu.Utilization
     Set-Metric $card.Memory $metrics.Memory.Percent
+    $card.Memory.Value.Text = Format-MemoryUsage $metrics.Memory.Percent $metrics.Memory.UsedMiB $metrics.Memory.TotalMiB
     $gpus = @($metrics.Gpus)
     $used = ($gpus | Where-Object { $null -ne $_.MemoryUsedMiB } | Measure-Object MemoryUsedMiB -Sum).Sum
     $total = ($gpus | Where-Object { $null -ne $_.MemoryTotalMiB } | Measure-Object MemoryTotalMiB -Sum).Sum

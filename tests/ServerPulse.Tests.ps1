@@ -36,6 +36,7 @@ $metrics = ConvertFrom-ServerMetricsOutput -Output $sample
 Assert-Equal $metrics.Hostname 'compute-01' '主机名'
 Assert-Equal $metrics.Cpu.Utilization 37.5 'CPU 利用率'
 Assert-Equal $metrics.Memory.UsedMiB 16384 '已用内存'
+Assert-Equal (Format-MemoryUsage $metrics.Memory.Percent $metrics.Memory.UsedMiB $metrics.Memory.TotalMiB) '25% · 16.0/64.0 GB' '系统内存显示百分比和具体用量'
 Assert-Equal @($metrics.Gpus).Count 2 'GPU 数量'
 Assert-Equal $metrics.Gpus[0].MemoryUsedMiB 12000 'GPU 已用显存'
 Assert-Equal $metrics.Gpus[0].MemoryTotalMiB 24576 'GPU 总显存'
