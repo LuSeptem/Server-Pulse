@@ -232,7 +232,8 @@ function Show-ServerPulseManualServerDialog {
 
 function Show-ServerPulseServerManager {
     param([Windows.Window]$Owner,$Store,[hashtable]$SessionSecrets,[string]$AskPassPath,[int]$TimeoutMs,[scriptblock]$OnApplied,[switch]$SmokeTest)
-    $window=[Windows.Window]::new();$window.Title='Server Pulse · SSH 服务器';$window.Width=620;$window.Height=650;$window.MinWidth=520;$window.MinHeight=420;$window.Owner=$Owner;$window.WindowStartupLocation='CenterOwner';$window.Background=New-ServerManagerBrush '#0D100E';$window.Foreground=New-ServerManagerBrush '#E7ECE8';$window.FontFamily='Microsoft YaHei UI'
+    $window=[Windows.Window]::new();$window.Title='Server Pulse · SSH 服务器';$window.Width=620;$window.Height=650;$window.MinWidth=520;$window.MinHeight=420;$window.Owner=$Owner;$window.WindowStartupLocation='CenterOwner';$window.ShowInTaskbar=$false;$window.Background=New-ServerManagerBrush '#0D100E';$window.Foreground=New-ServerManagerBrush '#E7ECE8';$window.FontFamily='Microsoft YaHei UI'
+    $topmostBinding=[Windows.Data.Binding]::new('Topmost');$topmostBinding.Source=$Owner;$topmostBinding.Mode='OneWay';[void]$window.SetBinding([Windows.Window]::TopmostProperty,$topmostBinding)
     $root=[Windows.Controls.DockPanel]::new();$root.Margin=16;$window.Content=$root
     $footer=[Windows.Controls.StackPanel]::new();$footer.Orientation='Horizontal';$footer.HorizontalAlignment='Right';$footer.Margin='0,12,0,0';[Windows.Controls.DockPanel]::SetDock($footer,'Bottom');[void]$root.Children.Add($footer)
     $add=[Windows.Controls.Button]::new();$add.Content='添加服务器';$add.Padding='12,5';$apply=[Windows.Controls.Button]::new();$apply.Content='验证并应用';$apply.Padding='14,5';$apply.Margin='8,0,0,0';$cancel=[Windows.Controls.Button]::new();$cancel.Content='取消';$cancel.Padding='14,5';$cancel.Margin='8,0,0,0';foreach($b in @($add,$apply,$cancel)){[void]$footer.Children.Add($b)}
@@ -261,11 +262,12 @@ function Show-ServerPulseServerManager {
             Clear-ServerPulseSessionSecrets $ctx.OriginalSessionSecrets
             foreach($identity in @($ctx.SessionSecrets.Keys)){if($identity-in$newMonitoredIdentities-and-not$ctx.PendingCredentialWrites.ContainsKey($identity)){$secret=Get-ServerPulseSessionSecret $ctx.SessionSecrets $identity;if($null-ne$secret){Set-ServerPulseSessionSecret $ctx.OriginalSessionSecrets $identity $secret};$secret=$null}}
             if($null-ne$ctx.OnApplied){& $ctx.OnApplied $ctx.Store @($ctx.Rows)}
-            $ctx.Window.DialogResult=$true
+            $ctx.Window.Close()
         }catch{[Windows.MessageBox]::Show($ctx.Window,$_.Exception.Message,'应用失败','OK','Error')|Out-Null}
         finally{$sender.IsEnabled=$true}
     })
     $window.Tag=$context;$window.Add_Closed({param($sender,$eventArgs);$ctx=$sender.Tag;Stop-ServerManagerCandidateDiscovery $ctx;Clear-ServerPulseSessionSecrets $ctx.SessionSecrets;foreach($pending in @($ctx.PendingCredentialWrites.Values)){$pending.Password=$null};$ctx.PendingCredentialWrites.Clear()})
-    if($SmokeTest){return [PSCustomObject]@{Window=$window;Context=$context;ApplyButton=$apply;AddButton=$add}}
-    [void]$window.ShowDialog()
+    $result=[PSCustomObject]@{Window=$window;Context=$context;ApplyButton=$apply;AddButton=$add}
+    if(-not$SmokeTest){$window.Show();[void]$window.Activate()}
+    return $result
 }

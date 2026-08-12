@@ -251,6 +251,7 @@ $script:smokeError = $null
 $script:authManagerPrompted = $false
 $script:sshManagerOpen = $false
 $script:sshManagerOpenQueued = $false
+$script:sshManagerWindow = $null
 
 function New-Brush([string]$Color) {
     return [Windows.Media.BrushConverter]::new().ConvertFromString($Color)
@@ -1027,12 +1028,15 @@ function Show-ServerPulseSshManager {
     }elseif($script:sshManagerOpenQueued){
         $script:sshManagerOpenQueued=$false
     }
-    if($script:sshManagerOpen){return}
+    if($script:sshManagerOpen){if($null-ne$script:sshManagerWindow-and$script:sshManagerWindow.IsVisible){[void]$script:sshManagerWindow.Activate()};return}
     Close-UserUsagePopup $script:userUsagePopupManager
     $script:authManagerPrompted=$true
     $script:sshManagerOpen=$true
-    try{[void](Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows})}
-    finally{$script:sshManagerOpen=$false}
+    try{
+        $manager=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows}
+        $script:sshManagerWindow=$manager.Window
+        $manager.Window.Add_Closed({$script:sshManagerOpen=$false;$script:sshManagerWindow=$null})
+    }catch{$script:sshManagerOpen=$false;$script:sshManagerWindow=$null;throw}
 }
 
 function Queue-ServerPulseSshManager {
@@ -1337,6 +1341,7 @@ $window.Add_Loaded({
 })
 $window.Add_Closing({
     Close-UserUsagePopup $script:userUsagePopupManager
+    if($null-ne$script:sshManagerWindow-and$script:sshManagerWindow.IsVisible){$script:sshManagerWindow.Close()}
     $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
     $script:trayIcon.Visible = $false
     $script:trayIcon.Dispose()

@@ -359,7 +359,7 @@ Assert-Equal ([bool]($mainScript -match 'function Hide-ServerPulseToTray')) $tru
 Assert-Equal ([bool]($mainScript -match '(?s)\$ui\.MinimizeButton\.Add_Click.+?Hide-ServerPulseToTray')) $true '最小化按钮隐藏到托盘'
 Assert-Equal ([bool]($mainScript -match '(?s)\$window\.Add_Closing.+?\$script:trayIcon\.Dispose\(\)')) $true '退出时释放托盘图标'
 Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager')) $true '主窗口和托盘可打开 SSH 服务器管理窗口'
-Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen\)\{return\}')) $true 'SSH 管理窗口具有单实例门闩'
+Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen\).*\$script:sshManagerWindow\.Activate\(\).*return')) $true 'SSH 管理窗口具有单实例激活门闩'
 Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen-or\$script:sshManagerOpenQueued\)\{return\}')) $true '自动打开 SSH 管理窗口不会重复排队'
 Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager -Queued')) $true '排队的管理窗口调用可被手动打开取消'
 Assert-Equal ([bool]($mainScript -match 'Clear-ServerPulseSessionSecrets')) $true '退出程序时清除全部会话密码'
@@ -371,6 +371,8 @@ $managerScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerP
 Assert-Equal ([bool]($managerScript -match 'InheritHistory=\[bool\]\$w\.Tag\.Inherit\.IsChecked')) $true '编辑连接身份时由用户选择是否继承历史'
 Assert-Equal ([bool]($managerScript -match 'DeleteCredentialButton')) $true '服务器管理窗口允许独立删除 Windows 凭据'
 Assert-Equal ([bool]($managerScript -match '\.BeginStop\(')) $true '关闭管理窗口时异步停止 SSH 发现而不阻塞 UI'
+Assert-Equal ([bool]($managerScript -match '\$window\.ShowDialog\(\)')) $false 'SSH 管理窗口不得使用会禁用主界面的模态消息循环'
+Assert-Equal ([bool]($managerScript -match '\$window\.Show\(\)')) $true 'SSH 管理窗口使用非模态显示'
 Assert-Equal ([bool]($mainScript -match 'Register-UserUsageTarget')) $true '实时卡片注册用户占用交互目标'
 Assert-Equal ([bool]($mainScript -match '\$Target\.Add_MouseEnter\(\{\s*param\(\$sender[^}]+Invoke-UserUsageTargetMouseEnter \$sender\.Tag')) $true '实时用户悬停回调通过 sender.Tag 保持注册后生命周期'
 Assert-Equal ([bool]($mainScript -match '(?s)if \(\$manager\.IsPinned.+?\$manager\.CurrentTarget\.Key -eq \$TargetState\.Key\).+?Close-UserUsagePopup')) $true '实时用户卡片再次点击关闭已固定弹窗'
@@ -424,6 +426,13 @@ Assert-Equal (Get-ServerPulseSessionSecret $managerSecrets $managerServer.Identi
 $managerRow.Monitor.IsChecked=$false
 Assert-Equal (Get-ServerPulseSessionSecret $managerSecrets $managerServer.Identity) 'manager-session-secret' '取消管理窗口前取消勾选不提前改变当前会话密码'
 $managerSmoke.Window.Close();$managerOwner.Close();Clear-ServerPulseSessionSecrets $managerSecrets
+$modelessOwner=[Windows.Window]::new();$modelessOwner.Topmost=$true;$modelessOwner.Show();$modelessSecrets=New-ServerPulseSessionSecretStore
+$modelessManager=Show-ServerPulseServerManager -Owner $modelessOwner -Store $managerStore -SessionSecrets $modelessSecrets -AskPassPath 'unused' -TimeoutMs 1000 -OnApplied {}
+Assert-Equal $modelessManager.Window.IsVisible $true '非模态 SSH 管理窗口立即可见'
+Assert-Equal $modelessOwner.IsEnabled $true 'SSH 管理窗口打开时主窗口保持可点击'
+Assert-Equal $modelessManager.Window.ShowInTaskbar $false 'SSH 管理窗口不创建独立任务栏项目'
+Assert-Equal $modelessManager.Window.Topmost $true 'SSH 管理窗口跟随置顶主窗口'
+$modelessManager.Window.Close();$modelessOwner.Close();Clear-ServerPulseSessionSecrets $modelessSecrets
 $closeTestWindow=[Windows.Window]::new(); $closeTestButton=[Windows.Controls.Button]::new(); $closeTestWindow.Content=$closeTestButton
 Register-HistoryWindowCloseButton -Button $closeTestButton
 $closeTestWindow.Show(); $closeTestButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
