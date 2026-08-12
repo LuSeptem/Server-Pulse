@@ -465,6 +465,9 @@ $wpfHoverWindow.Show(); $wpfHoverWindow.UpdateLayout()
 Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $null -ne $_.Toggle }).Count 3 'GPU 图表提供三个指标显示开关'
 $wpfHoverMove=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverMove.RoutedEvent=[Windows.UIElement]::MouseMoveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverMove)
 Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count 3 'WPF 悬停同时标记同分钟三条曲线'
+Assert-Equal $wpfHoverCard.Tag.Popup.IsHitTestVisible $false '未锁定的历史悬停浮窗必须穿透鼠标以继续扫图'
+$wpfPopupLeft=[Windows.Controls.Canvas]::GetLeft($wpfHoverCard.Tag.Popup); $wpfPopupRight=$wpfPopupLeft+$wpfHoverCard.Tag.Popup.Width; $wpfSampleX=[Windows.Controls.Canvas]::GetLeft($wpfHoverCard.Tag.Markers[0].Shape)+4.5
+Assert-Equal (($wpfPopupRight -le ($wpfSampleX-7)) -or ($wpfPopupLeft -ge ($wpfSampleX+7))) $true '历史悬停浮窗必须避开当前采样线'
 Assert-Equal $wpfHoverCard.Tag.TimeBlock.Text '2026-08-11 09:45' 'WPF 悬停显示完整具体时间'
 Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' }).Count 3 '悬停浮窗将三个指标分行显示'
 Assert-Equal $wpfHoverCard.Tag.Views[0].PopupText.Text 'GPU  55%' '悬停行显示 GPU 数值'
@@ -475,8 +478,12 @@ Assert-Equal $wpfHoverCard.Tag.Views[1].Line.Visibility 'Collapsed' '隐藏指�
 $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverMove)
 Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count 2 '隐藏后仅标记其余可见曲线'
 Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' }).Count 2 '隐藏后浮窗不显示该指标行'
+$wpfHoverDown=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left); $wpfHoverDown.RoutedEvent=[Windows.UIElement]::MouseLeftButtonDownEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverDown)
+Assert-Equal $wpfHoverCard.Tag.IsLocked $true '点击历史图表锁定当前分钟'
+Assert-Equal $wpfHoverCard.Tag.Popup.IsHitTestVisible $true '锁定后的历史浮窗恢复交互以选择用户曲线'
 $wpfHoverLeave=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverLeave.RoutedEvent=[Windows.UIElement]::MouseLeaveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
-Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -ne 'Collapsed' }).Count 0 '鼠标移出后隐藏全部悬停标记'
+$wpfHoverCard.Tag.IsLocked=$false; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
+Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -ne 'Collapsed' }).Count 0 '未锁定时鼠标移出后隐藏全部悬停标记'
 $wpfHoverWindow.Close()
 
 $colorA = Get-HistoryUserColor 'Alpha'
