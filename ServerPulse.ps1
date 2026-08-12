@@ -91,6 +91,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
                   IsSnapToTickEnabled="True" ToolTip="透明度" Foreground="#A7D948" Margin="4,0,6,0"/>
           <Button x:Name="EdgeButton" Content="边" Style="{StaticResource QuietButton}" ToolTip="贴边自动隐藏"/>
           <Button x:Name="PinButton" Content="置" Style="{StaticResource QuietButton}" ToolTip="始终置顶"/>
+          <Button x:Name="ServerButton" Content="服" Style="{StaticResource QuietButton}" ToolTip="选择监视 SSH 服务器"/>
           <Button x:Name="MinimizeButton" Content="—" Style="{StaticResource QuietButton}" ToolTip="隐藏到托盘"/>
           <Button x:Name="CloseButton" Content="×" Style="{StaticResource QuietButton}" ToolTip="退出"/>
         </StackPanel>
@@ -136,11 +137,11 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $reader = [Xml.XmlNodeReader]::new($xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','MinimizeButton','CloseButton','SummaryText','HistoryButton','RefreshIntervalBox','UpdatedText','ServerPanel'
+$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','ServerButton','MinimizeButton','CloseButton','SummaryText','HistoryButton','RefreshIntervalBox','UpdatedText','ServerPanel'
 $ui = @{}
 foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
-$settingsDirectory = Join-Path $env:LOCALAPPDATA 'ServerPulse'
+$settingsDirectory = if($SmokeTest){Join-Path $scriptRoot 'tests\artifacts\localappdata-smoke\ServerPulse'}else{Join-Path $env:LOCALAPPDATA 'ServerPulse'}
 $settingsPath = Join-Path $settingsDirectory 'settings.json'
 $settings = [PSCustomObject]@{ Version = 2; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
 if (Test-Path -LiteralPath $settingsPath) {
@@ -192,7 +193,16 @@ $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null }
 
 . (Join-Path $scriptRoot 'src\ServerPulse.Core.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.History.ps1')
+. (Join-Path $scriptRoot 'src\ServerPulse.Ssh.ps1')
+. (Join-Path $scriptRoot 'src\ServerPulse.ServerManager.ps1')
 $config = Get-ServerPulseConfig -Path $configPath
+$serverStorePath = Join-Path $settingsDirectory 'servers.json'
+$script:firstServerStoreRun = -not (Test-Path -LiteralPath $serverStorePath)
+$script:serverStore = Initialize-ServerPulseServerStore -SeedConfig $config -Path $serverStorePath
+if ($script:firstServerStoreRun -and -not $SmokeTest) { Save-ServerPulseServerStore $script:serverStore }
+$script:sessionSecrets = New-ServerPulseSessionSecretStore
+$script:serverAuthStates = @{}
+$script:askPassPath = Ensure-ServerPulseAskPassHelper (Join-Path $settingsDirectory 'bin')
 $configuredInterval = ConvertTo-RefreshIntervalSeconds ([Math]::Round($config.PollIntervalMs / 1000))
 $savedInterval = ConvertTo-RefreshIntervalSeconds $settings.RefreshIntervalSeconds
 $script:refreshIntervalSeconds = if ($null -ne $savedInterval) { $savedInterval } elseif ($null -ne $configuredInterval) { $configuredInterval } else { 5 }
@@ -221,6 +231,7 @@ $script:dragScaleY = 1.0
 $script:smokeFinished = $false
 $script:smokePassed = $false
 $script:smokeError = $null
+$script:authManagerPrompted = $false
 
 function New-Brush([string]$Color) {
     return [Windows.Media.BrushConverter]::new().ConvertFromString($Color)
@@ -644,6 +655,7 @@ $script:userUsagePopupManager = New-UserUsagePopupManager
 Register-UserUsageWindowEvents -HostWindow $window -Manager $script:userUsagePopupManager
 
 function Add-ServerCard($server) {
+    $sshTarget = if ($server.PSObject.Properties.Name -contains 'SshTarget') { [string]$server.SshTarget } else { [string]$server.host }
     $surface = [Windows.Controls.Border]::new()
     $surface.Background = New-AlphaBrush '#171A18' $script:backgroundOpacity
     $surface.BorderBrush = New-Brush '#2B302D'
@@ -668,7 +680,7 @@ function Add-ServerCard($server) {
     [void]$header.Children.Add($title); [void]$header.Children.Add($state)
     [Windows.Controls.Grid]::SetRow($header, 0); [void]$layout.Children.Add($header)
 
-    $meta = New-Text ("SSH  {0}" -f $server.host) 8 '#626C66'
+    $meta = New-Text ("SSH  {0}" -f $sshTarget) 8 '#626C66'
     $meta.Margin = [Windows.Thickness]::new(0, 3, 0, 6)
     [Windows.Controls.Grid]::SetRow($meta, 1); [void]$layout.Children.Add($meta)
 
@@ -694,7 +706,19 @@ function Add-ServerCard($server) {
     }
 }
 
-foreach ($server in $config.Servers) { Add-ServerCard $server }
+function Sync-ServerPulseCards {
+    $active=@{}
+    foreach($server in @($script:serverStore.Servers | Where-Object { $_.Monitored })){
+        $id=[string]$server.Id;$active[$id]=$true
+        if(-not $script:cards.ContainsKey($id)){Add-ServerCard $server}
+        $script:cards[$id].Surface.Visibility='Visible'
+        $script:cards[$id].Label=[string]$server.Label
+    }
+    foreach($entry in @($script:cards.GetEnumerator())){if(-not$active.ContainsKey([string]$entry.Key)){$entry.Value.Surface.Visibility='Collapsed'}}
+    if($active.Count -eq 0){$ui.SummaryText.Text='尚未选择监视服务器';$ui.FleetState.Text='  未监视';$ui.FleetDot.Fill=New-Brush '#657069'}
+}
+
+Sync-ServerPulseCards
 
 function Set-BackgroundOpacity([double]$Value) {
     $script:backgroundOpacity = [Math]::Max(0.4, [Math]::Min(1.0, $Value))
@@ -796,8 +820,11 @@ function Update-ServerCard($server) {
     $card = $script:cards[[string]$server.Id]
     if ($null -eq $card) { return }
     $online = $server.Status -eq 'online'
-    $card.State.Text = if ($online) { '● 在线' } else { '● 离线' }
-    $card.State.Foreground = New-Brush $(if ($online) { '#A7D948' } else { '#FF6B6B' })
+    $card.State.Text = switch([string]$server.Status){
+        'online'{'● 在线'} 'authentication_required'{'● 待认证'} 'authentication_failed'{'● 认证暂停'}
+        'host_key_unknown'{'● 待确认指纹'} 'host_key_changed'{'● 指纹异常'} default{'● 离线'}
+    }
+    $card.State.Foreground = New-Brush $(if ($online) { '#A7D948' } elseif($server.Status -eq 'connection'){ '#E4B64B' } else { '#FF6B6B' })
     $card.Error.Visibility = if ($online) { 'Collapsed' } else { 'Visible' }
     $card.Error.Text = if ($online) { '' } else { [string]$server.Error }
     if (-not $online -or $null -eq $server.Metrics) {
@@ -950,6 +977,35 @@ $cursorTimer.Add_Tick({
     if ($touches) { Show-FromEdge }
 })
 
+function Get-ServerPulseAuthState {
+    param([string]$ServerId)
+    if(-not $script:serverAuthStates.ContainsKey($ServerId)){
+        $script:serverAuthStates[$ServerId]=[PSCustomObject]@{Mode='auto';Paused=$false;Status='unknown';Notified=$false}
+    }
+    return $script:serverAuthStates[$ServerId]
+}
+
+function Apply-ServerPulseManagedServers {
+    param($Store,[object[]]$Rows)
+    $script:serverStore=$Store
+    foreach($row in @($Rows)){
+        $state=Get-ServerPulseAuthState ([string]$row.Server.Id)
+        $state.Mode=if($row.AuthMode -in @('passwordless','password')){[string]$row.AuthMode}else{'auto'}
+        $state.Status=[string]$row.Status
+        $state.Paused=([bool]$row.Server.Monitored -and $row.Status -in @('authentication_required','authentication_failed','host_key_unknown','host_key_changed'))
+        if(-not$state.Paused){$state.Notified=$false}
+    }
+    if(@($script:serverAuthStates.Values|Where-Object{$_.Paused}).Count-eq0){$script:authManagerPrompted=$false}
+    Sync-ServerPulseCards
+    $script:nextCollection=[DateTime]::UtcNow
+}
+
+function Show-ServerPulseSshManager {
+    Close-UserUsagePopup $script:userUsagePopupManager
+    $script:authManagerPrompted=$true
+    [void](Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows})
+}
+
 function Show-ServerPulseFromTray {
     if ($script:hiddenAtEdge) { Show-FromEdge }
     if ($window.WindowState -eq [Windows.WindowState]::Minimized) { $window.WindowState = [Windows.WindowState]::Normal }
@@ -967,10 +1023,12 @@ function Hide-ServerPulseToTray {
 $script:trayMenu = [Windows.Forms.ContextMenuStrip]::new()
 $trayShowItem = $script:trayMenu.Items.Add('显示窗口')
 $trayHideItem = $script:trayMenu.Items.Add('隐藏窗口')
+$trayServersItem = $script:trayMenu.Items.Add('SSH 服务器...')
 [void]$script:trayMenu.Items.Add([Windows.Forms.ToolStripSeparator]::new())
 $trayExitItem = $script:trayMenu.Items.Add('退出')
 $trayShowItem.Add_Click({ Show-ServerPulseFromTray })
 $trayHideItem.Add_Click({ Hide-ServerPulseToTray })
+$trayServersItem.Add_Click({ Show-ServerPulseFromTray; Show-ServerPulseSshManager })
 $trayExitItem.Add_Click({ $window.Close() })
 $script:trayIcon = [Windows.Forms.NotifyIcon]::new()
 $script:trayIcon.Text = 'Server Pulse - SSH 资源监控'
@@ -981,6 +1039,7 @@ $script:trayIcon.Add_MouseClick({
     param($sender,$eventArgs)
     if ($eventArgs.Button -eq [Windows.Forms.MouseButtons]::Left) { Show-ServerPulseFromTray }
 })
+$script:trayIcon.Add_BalloonTipClicked({Show-ServerPulseFromTray;Show-ServerPulseSshManager})
 
 function Save-NativeScreenshot {
     $directory = Join-Path $scriptRoot 'tests\artifacts'
@@ -1012,6 +1071,10 @@ function Complete-SmokeTest {
         if ($window.WindowState -ne [Windows.WindowState]::Minimized) { throw '隐藏到托盘失败' }
         Show-ServerPulseFromTray
         if ($window.WindowState -ne [Windows.WindowState]::Normal -or -not $window.IsVisible) { throw '从托盘恢复窗口失败' }
+        $managerSmoke=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {} -SmokeTest
+        $managerSmoke.Window.Show();$managerSmoke.Window.UpdateLayout()
+        if($managerSmoke.Context.Rows.Count-lt1-or$null-eq$managerSmoke.Context.Rows[0].Passwordless-or$null-eq$managerSmoke.Context.Rows[0].PasswordBox){throw 'SSH 服务器管理窗口验证失败'}
+        $managerSmoke.Window.Close()
         Save-NativeScreenshot
         $originalOpacity = $script:backgroundOpacity; Set-BackgroundOpacity 0.55
         if ($window.Opacity -ne 1.0) { throw '文字层透明度不应改变' }
@@ -1084,12 +1147,34 @@ function Complete-SmokeTest {
 
 function Start-Collection {
     if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { return }
+    $runtimeServers=@()
+    foreach($server in @($script:serverStore.Servers | Where-Object { $_.Monitored })){
+        $state=Get-ServerPulseAuthState ([string]$server.Id)
+        if($state.Paused){continue}
+        $password=Get-ServerPulseSessionSecret $script:sessionSecrets $server.Identity
+        if($null-eq$password){$stored=Get-ServerPulseStoredCredential $server.Identity;if($null-ne$stored){$password=[string]$stored.Password}}
+        $runtimeServers += [PSCustomObject]@{
+            Id=[string]$server.Id;Label=[string]$server.Label;Source=[string]$server.Source;SshTarget=[string]$server.SshTarget
+            HostName=[string]$server.HostName;Port=[int]$server.Port;User=[string]$server.User;AuthMode=[string]$state.Mode;Password=$password
+        }
+    }
+    if($runtimeServers.Count -eq 0){
+        $selected=@($script:serverStore.Servers|Where-Object{$_.Monitored}).Count
+        $ui.SummaryText.Text=if($selected -eq 0){'尚未选择监视服务器'}else{'所选服务器正在等待认证'}
+        $ui.UpdatedText.Text=[DateTime]::Now.ToString('HH:mm:ss')
+        $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
+        return
+    }
+    $runtimePayload=[PSCustomObject]@{SshTimeoutMs=$config.SshTimeoutMs;AskPassPath=$script:askPassPath;Servers=$runtimeServers}|ConvertTo-Json -Depth 6 -Compress
+    $password=$null;$stored=$null
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = 'powershell.exe'
-    $info.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$collectorPath`" -ConfigPath `"$configPath`""
-    $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    $info.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$collectorPath`" -ConfigPath `"$configPath`" -RuntimeInput"
+    $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.RedirectStandardInput=$true; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
     $info.StandardOutputEncoding = [Text.Encoding]::UTF8; $info.StandardErrorEncoding = [Text.Encoding]::UTF8
     $script:collectionProcess = [Diagnostics.Process]::Start($info)
+    $script:collectionProcess.StandardInput.Write($runtimePayload);$script:collectionProcess.StandardInput.Close()
+    $runtimePayload=$null;foreach($item in $runtimeServers){$item.Password=$null}
     $script:stdoutTask = $script:collectionProcess.StandardOutput.ReadToEndAsync()
     $script:stderrTask = $script:collectionProcess.StandardError.ReadToEndAsync()
 }
@@ -1104,14 +1189,31 @@ $pollTimer.Add_Tick({
                 $snapshot = $stdout | ConvertFrom-Json
                 try { Add-ServerPulseHistorySnapshot -Recorder $script:historyRecorder -Snapshot $snapshot } catch { $ui.HistoryButton.ToolTip = "历史记录失败：$($_.Exception.Message)" }
                 $servers = @($snapshot.Servers)
-                foreach ($server in $servers) { Update-ServerCard $server }
+                $shouldPromptAuth=$false
+                foreach ($server in $servers) {
+                    $authState=Get-ServerPulseAuthState ([string]$server.Id)
+                    $authState.Status=[string]$server.Status
+                    if($server.Status -eq 'online'){$authState.Mode=[string]$server.AuthMode;$authState.Paused=$false;$authState.Notified=$false}
+                    elseif($server.Status -in @('authentication_required','authentication_failed','host_key_unknown','host_key_changed')){
+                        $authState.Paused=$true
+                        $shouldPromptAuth=$true
+                        if(-not$authState.Notified -and -not$SmokeTest){
+                            $script:trayIcon.BalloonTipTitle='Server Pulse 需要处理 SSH 认证'
+                            $script:trayIcon.BalloonTipText="$($server.Label)：$($server.Error)"
+                            $script:trayIcon.ShowBalloonTip(6000);$authState.Notified=$true
+                        }
+                    }
+                    Update-ServerCard $server
+                }
+                if($shouldPromptAuth -and -not$script:authManagerPrompted -and -not$SmokeTest){[void]$window.Dispatcher.BeginInvoke([Action]{Show-ServerPulseSshManager},[Windows.Threading.DispatcherPriority]::ApplicationIdle)}
                 $online = @($servers | Where-Object { $_.Status -eq 'online' }).Count
+                $selectedCount=@($script:serverStore.Servers|Where-Object{$_.Monitored}).Count
                 $gpuCount = ($servers | Where-Object { $_.Status -eq 'online' } | ForEach-Object { @($_.Metrics.Gpus).Count } | Measure-Object -Sum).Sum
                 if ($null -eq $gpuCount) { $gpuCount = 0 }
-                $ui.SummaryText.Text = "$online / $($servers.Count) 在线   ·   $gpuCount GPU"
+                $ui.SummaryText.Text = "$online / $selectedCount 在线   ·   $gpuCount GPU"
                 $ui.UpdatedText.Text = [DateTime]::Now.ToString('HH:mm:ss')
-                $ui.FleetState.Text = if ($online -eq $servers.Count) { '  全部在线' } else { "  $online / $($servers.Count) 在线" }
-                $ui.FleetDot.Fill = New-Brush $(if ($online -eq $servers.Count) { '#A7D948' } elseif ($online -gt 0) { '#E4B64B' } else { '#FF6B6B' })
+                $ui.FleetState.Text = if ($selectedCount -gt 0 -and $online -eq $selectedCount) { '  全部在线' } else { "  $online / $selectedCount 在线" }
+                $ui.FleetDot.Fill = New-Brush $(if ($selectedCount -gt 0 -and $online -eq $selectedCount) { '#A7D948' } elseif ($online -gt 0) { '#E4B64B' } else { '#FF6B6B' })
                 if ($SmokeTest -and -not $script:smokeFinished) {
                     [void]$window.Dispatcher.BeginInvoke(
                         [Action]{ Complete-SmokeTest },
@@ -1178,6 +1280,7 @@ $ui.EdgeButton.Add_Click({
     else { $ui.EdgeButton.Tag = 'active'; Schedule-EdgeHide }
 })
 $ui.PinButton.Add_Click({ $window.Topmost = -not $window.Topmost; $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null } })
+$ui.ServerButton.Add_Click({ Show-ServerPulseSshManager })
 $ui.MinimizeButton.Add_Click({ Hide-ServerPulseToTray })
 $ui.CloseButton.Add_Click({ Close-UserUsagePopup $script:userUsagePopupManager; $window.Close() })
 
@@ -1186,6 +1289,7 @@ $window.Add_Loaded({
         $window.Left = [double]$settings.Left; $window.Top = [double]$settings.Top
     }
     $cursorTimer.Start(); $pollTimer.Start(); Start-Collection
+    if(($script:firstServerStoreRun -or @($script:serverStore.Servers|Where-Object{$_.Monitored}).Count-eq0) -and -not$SmokeTest){[void]$window.Dispatcher.BeginInvoke([Action]{Show-ServerPulseSshManager},[Windows.Threading.DispatcherPriority]::ApplicationIdle)}
 })
 $window.Add_Closing({
     Close-UserUsagePopup $script:userUsagePopupManager
@@ -1193,6 +1297,7 @@ $window.Add_Closing({
     $script:trayIcon.Visible = $false
     $script:trayIcon.Dispose()
     $script:trayMenu.Dispose()
+    Clear-ServerPulseSessionSecrets $script:sessionSecrets
     if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { $script:collectionProcess.Kill() }
     if (-not $SmokeTest) { try { [void](Flush-ServerPulseHistoryRecorder $script:historyRecorder) } catch { } }
     if (-not $SmokeTest) { Save-Settings }
@@ -1202,5 +1307,5 @@ $window.Add_Closing({
 if ($SmokeTest) {
     if ($script:smokeError) { throw $script:smokeError }
     if (-not $script:smokePassed) { throw '原生窗口冒烟测试未完成' }
-    Write-Output 'PASS: native window, tray, resize, opacity, edge hide, SSH snapshot'
+    Write-Output 'PASS: native window, tray, SSH manager, resize, opacity, edge hide, SSH snapshot'
 }

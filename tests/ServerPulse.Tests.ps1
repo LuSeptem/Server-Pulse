@@ -1,6 +1,8 @@
 ﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Core.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1')
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1')
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1')
 
 $passed = 0
 function Assert-Equal {
@@ -264,6 +266,81 @@ try {
 }
 if ($null -ne $historyTestFailure) { throw $historyTestFailure }
 
+$identity=ConvertTo-ServerPulseCanonicalIdentity -User 'alice' -HostName 'GPU.EXAMPLE' -Port 2202
+Assert-Equal $identity 'alice@gpu.example:2202' 'SSH 登录身份规范化'
+Assert-Equal ((Get-ServerPulseCredentialTarget $identity) -match '^ServerPulse:ssh:[0-9a-f]{64}$') $true 'Windows 凭据键不暴露登录身份'
+Assert-Equal (Get-ServerPulseSshFailureKind 'Permission denied (publickey,password).') 'authentication' 'SSH 密码错误分类为认证问题'
+Assert-Equal (Get-ServerPulseSshFailureKind 'REMOTE HOST IDENTIFICATION HAS CHANGED!') 'host_key_changed' 'SSH 指纹变化严格分类'
+Assert-Equal (Get-ServerPulseSshFailureKind 'Host key verification failed.') 'host_key_unknown' '未知 SSH 主机密钥分类'
+$ipv6Server=[PSCustomObject]@{Source='manual';User='alice';HostName='2001:db8::10';Port=2222}
+Assert-Equal ((Get-ServerPulseSshArguments $ipv6Server passwordless 8000) -contains 'alice@[2001:db8::10]') $true '手动 IPv6 SSH 目标使用方括号'
+$sessionSecrets=New-ServerPulseSessionSecretStore
+Set-ServerPulseSessionSecret $sessionSecrets $identity 'session-secret'
+Assert-Equal (Get-ServerPulseSessionSecret $sessionSecrets $identity) 'session-secret' '会话密码可供本次运行读取'
+Remove-ServerPulseSessionSecret $sessionSecrets $identity
+Assert-Equal ($null-eq(Get-ServerPulseSessionSecret $sessionSecrets $identity)) $true '取消监视立即清除会话密码'
+
+$sshConfigTestPath=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-ssh-config-'+[guid]::NewGuid().ToString('N'))
+try{
+    @('Host 3090 a6000','  User alice','Host *.internal !blocked','Host concrete-host # comment')|Set-Content -LiteralPath $sshConfigTestPath -Encoding UTF8
+    $aliases=@(Get-ServerPulseSshConfigAliases $sshConfigTestPath)
+    Assert-Equal ($aliases -join ',') '3090,a6000,concrete-host' 'SSH config 发现具体 Host 并忽略通配符和否定项'
+}finally{if(Test-Path $sshConfigTestPath){Remove-Item -LiteralPath $sshConfigTestPath -Force}}
+
+$serverStoreTestDirectory=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-store-'+[guid]::NewGuid().ToString('N'))
+$serverStoreTestPath=Join-Path $serverStoreTestDirectory 'servers.json'
+try{
+    $managed=New-ServerPulseManagedServer -Id 'stable-id' -Label 'GPU Node' -Source manual -SshTarget 'gpu.example' -HostName 'gpu.example' -Port 22 -User alice -Monitored $true
+    $store=[PSCustomObject]@{Version=1;Path=$serverStoreTestPath;Servers=@($managed)}
+    Save-ServerPulseServerStore $store
+    $store.Servers[0].Label='GPU Node Updated';Save-ServerPulseServerStore $store
+    $rawStore=Get-Content -LiteralPath $serverStoreTestPath -Raw -Encoding UTF8
+    Assert-Equal (($rawStore|ConvertFrom-Json).Servers[0].Label) 'GPU Node Updated' '运行时服务器配置可原子替换已有文件'
+    Assert-Equal ($rawStore -match 'session-secret|Password|Credential') $false '运行时服务器配置不保存密码或凭据令牌'
+    $loaded=Initialize-ServerPulseServerStore -SeedConfig ([PSCustomObject]@{Servers=@()}) -Path $serverStoreTestPath
+    Assert-Equal $loaded.Servers[0].Identity 'alice@gpu.example:22' 'LocalAppData 服务器配置可兼容读取'
+    Assert-Equal $loaded.Servers[0].Monitored $true '监视选择持久保存'
+    $knownHostsPath=Join-Path $serverStoreTestDirectory 'known_hosts'
+    [IO.File]::WriteAllText($knownHostsPath,'existing-key',[Text.UTF8Encoding]::new($false))
+    Assert-Equal (Add-ServerPulseTrustedHostKey -Lines @('new-key') -KnownHostsPath $knownHostsPath) 1 '确认后追加未知主机密钥'
+    Assert-Equal ((Get-Content -LiteralPath $knownHostsPath -Raw)-match "existing-key`r?`nnew-key`r?`n$") $true 'known_hosts 原文件无换行时仍安全分隔新密钥'
+    Assert-Equal (Add-ServerPulseTrustedHostKey -Lines @('new-key') -KnownHostsPath $knownHostsPath) 0 '相同主机密钥不重复写入'
+}finally{if(Test-Path $serverStoreTestDirectory){Get-ChildItem $serverStoreTestDirectory -File|Remove-Item -Force;Remove-Item $serverStoreTestDirectory -Force}}
+
+$askPassTestDirectory=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-askpass-'+[guid]::NewGuid().ToString('N'))
+$aclPipe=New-ServerPulseSecurePipe ('serverpulse-acl-'+[guid]::NewGuid().ToString('N'))
+try{
+    $pipeAcl=if($null-ne$aclPipe.PSObject.Methods['GetAccessControl']){$aclPipe.GetAccessControl()}else{[IO.Pipes.PipesAclExtensions]::GetAccessControl($aclPipe)}
+    $pipeRules=@($pipeAcl.GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier]));$currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    Assert-Equal $pipeAcl.AreAccessRulesProtected $true 'ASKPASS 命名管道禁用继承 ACL'
+    Assert-Equal (@($pipeRules|Where-Object{$_.AccessControlType-eq'Allow'-and$_.IdentityReference.Value-eq$currentSid}).Count) 1 'ASKPASS 命名管道只授权当前 Windows SID'
+    Assert-Equal (@($pipeRules|Where-Object{$_.IdentityReference.Value-ne$currentSid}).Count) 0 'ASKPASS 命名管道拒绝其他 SID'
+}finally{$aclPipe.Dispose()}
+try{
+    $askPassPath=Ensure-ServerPulseAskPassHelper $askPassTestDirectory
+    $mockServer=[PSCustomObject]@{Id='mock';Label='Mock';Source='manual';SshTarget='mock';HostName='mock';Port=22;User='tester'}
+    $env:SERVERPULSE_MOCK_BATCH='fail'
+    $mockSshPath=Join-Path $PSScriptRoot 'Mock-Ssh.cmd'
+    $passwordResult=Invoke-ServerPulseSsh -Server $mockServer -Script 'ignored' -Mode password -Password 'mock-password' -TimeoutMs 8000 -AskPassPath $askPassPath -SshPath $mockSshPath
+    Assert-Equal $passwordResult.ExitCode 0 'ASKPASS 命名管道完成普通密码认证'
+    Assert-Equal ($passwordResult.Arguments -match 'mock-password') $false '密码不进入 SSH 命令行参数'
+    $wrongResult=Invoke-ServerPulseServerConnection -Server $mockServer -Script 'ignored' -AuthMode auto -Password 'wrong-password' -TimeoutMs 8000 -AskPassPath $askPassPath -SshPath $mockSshPath
+    Assert-Equal $wrongResult.Status 'authentication_failed' '错误密码分类为认证暂停而不是持续重试'
+    $env:SERVERPULSE_MOCK_BATCH='ok'
+    $batchResult=Invoke-ServerPulseServerConnection -Server $mockServer -Script 'ignored' -AuthMode auto -Password 'wrong-password' -TimeoutMs 8000 -AskPassPath $askPassPath -SshPath $mockSshPath
+    Assert-Equal $batchResult.AuthMode 'passwordless' '免密成功时优先于已有密码'
+    $env:SERVERPULSE_MOCK_BATCH='fail'
+    $parallelRequests=@(
+        [PSCustomObject]@{Id='one';Server=$mockServer;Password='mock-password'},
+        [PSCustomObject]@{Id='two';Server=$mockServer;Password='mock-password'}
+    )
+    $parallelResults=Invoke-ServerPulseAuthenticationBatch -Requests $parallelRequests -ModulePath (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1') -AskPassPath $askPassPath -TimeoutMs 8000 -SshPath $mockSshPath
+    Assert-Equal @($parallelResults|Where-Object{$_.Passed}).Count 2 '并行密码认证使用独立 ASKPASS 请求并全部完成'
+}finally{
+    Remove-Item Env:SERVERPULSE_MOCK_BATCH -ErrorAction SilentlyContinue
+    if(Test-Path $askPassTestDirectory){Get-ChildItem $askPassTestDirectory -File|Remove-Item -Force;Remove-Item $askPassTestDirectory -Force}
+}
+
 $mainScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($mainScript -match '\.DragMove\(')) $false '禁止调用会触发 Windows Snap Assist 的 DragMove'
 Assert-Equal ([bool]($mainScript -match 'Update-ManualDragPosition')) $true '使用应用内坐标拖拽'
@@ -274,6 +351,15 @@ Assert-Equal ([bool]($mainScript -match 'function Show-ServerPulseFromTray')) $t
 Assert-Equal ([bool]($mainScript -match 'function Hide-ServerPulseToTray')) $true '托盘可隐藏主窗口'
 Assert-Equal ([bool]($mainScript -match '(?s)\$ui\.MinimizeButton\.Add_Click.+?Hide-ServerPulseToTray')) $true '最小化按钮隐藏到托盘'
 Assert-Equal ([bool]($mainScript -match '(?s)\$window\.Add_Closing.+?\$script:trayIcon\.Dispose\(\)')) $true '退出时释放托盘图标'
+Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager')) $true '主窗口和托盘可打开 SSH 服务器管理窗口'
+Assert-Equal ([bool]($mainScript -match 'Clear-ServerPulseSessionSecrets')) $true '退出程序时清除全部会话密码'
+Assert-Equal ([bool]($mainScript -match '\$runtimePayload=\$null;foreach\(\$item in \$runtimeServers\)\{\$item\.Password=\$null\}')) $true '采集输入写入标准输入后清除主进程密码副本'
+$sshScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1') -Raw -Encoding UTF8
+Assert-Equal ([bool]($sshScript -match 'SERVERPULSE_AUTH_TOKEN=\$token')) $true 'ASKPASS 仅通过环境传递随机令牌'
+Assert-Equal ([bool]($sshScript -match 'EnvironmentVariables\[[^\]]+\]\s*=\s*\$Password')) $false '密码不得写入子进程环境变量'
+$managerScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1') -Raw -Encoding UTF8
+Assert-Equal ([bool]($managerScript -match 'InheritHistory=\[bool\]\$w\.Tag\.Inherit\.IsChecked')) $true '编辑连接身份时由用户选择是否继承历史'
+Assert-Equal ([bool]($managerScript -match 'DeleteCredentialButton')) $true '服务器管理窗口允许独立删除 Windows 凭据'
 Assert-Equal ([bool]($mainScript -match 'Register-UserUsageTarget')) $true '实时卡片注册用户占用交互目标'
 Assert-Equal ([bool]($mainScript -match '\$Target\.Add_MouseEnter\(\{\s*param\(\$sender[^}]+Invoke-UserUsageTargetMouseEnter \$sender\.Tag')) $true '实时用户悬停回调通过 sender.Tag 保持注册后生命周期'
 Assert-Equal ([bool]($mainScript -match '(?s)if \(\$manager\.IsPinned.+?\$manager\.CurrentTarget\.Key -eq \$TargetState\.Key\).+?Close-UserUsagePopup')) $true '实时用户卡片再次点击关闭已固定弹窗'
@@ -294,6 +380,37 @@ Assert-Equal ([bool]($historyScript -match 'Register-HistoryWindowDragArea')) $t
 Assert-Equal ([bool]($historyScript -match '(?m)^\s*\$ui\s*=\s*@\{\}')) $false '历史窗口不得覆盖主窗口 UI 动态变量'
 Assert-Equal ([bool]($historyScript -match 'ChartKey "\$ServerId/gpu/\$gpuIndex/vram"')) $true '历史 GPU 用户选择以服务器和稳定 GPU 索引为锚点'
 Add-Type -AssemblyName PresentationFramework,System.Windows.Forms
+$managerOwner=[Windows.Window]::new();$managerOwner.Show()
+$managerServer=New-ServerPulseManagedServer -Id 'manager-test' -Label 'Manager Test' -Source manual -SshTarget 'gpu.example' -HostName 'gpu.example' -Port 22 -User alice -Monitored $true
+$managerStore=[PSCustomObject]@{Version=1;Path=(Join-Path ([IO.Path]::GetTempPath()) 'serverpulse-manager-unused.json');Servers=@($managerServer)}
+$managerSecrets=New-ServerPulseSessionSecretStore
+Set-ServerPulseSessionSecret $managerSecrets $managerServer.Identity 'manager-session-secret'
+$managerSmoke=Show-ServerPulseServerManager -Owner $managerOwner -Store $managerStore -SessionSecrets $managerSecrets -AskPassPath 'unused' -TimeoutMs 1000 -OnApplied {} -SmokeTest
+Assert-Equal ($managerSmoke -is [PSCustomObject]) $true '服务器管理窗口冒烟入口只返回一个状态对象'
+$managerRow=$managerSmoke.Context.Rows[0]
+Assert-Equal $managerRow.Monitor.IsChecked $true '服务器管理窗口显示监视选择'
+Assert-Equal $managerRow.Passwordless.IsHitTestVisible $false '免密复选框只读并由检测结果控制'
+Assert-Equal ([string]$managerRow.Passwordless.Parent.Children[1].ToolTip -match '终端 ssh 不会自动读取') $true '免密感叹号悬停解释凭据边界'
+Assert-Equal $managerRow.SaveCredential.IsChecked $false '存入 Windows 凭据管理器默认不勾选'
+Set-ServerManagerRowStatus $managerRow authentication_required
+Assert-Equal $managerRow.PasswordPanel.Visibility 'Visible' '无可用认证时在服务器行展开密码输入'
+$managerRow.PasswordBox.Password='visible-on-hold'
+$eyeDown=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left);$eyeDown.RoutedEvent=[Windows.UIElement]::PreviewMouseLeftButtonDownEvent;$managerRow.Eye.RaiseEvent($eyeDown)
+Assert-Equal $managerRow.Reveal.Text 'visible-on-hold' '按住眼睛按钮临时显示密码'
+$eyeUp=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left);$eyeUp.RoutedEvent=[Windows.UIElement]::PreviewMouseLeftButtonUpEvent;$managerRow.Eye.RaiseEvent($eyeUp)
+Assert-Equal $managerRow.Reveal.Visibility 'Collapsed' '松开眼睛按钮立即重新遮蔽密码'
+Assert-Equal $managerRow.Reveal.Text '' '松开眼睛按钮清除明文副本'
+$managerRow.PasswordBox.Password='replacement-session-secret';$managerRow.SaveCredential.IsChecked=$false
+Complete-ServerPulseAuthenticationResult $managerRow.Context $managerRow ([PSCustomObject]@{Passed=$true;Status='online';AuthMode='password';Error=$null}) 'replacement-session-secret'
+Assert-Equal (Get-ServerPulseSessionSecret $managerSecrets $managerServer.Identity) 'manager-session-secret' '验证新密码不会在应用前改写当前会话'
+Assert-Equal (Get-ServerPulseSessionSecret $managerRow.Context.SessionSecrets $managerServer.Identity) 'replacement-session-secret' '服务器管理窗口在独立工作副本中暂存会话密码'
+$managerRow.PasswordBox.Password='deferred-persist-secret';$managerRow.SaveCredential.IsChecked=$true
+Complete-ServerPulseAuthenticationResult $managerRow.Context $managerRow ([PSCustomObject]@{Passed=$true;Status='online';AuthMode='password';Error=$null}) 'deferred-persist-secret'
+Assert-Equal (Get-ServerPulseAuthenticationPassword $managerRow $managerRow.Context.SessionSecrets) 'deferred-persist-secret' '已验证的持久密码在应用前只存在于管理窗口待办中'
+Assert-Equal (Get-ServerPulseSessionSecret $managerSecrets $managerServer.Identity) 'manager-session-secret' '待保存 Windows 凭据不会在应用前改变当前监控'
+$managerRow.Monitor.IsChecked=$false
+Assert-Equal (Get-ServerPulseSessionSecret $managerSecrets $managerServer.Identity) 'manager-session-secret' '取消管理窗口前取消勾选不提前改变当前会话密码'
+$managerSmoke.Window.Close();$managerOwner.Close();Clear-ServerPulseSessionSecrets $managerSecrets
 $closeTestWindow=[Windows.Window]::new(); $closeTestButton=[Windows.Controls.Button]::new(); $closeTestWindow.Content=$closeTestButton
 Register-HistoryWindowCloseButton -Button $closeTestButton
 $closeTestWindow.Show(); $closeTestButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))

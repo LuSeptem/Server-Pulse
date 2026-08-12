@@ -1,13 +1,22 @@
 ﻿param(
     [Parameter(Mandatory)]
-    [string]$ConfigPath
+    [string]$ConfigPath,
+    [switch]$RuntimeInput
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 . (Join-Path $PSScriptRoot 'ServerPulse.Core.ps1')
+. (Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1')
 
 $config = Get-ServerPulseConfig -Path $ConfigPath
+$runtime = if ($RuntimeInput) {
+    $runtimeText = [Console]::In.ReadToEnd()
+    if ([string]::IsNullOrWhiteSpace($runtimeText)) { throw '运行时服务器输入为空' }
+    $parsedRuntime=$runtimeText | ConvertFrom-Json
+    $runtimeText=$null
+    $parsedRuntime
+} else { $null }
 $remoteScript = @'
 #!/bin/sh
 LC_ALL=C
@@ -213,62 +222,60 @@ echo "GPU_USER_STATUS=$gpu_query_status"
 '@
 
 $corePath = Join-Path $PSScriptRoot 'ServerPulse.Core.ps1'
-$jobs = foreach ($server in $config.Servers) {
+$sshModulePath = Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1'
+$servers = if ($null -ne $runtime) { @($runtime.Servers) } else {
+    @($config.Servers | ForEach-Object {
+        [PSCustomObject]@{Id=[string]$_.id;Label=[string]$_.label;Source='seed';SshTarget=[string]$_.host;HostName=[string]$_.host;Port=22;User='';AuthMode='passwordless';Password=$null}
+    })
+}
+$timeoutMs = if ($null -ne $runtime -and $runtime.SshTimeoutMs) { [int]$runtime.SshTimeoutMs } else { $config.SshTimeoutMs }
+$askPassPath = if ($null -ne $runtime) { [string]$runtime.AskPassPath } else { '' }
+$jobs = foreach ($server in $servers) {
     $serverJson = $server | ConvertTo-Json -Compress
-    Start-Job -ScriptBlock {
-        param($ServerJson, $Script, $TimeoutMs, $CorePath)
+    $job=Start-Job -ScriptBlock {
+        param($ServerJson, $Script, $TimeoutMs, $CorePath, $SshModulePath, $AskPassPath)
         $ErrorActionPreference = 'Stop'
         . $CorePath
+        . $SshModulePath
         $server = $ServerJson | ConvertFrom-Json
         $started = [Diagnostics.Stopwatch]::StartNew()
         try {
-            $info = [Diagnostics.ProcessStartInfo]::new()
-            $info.FileName = 'ssh.exe'
-            $timeoutSeconds = [Math]::Max(1, [Math]::Ceiling($TimeoutMs / 1000))
-            $info.Arguments = "-T -o BatchMode=yes -o ConnectTimeout=$timeoutSeconds $($server.host) sh -s"
-            $info.UseShellExecute = $false
-            $info.CreateNoWindow = $true
-            $info.RedirectStandardInput = $true
-            $info.RedirectStandardOutput = $true
-            $info.RedirectStandardError = $true
-            $info.StandardOutputEncoding = [Text.Encoding]::UTF8
-            $info.StandardErrorEncoding = [Text.Encoding]::UTF8
-            $process = [Diagnostics.Process]::Start($info)
-            $process.StandardInput.Write($Script)
-            $process.StandardInput.Close()
-            if (-not $process.WaitForExit($TimeoutMs)) {
-                $process.Kill()
-                throw "SSH 采集超时（$TimeoutMs ms）"
-            }
-            $stdout = $process.StandardOutput.ReadToEnd()
-            $stderr = $process.StandardError.ReadToEnd().Trim()
-            if ($process.ExitCode -ne 0) {
-                if (-not $stderr) { $stderr = "SSH 退出码 $($process.ExitCode)" }
-                throw $stderr
+            $authMode = if ([string]$server.AuthMode -in @('auto','passwordless','password')) { [string]$server.AuthMode } else { 'auto' }
+            $connection = Invoke-ServerPulseServerConnection -Server $server -Script $Script -AuthMode $authMode -Password ([string]$server.Password) -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath
+            $server.Password = $null
+            if ($connection.Status -ne 'online') {
+                return [PSCustomObject]@{
+                    Id=[string]$server.Id;Label=[string]$server.Label;Host=[string]$server.SshTarget;Status=[string]$connection.Status
+                    AuthMode=[string]$connection.AuthMode;CheckedAt=[DateTime]::UtcNow.ToString('o');LatencyMs=$null;Metrics=$null;Error=[string]$connection.Error
+                }
             }
             [PSCustomObject]@{
-                Id        = [string]$server.id
-                Label     = [string]$server.label
-                Host      = [string]$server.host
+                Id        = [string]$server.Id
+                Label     = [string]$server.Label
+                Host      = [string]$server.SshTarget
                 Status    = 'online'
+                AuthMode  = [string]$connection.AuthMode
                 CheckedAt = [DateTime]::UtcNow.ToString('o')
                 LatencyMs = [int]$started.ElapsedMilliseconds
-                Metrics   = ConvertFrom-ServerMetricsOutput -Output $stdout
+                Metrics   = ConvertFrom-ServerMetricsOutput -Output $connection.Output
                 Error     = $null
             }
         } catch {
             [PSCustomObject]@{
-                Id        = [string]$server.id
-                Label     = [string]$server.label
-                Host      = [string]$server.host
+                Id        = [string]$server.Id
+                Label     = [string]$server.Label
+                Host      = [string]$server.SshTarget
                 Status    = 'offline'
+                AuthMode  = [string]$server.AuthMode
                 CheckedAt = [DateTime]::UtcNow.ToString('o')
                 LatencyMs = $null
                 Metrics   = $null
                 Error     = $_.Exception.Message
             }
         }
-    } -ArgumentList $serverJson, $remoteScript, $config.SshTimeoutMs, $corePath
+    } -ArgumentList $serverJson, $remoteScript, $timeoutMs, $corePath, $sshModulePath, $askPassPath
+    $server.Password=$null;$serverJson=$null
+    $job
 }
 
 $results = foreach ($job in $jobs) {
