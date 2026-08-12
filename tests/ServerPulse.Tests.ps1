@@ -555,4 +555,46 @@ Show-HistoryChartSample -State $historyUserCard.Tag -Time $historyUserTime
 Assert-Equal $historyUserCard.Tag.UserPanel.Children.Count 0 '隐藏父指标时用户明细面板可清空'
 $historyUserWindow.Close()
 
+$collectorSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\Collect-Metrics.ps1') -Raw
+$mainSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw
+$launcherSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Start Server Pulse.vbs') -Raw
+$hostSourcePath = Join-Path $PSScriptRoot '..\src\ServerPulse.Host.cs'
+$hostExecutablePath = Join-Path $PSScriptRoot '..\ServerPulse.exe'
+Assert-Equal ([bool]($collectorSource -notmatch '\bStart-Job\b')) $true '长期采集器不得为每台服务器创建 PowerShell 进程'
+Assert-Equal ([bool]($collectorSource -match 'CreateRunspacePool')) $true '长期采集器使用 Runspace Pool 并行采集'
+Assert-Equal ([bool]($collectorSource -match '\[Console\]::In\.ReadLine\(\)')) $true '长期采集器以逐行协议复用标准输入'
+Assert-Equal ([bool]($mainSource -match '\$info\.Arguments=.*?-Worker')) $true '主窗口启动长期采集器而非逐轮采集进程'
+Assert-Equal ([bool]($launcherSource -match 'ServerPulse\.exe')) $true '兼容启动器优先启动 EXE 宿主'
+Assert-Equal (Test-Path -LiteralPath $hostSourcePath) $true '仓库包含可重复构建的 EXE 宿主源码'
+Assert-Equal (Test-Path -LiteralPath $hostExecutablePath) $true '仓库包含 ServerPulse.exe 宿主'
+if (Test-Path -LiteralPath $hostSourcePath) {
+    $hostSource = Get-Content -LiteralPath $hostSourcePath -Raw
+    Assert-Equal ([bool]($hostSource -match 'SetCurrentProcessExplicitAppUserModelID')) $true 'EXE 宿主设置固定 AppUserModelID'
+    Assert-Equal ([bool]($hostSource -match 'CreateJobObject')) $true 'EXE 宿主创建 Windows Job Object'
+    Assert-Equal ([bool]($hostSource -match 'CreateJobObject\(IntPtr\.Zero, null\)')) $true '每个 EXE 实例使用独立未命名 Job Object'
+    Assert-Equal ([bool]($hostSource -match 'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE')) $true 'Job Object 在宿主退出时清理全部后代进程'
+    Assert-Equal ([bool]($hostSource -match 'RunspaceFactory')) $true 'EXE 宿主在进程内运行 PowerShell WPF 脚本'
+}
+if (Test-Path -LiteralPath $hostExecutablePath) {
+    $hostVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($hostExecutablePath)
+    Assert-Equal $hostVersion.ProductName 'Server Pulse' 'EXE 产品名称统一为 Server Pulse'
+    $hostIcon = [Drawing.Icon]::ExtractAssociatedIcon($hostExecutablePath)
+    Assert-Equal ($null -ne $hostIcon) $true 'EXE 嵌入 Server Pulse 应用图标'
+    if ($null -ne $hostIcon) { $hostIcon.Dispose() }
+}
+
+$workerInfo=[Diagnostics.ProcessStartInfo]::new();$workerInfo.FileName='powershell.exe';$workerInfo.Arguments="-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot '..\src\Collect-Metrics.ps1')`" -ConfigPath `"$(Join-Path $PSScriptRoot '..\config\servers.json')`" -Worker";$workerInfo.UseShellExecute=$false;$workerInfo.CreateNoWindow=$true;$workerInfo.RedirectStandardInput=$true;$workerInfo.RedirectStandardOutput=$true;$workerInfo.RedirectStandardError=$true
+$workerProcess=$null
+try {
+    $workerProcess=[Diagnostics.Process]::Start($workerInfo)
+    $emptyRequest=[PSCustomObject]@{SshTimeoutMs=1000;AskPassPath='';Servers=@()}|ConvertTo-Json -Compress
+    $workerProcess.StandardInput.WriteLine($emptyRequest);$workerProcess.StandardInput.Flush();$workerFirst=$workerProcess.StandardOutput.ReadLine()|ConvertFrom-Json
+    $workerProcess.StandardInput.WriteLine($emptyRequest);$workerProcess.StandardInput.Flush();$workerSecond=$workerProcess.StandardOutput.ReadLine()|ConvertFrom-Json
+    Assert-Equal $workerProcess.HasExited $false '同一长期采集器连续处理两轮请求而不退出'
+    Assert-Equal @($workerFirst.Servers).Count 0 '长期采集器返回第一轮快照'
+    Assert-Equal @($workerSecond.Servers).Count 0 '长期采集器返回第二轮快照'
+} finally {
+    if($null-ne$workerProcess){try{$workerProcess.StandardInput.Close()}catch{};if(-not$workerProcess.WaitForExit(3000)){$workerProcess.Kill()};$workerProcess.Dispose()}
+}
+
 Write-Output "PASS: $passed assertions"

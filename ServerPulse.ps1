@@ -229,6 +229,7 @@ $script:historyRecorder = New-ServerPulseHistoryRecorder -Directory $historyDire
 if (-not $SmokeTest) { try { Remove-ExpiredServerPulseHistory $script:historyRecorder } catch { } }
 $script:cards = @{}
 $script:collectionProcess = $null
+$script:collectionBusy = $false
 $script:stdoutTask = $null
 $script:stderrTask = $null
 $script:nextCollection = [DateTime]::UtcNow
@@ -902,7 +903,7 @@ function Set-RefreshInterval {
     $changed = $seconds -ne $script:refreshIntervalSeconds
     $script:refreshIntervalSeconds = $seconds
     $ui.RefreshIntervalBox.Text = [string]$seconds
-    if (-not $script:collectionProcess) {
+    if (-not $script:collectionBusy) {
         $script:nextCollection = [DateTime]::UtcNow.AddSeconds($seconds)
     }
     if ($Persist -and $changed -and -not $SmokeTest) { Save-Settings }
@@ -1193,8 +1194,29 @@ function Complete-SmokeTest {
     }
 }
 
+function Start-CollectionWorker {
+    if($script:collectionProcess -and -not $script:collectionProcess.HasExited){return $true}
+    if($script:collectionProcess){$script:collectionProcess.Dispose();$script:collectionProcess=$null}
+    $info=[Diagnostics.ProcessStartInfo]::new()
+    $info.FileName='powershell.exe'
+    $info.Arguments="-NoProfile -ExecutionPolicy Bypass -File `"$collectorPath`" -ConfigPath `"$configPath`" -Worker"
+    $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardInput=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+    $info.StandardOutputEncoding=[Text.Encoding]::UTF8;$info.StandardErrorEncoding=[Text.Encoding]::UTF8
+    $script:collectionProcess=[Diagnostics.Process]::Start($info)
+    $script:stderrTask=$script:collectionProcess.StandardError.ReadToEndAsync()
+    return $true
+}
+
+function Stop-CollectionWorker {
+    $script:collectionBusy=$false;$script:stdoutTask=$null
+    if(-not$script:collectionProcess){return}
+    try{$script:collectionProcess.StandardInput.Close()}catch{}
+    try{if(-not$script:collectionProcess.WaitForExit(1500)){$script:collectionProcess.Kill()}}catch{}
+    $script:collectionProcess.Dispose();$script:collectionProcess=$null
+}
+
 function Start-Collection {
-    if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { return }
+    if($script:collectionBusy){return}
     $runtimeServers=@()
     foreach($server in @($script:serverStore.Servers | Where-Object { $_.Monitored })){
         $state=Get-ServerPulseAuthState ([string]$server.Id)
@@ -1215,26 +1237,32 @@ function Start-Collection {
     }
     $runtimePayload=[PSCustomObject]@{SshTimeoutMs=$config.SshTimeoutMs;AskPassPath=$script:askPassPath;Servers=$runtimeServers}|ConvertTo-Json -Depth 6 -Compress
     $password=$null;$stored=$null
-    $info = [Diagnostics.ProcessStartInfo]::new()
-    $info.FileName = 'powershell.exe'
-    $info.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$collectorPath`" -ConfigPath `"$configPath`" -RuntimeInput"
-    $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.RedirectStandardInput=$true; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
-    $info.StandardOutputEncoding = [Text.Encoding]::UTF8; $info.StandardErrorEncoding = [Text.Encoding]::UTF8
-    $script:collectionProcess = [Diagnostics.Process]::Start($info)
-    $script:collectionProcess.StandardInput.Write($runtimePayload);$script:collectionProcess.StandardInput.Close()
-    $runtimePayload=$null;foreach($item in $runtimeServers){$item.Password=$null}
-    $script:stdoutTask = $script:collectionProcess.StandardOutput.ReadToEndAsync()
-    $script:stderrTask = $script:collectionProcess.StandardError.ReadToEndAsync()
+    try{
+        [void](Start-CollectionWorker)
+        $script:collectionProcess.StandardInput.WriteLine($runtimePayload);$script:collectionProcess.StandardInput.Flush()
+        $script:stdoutTask=$script:collectionProcess.StandardOutput.ReadLineAsync();$script:collectionBusy=$true
+    }catch{
+        $ui.SummaryText.Text="采集器启动失败：$($_.Exception.Message)";Stop-CollectionWorker
+        $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
+    }finally{
+        $runtimePayload=$null;foreach($item in $runtimeServers){$item.Password=$null}
+    }
 }
 
 $pollTimer = [Windows.Threading.DispatcherTimer]::new(); $pollTimer.Interval = [TimeSpan]::FromMilliseconds(200)
 $pollTimer.Add_Tick({
     if ($script:collectionProcess -and $script:collectionProcess.HasExited) {
-        $stdout = $script:stdoutTask.Result.Trim(); $stderr = $script:stderrTask.Result.Trim()
-        $script:collectionProcess = $null
+        $stderr=if($script:stderrTask -and $script:stderrTask.IsCompleted){$script:stderrTask.Result.Trim()}else{''}
+        $script:collectionProcess.Dispose();$script:collectionProcess=$null;$script:collectionBusy=$false;$script:stdoutTask=$null
+        $ui.SummaryText.Text=if($stderr){"采集器错误：$stderr"}else{'采集器意外退出，正在重启'}
+        $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
+    }
+    if($script:collectionBusy -and $script:stdoutTask -and $script:stdoutTask.IsCompleted){
+        $stdout=([string]$script:stdoutTask.Result).Trim();$script:collectionBusy=$false;$script:stdoutTask=$null
         if ($stdout) {
             try {
                 $snapshot = $stdout | ConvertFrom-Json
+                if($snapshot.PSObject.Properties.Name -contains 'WorkerError' -and $snapshot.WorkerError){throw [string]$snapshot.WorkerError}
                 try { Add-ServerPulseHistorySnapshot -Recorder $script:historyRecorder -Snapshot $snapshot } catch { $ui.HistoryButton.ToolTip = "历史记录失败：$($_.Exception.Message)" }
                 $servers = @($snapshot.Servers)
                 $shouldPromptAuth=$false
@@ -1269,10 +1297,10 @@ $pollTimer.Add_Tick({
                     )
                 }
             } catch { $ui.SummaryText.Text = "采集结果错误：$($_.Exception.Message)" }
-        } elseif ($stderr) { $ui.SummaryText.Text = "采集器错误：$stderr" }
+        } else { $ui.SummaryText.Text='采集器未返回数据' }
         $script:nextCollection = [DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
     }
-    if (-not $script:collectionProcess -and [DateTime]::UtcNow -ge $script:nextCollection) { Start-Collection }
+    if (-not $script:collectionBusy -and [DateTime]::UtcNow -ge $script:nextCollection) { Start-Collection }
 })
 
 $ui.DragArea.Add_MouseLeftButtonDown({
@@ -1348,7 +1376,7 @@ $window.Add_Closing({
     if ($null -ne $script:trayOwnedIcon) { $script:trayOwnedIcon.Dispose(); $script:trayOwnedIcon = $null }
     $script:trayMenu.Dispose()
     Clear-ServerPulseSessionSecrets $script:sessionSecrets
-    if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { $script:collectionProcess.Kill() }
+    Stop-CollectionWorker
     if (-not $SmokeTest) { try { [void](Flush-ServerPulseHistoryRecorder $script:historyRecorder) } catch { } }
     if (-not $SmokeTest) { Save-Settings }
 })

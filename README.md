@@ -49,18 +49,24 @@ ssh -o BatchMode=yes a6000 hostname
 最简单的方式是双击：
 
 ```text
-Start Server Pulse.vbs
+ServerPulse.exe
 ```
 
-启动器会隐藏 PowerShell 控制台，只显示监控浮窗。
+`ServerPulse.exe` 是无控制台的原生宿主，产品名和图标均为 Server Pulse，并使用固定 AppUserModelID `Public.ServerPulse.Desktop`。宿主在自身进程内加载 Windows PowerShell 与 WPF 脚本，所以任务管理器中的主应用显示为 `ServerPulse.exe`。`Start Server Pulse.vbs` 仍可使用：它优先启动 EXE，仅在 EXE 缺失时回退到旧的隐藏 PowerShell 启动方式。
 
 也可以从终端启动，方便查看启动错误：
 
 ```powershell
+.\ServerPulse.exe
+# 或直接运行脚本进行诊断
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 ```
 
-项目无需安装或下载依赖。
+运行项目无需安装或下载依赖。修改宿主源码后，可使用 Windows 自带的 .NET Framework C# 编译器重新生成 EXE：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-ServerPulseHost.ps1
+```
 
 ## 窗口操作
 
@@ -134,16 +140,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 ## 实现结构
 
 ```text
-ServerPulse.ps1（原生 WPF 浮窗）
-        │
-        └─ 隐藏 PowerShell 采集进程
-               ├─ ssh 3090 ── /proc + nvidia-smi
-               └─ ssh a6000 ─ /proc + nvidia-smi
+ServerPulse.exe（固定 AppUserModelID + 进程内 WPF）
+        └─ 长期 PowerShell 采集器（Runspace Pool）
+               ├─ 临时 ssh 3090 ── /proc + nvidia-smi
+               └─ 临时 ssh a6000 ─ /proc + nvidia-smi
 ```
 
-- `ServerPulse.ps1`：WPF 界面、窗口设置、尺寸/背景透明度控制、逐卡 GPU/显存视图、贴边隐藏和刷新调度。
-- `Start Server Pulse.vbs`：无控制台启动器。
-- `src/Collect-Metrics.ps1`：并行 SSH 采集整机指标与 UID 聚合结果，并输出 JSON 快照。
+- `ServerPulse.exe` / `src/ServerPulse.Host.cs`：无控制台应用宿主；设置固定 AppUserModelID，在进程内运行 PowerShell/WPF，并用每实例独立的 Windows Job Object 管理整个后代进程树。关闭或异常退出宿主时，Job Object 会终止仍存活的采集器与 SSH。
+- `scripts/Build-ServerPulseHost.ps1`：使用 Windows 自带的 .NET Framework 编译器和 `assets/server-pulse.ico` 可重复构建 EXE。
+- `ServerPulse.ps1`：WPF 界面、窗口设置、尺寸/背景透明度控制、逐卡 GPU/显存视图、贴边隐藏和刷新调度；启动一次长期采集器，并通过标准输入/输出逐行交换 JSON 请求与快照。
+- `Start Server Pulse.vbs`：兼容启动器，优先使用 EXE。
+- `src/Collect-Metrics.ps1`：长期 Worker 与一次性诊断模式。Worker 只建立一次 Runspace Pool，两台服务器在同一个采集器进程内并行，不再使用会反复创建 PowerShell 进程的 `Start-Job`。
 - `src/ServerPulse.Core.ps1`：配置校验、CSV/分用户采集协议与指标解析。
 - `src/ServerPulse.Ssh.ps1`：SSH 目标解析、用户服务器存储、Windows 凭据、主机指纹与安全 ASKPASS 通道。
 - `src/ServerPulse.ServerManager.ps1`：服务器发现、选择、认证、密码和凭据管理窗口。
@@ -163,10 +170,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ServerPulse.Test
 原生窗口冒烟测试：
 
 ```powershell
+.\ServerPulse.exe --smoke-test
+# 仍可直接测试脚本
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1 -SmokeTest
 ```
 
-冒烟模式会实际运行一次 SSH 采集，验证 WPF 主窗口与历史窗口、任务栏隐藏、托盘图标及隐藏/恢复、动态服务器配置、应用内坐标拖拽、历史窗口关闭按钮的命中、事件隔离与实际关闭、刷新间隔、分钟历史聚合、默认最近一小时、分框日期输入与红框/`!` 越界提示、GPU 三指标显隐、折线图同分钟多指标悬停、分行颜色标记、完整时间显示及移出隐藏、损坏历史文件的查询异常拦截、未处理 UI 事件的应用级保护、仅背景透明、逐卡显存数据和贴边隐藏，然后生成 `tests/artifacts/native-window.png` 与 `tests/artifacts/history-window.png` 并自动退出。核心测试还使用隔离的模拟 SSH 覆盖 ASKPASS 密码、命名管道 SID ACL、错误密码暂停、并行认证、SSH config 发现、主机密钥和服务器管理窗口，不会改动真实服务器认证。
+冒烟模式会实际运行一次 SSH 采集，验证 EXE 宿主、WPF 主窗口与历史窗口、长期 Worker、任务栏隐藏、托盘图标及隐藏/恢复、动态服务器配置、应用内坐标拖拽、历史窗口关闭按钮的命中、事件隔离与实际关闭、刷新间隔、分钟历史聚合、默认最近一小时、分框日期输入与红框/`!` 越界提示、GPU 三指标显隐、折线图同分钟多指标悬停、分行颜色标记、完整时间显示及移出隐藏、损坏历史文件的查询异常拦截、未处理 UI 事件的应用级保护、仅背景透明、逐卡显存数据和贴边隐藏，然后生成 `tests/artifacts/native-window.png` 与 `tests/artifacts/history-window.png` 并自动退出。核心测试还验证 Worker 连续请求不退出、Runspace Pool、EXE 版本资源、图标、AppUserModelID 与 Job Object，并使用隔离的模拟 SSH 覆盖 ASKPASS 密码、命名管道 SID ACL、错误密码暂停、并行认证、SSH config 发现、主机密钥和服务器管理窗口，不会改动真实服务器认证。
+
+任务管理器中正常会长期保留一个 `ServerPulse.exe` 和一个后台采集器 `powershell.exe`。刷新时每台并行服务器各出现一个短生命周期 `ssh.exe`，采集结束即退出；这两个 SSH 是系统 OpenSSH 的实际网络连接进程，继续使用现有 SSH 配置、密钥、ProxyJump 和安全 ASKPASS 时无法合并进主进程。与旧实现相比，不再每轮出现新的采集器 PowerShell、`Start-Job` PowerShell 和对应 `conhost`。
 
 单独检查采集器：
 
