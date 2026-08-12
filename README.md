@@ -68,6 +68,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-ServerPulseHost.ps1
 ```
 
+构建脚本会直接覆盖仓库根目录的 `ServerPulse.exe`。若程序正在运行，Windows 会锁定该文件；请先从托盘退出 Server Pulse，再执行构建。仓库内已提交可直接运行的构建产物，无需在普通使用时重复编译。
+
 ## 窗口操作
 
 - **移动**：按住顶栏空白处拖动。窗口使用应用内坐标拖拽，不调用 Windows 系统窗口移动，因此拖到屏幕边缘时不会触发系统的半屏排列/Snap Assist。
@@ -177,7 +179,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1 -Smoke
 
 冒烟模式会实际运行一次 SSH 采集，验证 EXE 宿主、WPF 主窗口与历史窗口、长期 Worker、任务栏隐藏、托盘图标及隐藏/恢复、动态服务器配置、应用内坐标拖拽、历史窗口关闭按钮的命中、事件隔离与实际关闭、刷新间隔、分钟历史聚合、默认最近一小时、分框日期输入与红框/`!` 越界提示、GPU 三指标显隐、折线图同分钟多指标悬停、分行颜色标记、完整时间显示及移出隐藏、损坏历史文件的查询异常拦截、未处理 UI 事件的应用级保护、仅背景透明、逐卡显存数据和贴边隐藏，然后生成 `tests/artifacts/native-window.png` 与 `tests/artifacts/history-window.png` 并自动退出。核心测试还验证 Worker 连续请求不退出、Runspace Pool、EXE 版本资源、图标、AppUserModelID 与 Job Object，并使用隔离的模拟 SSH 覆盖 ASKPASS 密码、命名管道 SID ACL、错误密码暂停、并行认证、SSH config 发现、主机密钥和服务器管理窗口，不会改动真实服务器认证。
 
-任务管理器中正常会长期保留一个 `ServerPulse.exe` 和一个后台采集器 `powershell.exe`。刷新时每台并行服务器各出现一个短生命周期 `ssh.exe`，采集结束即退出；这两个 SSH 是系统 OpenSSH 的实际网络连接进程，继续使用现有 SSH 配置、密钥、ProxyJump 和安全 ASKPASS 时无法合并进主进程。与旧实现相比，不再每轮出现新的采集器 PowerShell、`Start-Job` PowerShell 和对应 `conhost`。
+任务管理器中正常会长期保留一个 `ServerPulse.exe` 和一个 PID 稳定的后台采集器 `powershell.exe`。刷新时每台并行服务器各出现一个短生命周期 `ssh.exe`，采集结束即退出；当前监视两台服务器时，任一时刻最多出现两个 SSH，后续刷新会使用新的 SSH PID。它们是系统 OpenSSH 的实际网络连接进程，继续使用现有 SSH 配置、密钥、ProxyJump 和安全 ASKPASS 时无法合并进主进程。与旧实现相比，不再每轮出现新的采集器 PowerShell、`Start-Job` PowerShell 和对应 `conhost`。
 
 单独检查采集器：
 
