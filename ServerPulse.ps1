@@ -43,6 +43,12 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="ManageButton" TargetType="Button" BasedOn="{StaticResource QuietButton}">
+      <Setter Property="MinWidth" Value="62"/>
+      <Setter Property="Height" Value="24"/>
+      <Setter Property="FontSize" Value="9"/>
+      <Setter Property="Foreground" Value="#AAB4AE"/>
+    </Style>
     <Style x:Key="HistoryAccentButton" TargetType="Button">
       <Setter Property="Foreground" Value="#0B0E0C"/>
       <Setter Property="Background" Value="#A7D948"/>
@@ -89,9 +95,12 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <Slider x:Name="OpacitySlider" Width="58" Minimum="40" Maximum="100" Value="94" TickFrequency="5"
                   IsSnapToTickEnabled="True" ToolTip="透明度" Foreground="#A7D948" Margin="4,0,6,0"/>
-          <Button x:Name="EdgeButton" Content="边" Style="{StaticResource QuietButton}" ToolTip="贴边自动隐藏"/>
-          <Button x:Name="PinButton" Content="置" Style="{StaticResource QuietButton}" ToolTip="始终置顶"/>
-          <Button x:Name="ServerButton" Content="服" Style="{StaticResource QuietButton}" ToolTip="选择监视 SSH 服务器"/>
+          <Button x:Name="EdgeButton" Style="{StaticResource QuietButton}" ToolTip="贴边自动隐藏">
+            <Viewbox Width="16" Height="16"><Canvas Width="16" Height="16"><Path Data="M13.5 2.5v11 M2 8h9 M7.7 4.7L11 8l-3.3 3.3" Fill="Transparent" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/></Canvas></Viewbox>
+          </Button>
+          <Button x:Name="PinButton" Style="{StaticResource QuietButton}" ToolTip="始终置顶">
+            <Viewbox Width="16" Height="16"><Canvas Width="16" Height="16"><Path Data="M2.5 2.5h11 M8 14V5 M4.7 8.3L8 5l3.3 3.3" Fill="Transparent" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/></Canvas></Viewbox>
+          </Button>
           <Button x:Name="MinimizeButton" Content="—" Style="{StaticResource QuietButton}" ToolTip="隐藏到托盘"/>
           <Button x:Name="CloseButton" Content="×" Style="{StaticResource QuietButton}" ToolTip="退出"/>
         </StackPanel>
@@ -108,7 +117,15 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="SummaryText" Text="等待首次采集" Foreground="#939D97" FontSize="10" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock x:Name="SummaryText" Text="等待首次采集" Foreground="#939D97" FontSize="10" VerticalAlignment="Center"/>
+              <Button x:Name="ServerButton" Style="{StaticResource ManageButton}" ToolTip="选择监视 SSH 服务器" Margin="8,0,0,0">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <Viewbox Width="14" Height="14" Margin="0,0,5,0"><Canvas Width="16" Height="16"><Path Data="M2 2.5h12v4H2z M2 9.5h12v4H2z" Fill="Transparent" Stroke="#A7D948" StrokeThickness="1.4" StrokeLineJoin="Round"/><Path Data="M4.2 4.5h.1 M4.2 11.5h.1" Stroke="#A7D948" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
+                  <TextBlock Text="管理" VerticalAlignment="Center"/>
+                </StackPanel>
+              </Button>
+            </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <Button x:Name="HistoryButton" Content="记录" Style="{StaticResource HistoryAccentButton}" Margin="0,0,8,0" ToolTip="查看占用记录"/>
               <TextBlock Text="刷新" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="0,0,4,0"/>
@@ -232,6 +249,8 @@ $script:smokeFinished = $false
 $script:smokePassed = $false
 $script:smokeError = $null
 $script:authManagerPrompted = $false
+$script:sshManagerOpen = $false
+$script:sshManagerOpenQueued = $false
 
 function New-Brush([string]$Color) {
     return [Windows.Media.BrushConverter]::new().ConvertFromString($Color)
@@ -1001,9 +1020,25 @@ function Apply-ServerPulseManagedServers {
 }
 
 function Show-ServerPulseSshManager {
+    param([switch]$Queued)
+    if($Queued){
+        if(-not$script:sshManagerOpenQueued){return}
+        $script:sshManagerOpenQueued=$false
+    }elseif($script:sshManagerOpenQueued){
+        $script:sshManagerOpenQueued=$false
+    }
+    if($script:sshManagerOpen){return}
     Close-UserUsagePopup $script:userUsagePopupManager
     $script:authManagerPrompted=$true
-    [void](Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows})
+    $script:sshManagerOpen=$true
+    try{[void](Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows})}
+    finally{$script:sshManagerOpen=$false}
+}
+
+function Queue-ServerPulseSshManager {
+    if($script:sshManagerOpen-or$script:sshManagerOpenQueued){return}
+    $script:sshManagerOpenQueued=$true
+    [void]$window.Dispatcher.BeginInvoke([Action]{Show-ServerPulseSshManager -Queued},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
 }
 
 function Show-ServerPulseFromTray {
@@ -1214,7 +1249,7 @@ $pollTimer.Add_Tick({
                     }
                     Update-ServerCard $server
                 }
-                if($shouldPromptAuth -and -not$script:authManagerPrompted -and -not$SmokeTest){[void]$window.Dispatcher.BeginInvoke([Action]{Show-ServerPulseSshManager},[Windows.Threading.DispatcherPriority]::ApplicationIdle)}
+                if($shouldPromptAuth -and -not$script:authManagerPrompted -and -not$SmokeTest){Queue-ServerPulseSshManager}
                 $online = @($servers | Where-Object { $_.Status -eq 'online' }).Count
                 $selectedCount=@($script:serverStore.Servers|Where-Object{$_.Monitored}).Count
                 $gpuCount = ($servers | Where-Object { $_.Status -eq 'online' } | ForEach-Object { @($_.Metrics.Gpus).Count } | Measure-Object -Sum).Sum
@@ -1298,7 +1333,7 @@ $window.Add_Loaded({
         $window.Left = [double]$settings.Left; $window.Top = [double]$settings.Top
     }
     $cursorTimer.Start(); $pollTimer.Start(); Start-Collection
-    if(($script:firstServerStoreRun -or @($script:serverStore.Servers|Where-Object{$_.Monitored}).Count-eq0) -and -not$SmokeTest){[void]$window.Dispatcher.BeginInvoke([Action]{Show-ServerPulseSshManager},[Windows.Threading.DispatcherPriority]::ApplicationIdle)}
+    if(($script:firstServerStoreRun -or @($script:serverStore.Servers|Where-Object{$_.Monitored}).Count-eq0) -and -not$SmokeTest){Queue-ServerPulseSshManager}
 })
 $window.Add_Closing({
     Close-UserUsagePopup $script:userUsagePopupManager

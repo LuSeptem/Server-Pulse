@@ -359,6 +359,9 @@ Assert-Equal ([bool]($mainScript -match 'function Hide-ServerPulseToTray')) $tru
 Assert-Equal ([bool]($mainScript -match '(?s)\$ui\.MinimizeButton\.Add_Click.+?Hide-ServerPulseToTray')) $true '最小化按钮隐藏到托盘'
 Assert-Equal ([bool]($mainScript -match '(?s)\$window\.Add_Closing.+?\$script:trayIcon\.Dispose\(\)')) $true '退出时释放托盘图标'
 Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager')) $true '主窗口和托盘可打开 SSH 服务器管理窗口'
+Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen\)\{return\}')) $true 'SSH 管理窗口具有单实例门闩'
+Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen-or\$script:sshManagerOpenQueued\)\{return\}')) $true '自动打开 SSH 管理窗口不会重复排队'
+Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager -Queued')) $true '排队的管理窗口调用可被手动打开取消'
 Assert-Equal ([bool]($mainScript -match 'Clear-ServerPulseSessionSecrets')) $true '退出程序时清除全部会话密码'
 Assert-Equal ([bool]($mainScript -match '\$runtimePayload=\$null;foreach\(\$item in \$runtimeServers\)\{\$item\.Password=\$null\}')) $true '采集输入写入标准输入后清除主进程密码副本'
 $sshScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1') -Raw -Encoding UTF8
@@ -367,6 +370,7 @@ Assert-Equal ([bool]($sshScript -match 'EnvironmentVariables\[[^\]]+\]\s*=\s*\$P
 $managerScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($managerScript -match 'InheritHistory=\[bool\]\$w\.Tag\.Inherit\.IsChecked')) $true '编辑连接身份时由用户选择是否继承历史'
 Assert-Equal ([bool]($managerScript -match 'DeleteCredentialButton')) $true '服务器管理窗口允许独立删除 Windows 凭据'
+Assert-Equal ([bool]($managerScript -match '\.BeginStop\(')) $true '关闭管理窗口时异步停止 SSH 发现而不阻塞 UI'
 Assert-Equal ([bool]($mainScript -match 'Register-UserUsageTarget')) $true '实时卡片注册用户占用交互目标'
 Assert-Equal ([bool]($mainScript -match '\$Target\.Add_MouseEnter\(\{\s*param\(\$sender[^}]+Invoke-UserUsageTargetMouseEnter \$sender\.Tag')) $true '实时用户悬停回调通过 sender.Tag 保持注册后生命周期'
 Assert-Equal ([bool]($mainScript -match '(?s)if \(\$manager\.IsPinned.+?\$manager\.CurrentTarget\.Key -eq \$TargetState\.Key\).+?Close-UserUsagePopup')) $true '实时用户卡片再次点击关闭已固定弹窗'
@@ -392,8 +396,10 @@ $managerServer=New-ServerPulseManagedServer -Id 'manager-test' -Label 'Manager T
 $managerStore=[PSCustomObject]@{Version=1;Path=(Join-Path ([IO.Path]::GetTempPath()) 'serverpulse-manager-unused.json');Servers=@($managerServer)}
 $managerSecrets=New-ServerPulseSessionSecretStore
 Set-ServerPulseSessionSecret $managerSecrets $managerServer.Identity 'manager-session-secret'
-$managerSmoke=Show-ServerPulseServerManager -Owner $managerOwner -Store $managerStore -SessionSecrets $managerSecrets -AskPassPath 'unused' -TimeoutMs 1000 -OnApplied {} -SmokeTest
+$managerConstruction=[Diagnostics.Stopwatch]::StartNew();$managerSmoke=Show-ServerPulseServerManager -Owner $managerOwner -Store $managerStore -SessionSecrets $managerSecrets -AskPassPath 'unused' -TimeoutMs 1000 -OnApplied {} -SmokeTest;$managerConstruction.Stop()
 Assert-Equal ($managerSmoke -is [PSCustomObject]) $true '服务器管理窗口冒烟入口只返回一个状态对象'
+Assert-Equal ($managerConstruction.ElapsedMilliseconds-lt1000) $true 'SSH 配置发现不阻塞管理窗口构造'
+Assert-Equal ($managerSmoke.Context.DiscoveryAsync -ne $null) $true 'SSH 配置发现运行在后台而非阻塞窗口构造'
 $managerRow=$managerSmoke.Context.Rows[0]
 Assert-Equal $managerRow.Monitor.IsChecked $true '服务器管理窗口显示监视选择'
 Assert-Equal $managerRow.Passwordless.IsHitTestVisible $false '免密复选框只读并由检测结果控制'

@@ -194,15 +194,27 @@ function New-ServerManagerRow {
     return $state
 }
 
-function Add-ServerManagerCandidateRows {
+function Start-ServerManagerCandidateDiscovery {
     param($Context)
     $known=@{};foreach($row in @($Context.Rows)){$known[[string]$row.Server.SshTarget]=$true}
-    foreach($alias in @(Get-ServerPulseSshConfigAliases)){
-        if($known.ContainsKey($alias)){continue}
-        try{$resolved=Get-ServerPulseSshResolvedTarget $alias;$server=New-ServerPulseManagedServer -Label $alias -Source sshConfig -SshTarget $alias -HostName $resolved.HostName -Port $resolved.Port -User $resolved.User -Monitored $false
-            $row=New-ServerManagerRow $Context $server;[void]$Context.Rows.Add($row);[void]$Context.Panel.Children.Add($row.Surface)
-        }catch{}
-    }
+    $context.KnownTargets=$known
+    $context.DiscoveryStatus.Text='正在后台发现 SSH 配置…'
+    $context.DiscoveryPowerShell=[PowerShell]::Create()
+    $context.DiscoveryPowerShell.AddScript({param($ModulePath);$ErrorActionPreference='Stop';. $ModulePath;$results=foreach($alias in @(Get-ServerPulseSshConfigAliases)){try{$resolved=Get-ServerPulseSshResolvedTarget $alias;[PSCustomObject]@{Alias=$alias;HostName=$resolved.HostName;Port=$resolved.Port;User=$resolved.User}}catch{}};return @($results)}).AddArgument($Context.SshModulePath)|Out-Null
+    $context.DiscoveryAsync=$context.DiscoveryPowerShell.BeginInvoke()
+    $context.DiscoveryTimer=[Windows.Threading.DispatcherTimer]::new();$context.DiscoveryTimer.Interval=[TimeSpan]::FromMilliseconds(100);$context.DiscoveryTimer.Tag=$context
+    $context.DiscoveryTimer.Add_Tick({param($sender,$eventArgs);$ctx=$sender.Tag;if(-not$ctx.DiscoveryAsync.IsCompleted){return};$sender.Stop();try{$found=@($ctx.DiscoveryPowerShell.EndInvoke($ctx.DiscoveryAsync));foreach($resolved in $found){if($ctx.KnownTargets.ContainsKey([string]$resolved.Alias)){continue};$server=New-ServerPulseManagedServer -Label ([string]$resolved.Alias) -Source sshConfig -SshTarget ([string]$resolved.Alias) -HostName ([string]$resolved.HostName) -Port ([int]$resolved.Port) -User ([string]$resolved.User) -Monitored $false;$row=New-ServerManagerRow $ctx $server;[void]$ctx.Rows.Add($row);[void]$ctx.Panel.Children.Add($row.Surface);$ctx.KnownTargets[[string]$resolved.Alias]=$true};$ctx.DiscoveryStatus.Text=if($found.Count){"已发现 $($found.Count) 个 SSH 配置项"}else{'未发现新的 SSH 配置项'}}catch{$ctx.DiscoveryStatus.Text='SSH 配置发现失败，可继续手动添加'}finally{$ctx.DiscoveryPowerShell.Dispose();$ctx.DiscoveryPowerShell=$null;$ctx.DiscoveryAsync=$null}})
+    $context.DiscoveryTimer.Start()
+}
+
+function Stop-ServerManagerCandidateDiscovery {
+    param($Context)
+    if($null-ne$Context.DiscoveryTimer){$Context.DiscoveryTimer.Stop()}
+    $shell=$Context.DiscoveryPowerShell;$Context.DiscoveryPowerShell=$null;$Context.DiscoveryAsync=$null
+    if($null-eq$shell){return}
+    if($shell.InvocationStateInfo.State-in@('Running','Stopping')){
+        try{[void]$shell.BeginStop({param($asyncResult);$worker=[PowerShell]$asyncResult.AsyncState;try{$worker.EndStop($asyncResult)}catch{}finally{$worker.Dispose()}},$shell)}catch{$shell.Dispose()}
+    }else{$shell.Dispose()}
 }
 
 function Show-ServerPulseManualServerDialog {
@@ -224,13 +236,15 @@ function Show-ServerPulseServerManager {
     $root=[Windows.Controls.DockPanel]::new();$root.Margin=16;$window.Content=$root
     $footer=[Windows.Controls.StackPanel]::new();$footer.Orientation='Horizontal';$footer.HorizontalAlignment='Right';$footer.Margin='0,12,0,0';[Windows.Controls.DockPanel]::SetDock($footer,'Bottom');[void]$root.Children.Add($footer)
     $add=[Windows.Controls.Button]::new();$add.Content='添加服务器';$add.Padding='12,5';$apply=[Windows.Controls.Button]::new();$apply.Content='验证并应用';$apply.Padding='14,5';$apply.Margin='8,0,0,0';$cancel=[Windows.Controls.Button]::new();$cancel.Content='取消';$cancel.Padding='14,5';$cancel.Margin='8,0,0,0';foreach($b in @($add,$apply,$cancel)){[void]$footer.Children.Add($b)}
-    $intro=[Windows.Controls.TextBlock]::new();$intro.Text='选择需要监视的 SSH 服务器。已验证服务器立即运行；缺少认证的服务器保持暂停，不影响其他服务器。';$intro.TextWrapping='Wrap';$intro.Foreground=New-ServerManagerBrush '#9DA7A0';$intro.Margin='0,0,0,12';[Windows.Controls.DockPanel]::SetDock($intro,'Top');[void]$root.Children.Add($intro)
+    $introPanel=[Windows.Controls.StackPanel]::new();$introPanel.Margin='0,0,0,12';[Windows.Controls.DockPanel]::SetDock($introPanel,'Top');[void]$root.Children.Add($introPanel)
+    $intro=[Windows.Controls.TextBlock]::new();$intro.Text='选择需要监视的 SSH 服务器。已验证服务器立即运行；缺少认证的服务器保持暂停，不影响其他服务器。';$intro.TextWrapping='Wrap';$intro.Foreground=New-ServerManagerBrush '#9DA7A0';[void]$introPanel.Children.Add($intro)
+    $discoveryStatus=[Windows.Controls.TextBlock]::new();$discoveryStatus.Text='等待发现 SSH 配置';$discoveryStatus.Foreground=New-ServerManagerBrush '#657069';$discoveryStatus.FontSize=9;$discoveryStatus.Margin='0,5,0,0';[void]$introPanel.Children.Add($discoveryStatus)
     $scroll=[Windows.Controls.ScrollViewer]::new();$scroll.VerticalScrollBarVisibility='Auto';$panel=[Windows.Controls.StackPanel]::new();$scroll.Content=$panel;[void]$root.Children.Add($scroll)
     $workingSecrets=New-ServerPulseSessionSecretStore
     foreach($identity in @($SessionSecrets.Keys)){$secret=Get-ServerPulseSessionSecret $SessionSecrets $identity;if($null-ne$secret){Set-ServerPulseSessionSecret $workingSecrets $identity $secret};$secret=$null}
-    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');OnApplied=$OnApplied}
+    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnApplied=$OnApplied}
     foreach($server in @($Store.Servers)){ $copy=Copy-ServerPulseManagedServer $server;$row=New-ServerManagerRow $context $copy;[void]$context.Rows.Add($row);[void]$panel.Children.Add($row.Surface) }
-    Add-ServerManagerCandidateRows $context
+    Start-ServerManagerCandidateDiscovery $context
     $add.Tag=$context;$add.Add_Click({param($sender,$eventArgs);$ctx=$sender.Tag;$result=Show-ServerPulseManualServerDialog $ctx.Window;if($null-ne$result){$row=New-ServerManagerRow $ctx $result.Server;[void]$ctx.Rows.Add($row);[void]$ctx.Panel.Children.Add($row.Surface);Invoke-ServerManagerRowTest $row}})
     $cancel.Tag=$window;$cancel.Add_Click({param($sender,$eventArgs);$sender.Tag.Close()})
     $apply.Tag=$context;$apply.Add_Click({
@@ -251,7 +265,7 @@ function Show-ServerPulseServerManager {
         }catch{[Windows.MessageBox]::Show($ctx.Window,$_.Exception.Message,'应用失败','OK','Error')|Out-Null}
         finally{$sender.IsEnabled=$true}
     })
-    $window.Tag=$context;$window.Add_Closed({param($sender,$eventArgs);$ctx=$sender.Tag;Clear-ServerPulseSessionSecrets $ctx.SessionSecrets;foreach($pending in @($ctx.PendingCredentialWrites.Values)){$pending.Password=$null};$ctx.PendingCredentialWrites.Clear()})
+    $window.Tag=$context;$window.Add_Closed({param($sender,$eventArgs);$ctx=$sender.Tag;Stop-ServerManagerCandidateDiscovery $ctx;Clear-ServerPulseSessionSecrets $ctx.SessionSecrets;foreach($pending in @($ctx.PendingCredentialWrites.Values)){$pending.Password=$null};$ctx.PendingCredentialWrites.Clear()})
     if($SmokeTest){return [PSCustomObject]@{Window=$window;Context=$context;ApplyButton=$apply;AddButton=$add}}
     [void]$window.ShowDialog()
 }
