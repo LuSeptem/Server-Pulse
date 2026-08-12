@@ -184,6 +184,57 @@ function Write-ServerPulseErrorLog {
     return $logPath
 }
 
+function Show-ServerPulseErrorDialog {
+    param(
+        [Parameter(Mandatory)]$Owner,
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string]$Message,
+        [string]$Detail,
+        [string]$LogPath,
+        [switch]$SmokeTest
+    )
+
+    [xml]$dialogXaml=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Server Pulse" Width="500" SizeToContent="Height" MinHeight="210"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" WindowStartupLocation="CenterOwner" Topmost="True"
+        FontFamily="Bahnschrift, Microsoft YaHei UI" Foreground="#E7EBE8">
+  <Border Background="#FC111512" BorderBrush="#FF6B6B" BorderThickness="1" CornerRadius="11" Padding="18,15,18,16">
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <DockPanel>
+        <Ellipse Width="9" Height="9" Fill="#FF6B6B" Margin="0,0,10,0" VerticalAlignment="Center"/>
+        <TextBlock x:Name="DialogTitle" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      </DockPanel>
+      <TextBlock x:Name="DialogMessage" Grid.Row="1" Margin="19,14,0,0" FontSize="11" Foreground="#DCE3DF" TextWrapping="Wrap"/>
+      <StackPanel Grid.Row="2" Margin="19,10,0,0">
+        <TextBlock x:Name="DialogDetail" FontSize="9" Foreground="#FF9B93" TextWrapping="Wrap"/>
+        <TextBlock x:Name="DialogLogPath" Margin="0,8,0,0" FontSize="8" Foreground="#78837C" TextWrapping="Wrap"/>
+      </StackPanel>
+      <Button x:Name="DialogCloseButton" Grid.Row="3" Content="知道了" Width="78" Height="28" Margin="0,16,0,0" HorizontalAlignment="Right"
+              Foreground="#0B0E0C" Background="#A7D948" BorderBrush="#BCEB62" BorderThickness="1" FontSize="9" FontWeight="SemiBold" Cursor="Hand"/>
+    </Grid>
+  </Border>
+</Window>
+'@
+    $reader=[Xml.XmlNodeReader]::new($dialogXaml)
+    $dialog=[Windows.Markup.XamlReader]::Load($reader)
+    $dialog.Owner=$Owner
+    $dialog.FindName('DialogTitle').Text=$Title
+    $dialog.FindName('DialogMessage').Text=$Message
+    $dialog.FindName('DialogDetail').Text=$Detail
+    $dialog.FindName('DialogLogPath').Text=if([string]::IsNullOrWhiteSpace($LogPath)){''}else{"详细日志：$LogPath"}
+    $dialog.FindName('DialogCloseButton').Add_Click({param($sender,$event);$target=[Windows.Window]::GetWindow($sender);if($null-ne$target){$target.Close()}})
+    if($SmokeTest){
+        $result=[PSCustomObject]@{Topmost=$dialog.Topmost;ShowInTaskbar=$dialog.ShowInTaskbar;OwnerMatches=($dialog.Owner-eq$Owner);Title=$dialog.FindName('DialogTitle').Text;Message=$dialog.FindName('DialogMessage').Text}
+        $dialog.Close()
+        return $result
+    }
+    [void]$dialog.ShowDialog()
+}
+
 $window.Dispatcher.Add_UnhandledException({
     param($sender,$eventArgs)
     try {
@@ -1148,6 +1199,8 @@ function Complete-SmokeTest {
         if (-not $historySmoke.CloseSeparatedFromDragArea) { throw '历史窗口关闭按钮位于拖拽事件区域内' }
         if (-not $historySmoke.CloseButtonPassed) { throw "历史窗口关闭按钮失败：$($historySmoke.CloseButtonError)" }
         if ($historySmoke.PanelCount -lt 1 -or -not (ConvertFrom-HistoryMinuteText $historySmoke.Start) -or -not (ConvertFrom-HistoryMinuteText $historySmoke.End) -or -not $historySmoke.ValidationPassed) { throw '历史窗口、默认时间范围与红框校验失败' }
+        $errorDialogSmoke=Show-ServerPulseErrorDialog -Owner $window -Title '历史记录错误' -Message '无法打开占用记录。' -Detail '测试异常' -LogPath 'C:\test\error.log' -SmokeTest
+        if(-not$errorDialogSmoke.Topmost-or$errorDialogSmoke.ShowInTaskbar-or-not$errorDialogSmoke.OwnerMatches-or$errorDialogSmoke.Title-ne'历史记录错误'){throw '历史记录错误弹窗层级或所有者验证失败'}
         $script:dispatcherProbeHandled = $false
         [void]$window.Dispatcher.BeginInvoke([Action]{ throw 'ServerPulse dispatcher containment probe' },[Windows.Threading.DispatcherPriority]::Background)
         $probeFrame=[Windows.Threading.DispatcherFrame]::new()
@@ -1349,7 +1402,16 @@ $ui.RefreshIntervalBox.Add_PreviewKeyDown({
 $ui.RefreshIntervalBox.Add_LostKeyboardFocus({ [void](Set-RefreshInterval $ui.RefreshIntervalBox.Text -Persist) })
 $ui.HistoryButton.Add_Click({
     try { Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder }
-    catch { $ui.SummaryText.Text = "历史记录错误：$($_.Exception.Message)" }
+    catch {
+        $historyException=$_.Exception
+        $logPath=$null
+        try{$logPath=Write-ServerPulseErrorLog -Exception $historyException -Context 'Open history window'}catch{}
+        try{
+            Show-ServerPulseErrorDialog -Owner $window -Title '历史记录错误' -Message '无法打开占用记录，主监控仍会继续运行。' -Detail $historyException.Message -LogPath $logPath
+        }catch{
+            [void][Windows.MessageBox]::Show($window,("无法打开占用记录。`n`n{0}" -f $historyException.Message),'Server Pulse · 历史记录错误','OK','Error')
+        }
+    }
 })
 $ui.EdgeButton.Add_Click({
     if ($ui.EdgeButton.Tag -eq 'active') { $ui.EdgeButton.Tag = $null; $hideTimer.Stop(); Show-FromEdge }

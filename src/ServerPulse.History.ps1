@@ -925,6 +925,52 @@ function Register-HistoryWindowDragArea {
     return $DragArea.Tag
 }
 
+function Invoke-ServerPulseHistoryRender {
+    param([Parameter(Mandatory)]$State)
+
+    $historyUi = $State.Ui
+    try {
+        $startResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
+        $endResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryEnd'
+        if ($null -eq $startResult.Value -or $null -eq $endResult.Value) {
+            $historyUi.HistoryRangeStatus.Text='请修正红色时间字段'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
+            $State.LastError = $null
+            return $false
+        }
+        $rangeStart = $startResult.Value; $rangeEnd = $endResult.Value
+        if ($rangeEnd -lt $rangeStart) {
+            $historyUi.HistoryRangeStatus.Text='结束时间不能早于开始时间'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'
+            $State.LastError = $null
+            return $false
+        }
+        $records = @(Get-ServerPulseHistoryRecords -Recorder $State.Recorder -Start $rangeStart -End $rangeEnd)
+        $historyUi.HistoryPanel.Children.Clear()
+        if ($records.Count -eq 0) {
+            $empty = New-HistoryText '所选时间段暂无记录' 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
+            [void]$historyUi.HistoryPanel.Children.Add($empty)
+        } else {
+            $serverIds = @($records | ForEach-Object { @($_.Servers) } | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
+            foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $historyUi.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd -SelectionStore $State.SelectionStore }
+        }
+        $minutes = [Math]::Max(0,[int][Math]::Round(($rangeEnd-$rangeStart).TotalMinutes))
+        $historyUi.HistoryRangeStatus.Text="$($records.Count) 个分钟点 · $minutes 分钟"; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
+        $historyUi.HistoryFooterText.Text='本地按分钟平均保存 CPU、MEM、LOAD、GPU、显存、温度、功耗与风扇'
+        $State.LastError = $null
+        return $true
+    } catch {
+        $State.LastError = $_.Exception
+        $message=[string]$_.Exception.Message
+        if ($message.Length -gt 140) { $message=$message.Substring(0,137) + '...' }
+        $historyUi.HistoryPanel.Children.Clear()
+        $errorText=New-HistoryText ("无法读取占用记录`n{0}" -f $message) 12 '#FF8A80'
+        $errorText.TextAlignment='Center'; $errorText.TextWrapping='Wrap'; $errorText.HorizontalAlignment='Center'; $errorText.Margin=[Windows.Thickness]::new(18,90,18,0)
+        [void]$historyUi.HistoryPanel.Children.Add($errorText)
+        $historyUi.HistoryRangeStatus.Text='查询失败'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
+        $historyUi.HistoryFooterText.Text='请检查本地历史记录文件后重试'
+        return $false
+    }
+}
+
 function Show-ServerPulseHistoryWindow {
     param(
         [Parameter(Mandatory)]$Owner,
@@ -1030,57 +1076,48 @@ function Show-ServerPulseHistoryWindow {
     Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start
     Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $end
     $historySelectionStore=@{}
-
-    $renderCore = {
-        $startResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
-        $endResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryEnd'
-        if ($null -eq $startResult.Value -or $null -eq $endResult.Value) {
-            $historyUi.HistoryRangeStatus.Text='请修正红色时间字段'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'; return
-        }
-        $rangeStart = $startResult.Value; $rangeEnd = $endResult.Value
-        if ($rangeEnd -lt $rangeStart) {
-            $historyUi.HistoryRangeStatus.Text='结束时间不能早于开始时间'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'; return
-        }
-        $records = @(Get-ServerPulseHistoryRecords -Recorder $Recorder -Start $rangeStart -End $rangeEnd)
-        $historyUi.HistoryPanel.Children.Clear()
-        if ($records.Count -eq 0) {
-            $empty = New-HistoryText '所选时间段暂无记录' 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
-            [void]$historyUi.HistoryPanel.Children.Add($empty)
-        } else {
-            $serverIds = @($records | ForEach-Object { @($_.Servers) } | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
-            foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $historyUi.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd -SelectionStore $historySelectionStore }
-        }
-        $minutes = [Math]::Max(0,[int][Math]::Round(($rangeEnd-$rangeStart).TotalMinutes))
-        $historyUi.HistoryRangeStatus.Text="$($records.Count) 个分钟点 · $minutes 分钟"; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
-        $historyUi.HistoryFooterText.Text='本地按分钟平均保存 CPU、MEM、LOAD、GPU、显存、温度、功耗与风扇'
-    }.GetNewClosure()
-    $render = {
-        try { & $renderCore }
-        catch {
-            $message=[string]$_.Exception.Message
-            if ($message.Length -gt 140) { $message=$message.Substring(0,137) + '...' }
-            $historyUi.HistoryPanel.Children.Clear()
-            $errorText=New-HistoryText ("无法读取占用记录`n{0}" -f $message) 12 '#FF8A80'
-            $errorText.TextAlignment='Center'; $errorText.TextWrapping='Wrap'; $errorText.HorizontalAlignment='Center'; $errorText.Margin=[Windows.Thickness]::new(18,90,18,0)
-            [void]$historyUi.HistoryPanel.Children.Add($errorText)
-            $historyUi.HistoryRangeStatus.Text='查询失败'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
-            $historyUi.HistoryFooterText.Text='请检查本地历史记录文件后重试'
-        }
-    }.GetNewClosure()
+    $historyState=[PSCustomObject]@{
+        Ui=$historyUi
+        Recorder=$Recorder
+        SelectionStore=$historySelectionStore
+        Renderer=${function:Invoke-ServerPulseHistoryRender}
+        DateSetter=${function:Set-HistoryDateFields}
+        Validator=${function:Set-HistoryDateInputValidation}
+        LastError=$null
+    }
     [void](Register-HistoryWindowDragArea -DragArea $historyUi.HistoryDragArea)
     Register-HistoryWindowCloseButton -Button $historyUi.HistoryCloseButton
     Register-HistoryWindowChartEscape -Window $historyWindow -Panel $historyUi.HistoryPanel
-    $historyUi.HistoryQueryButton.Add_Click($render)
-    $historyUi.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $now;&$render }.GetNewClosure())
+    $historyUi.HistoryQueryButton.Tag=$historyState
+    $historyUi.HistoryQueryButton.Add_Click({
+        param($sender,$event)
+        $state=$sender.Tag
+        [void](& $state.Renderer -State $state)
+    })
+    $historyUi.HistoryHourButton.Tag=$historyState
+    $historyUi.HistoryHourButton.Add_Click({
+        param($sender,$event)
+        $state=$sender.Tag; $now=[DateTime]::Now; $now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0)
+        & $state.DateSetter -Ui $state.Ui -Prefix 'HistoryStart' -Value $now.AddHours(-1)
+        & $state.DateSetter -Ui $state.Ui -Prefix 'HistoryEnd' -Value $now
+        [void](& $state.Renderer -State $state)
+    })
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
         foreach ($field in @('Year','Month','Day','Hour','Minute')) {
-            $currentPrefix = $prefix
             $box = $historyUi["${prefix}${field}Box"]
-            $box.Add_TextChanged({ [void](Set-HistoryDateInputValidation -Ui $historyUi -Prefix $currentPrefix) }.GetNewClosure())
-            $box.Add_PreviewKeyDown({ param($sender,$event); if($event.Key -eq 'Enter'){&$render;$event.Handled=$true} }.GetNewClosure())
+            $box.Tag=[PSCustomObject]@{State=$historyState;Prefix=$prefix}
+            $box.Add_TextChanged({
+                param($sender,$event)
+                $tag=$sender.Tag
+                [void](& $tag.State.Validator -Ui $tag.State.Ui -Prefix $tag.Prefix)
+            })
+            $box.Add_PreviewKeyDown({
+                param($sender,$event)
+                if($event.Key -eq 'Enter'){$tag=$sender.Tag;[void](& $tag.State.Renderer -State $tag.State);$event.Handled=$true}
+            })
         }
     }
-    &$render
+    [void](Invoke-ServerPulseHistoryRender -State $historyState)
     if ($SmokeTest) {
         $historyWindow.Show(); $historyWindow.UpdateLayout()
         $originalHistoryDirectory=$Recorder.Directory
@@ -1126,7 +1163,7 @@ function Show-ServerPulseHistoryWindow {
         $changedRangeQueryPassed=($changedQueryState.Passed -and $historyWindow.IsVisible)
         $historyUi.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
         $validationPassed=($null -eq $invalidResult.Value -and $historyUi.HistoryStartMonthError.Visibility -eq 'Visible' -and $historyUi.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
-        Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start; &$render; $historyWindow.UpdateLayout()
+        Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start; [void](Invoke-ServerPulseHistoryRender -State $historyState); $historyWindow.UpdateLayout()
         $normalRenderPassed=($historyUi.HistoryRangeStatus.Text -ne '查询失败')
         $hoverTestTime=$start.AddMinutes(30)
         $hoverTestSeries=@(

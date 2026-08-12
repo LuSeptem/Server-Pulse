@@ -392,7 +392,31 @@ Assert-Equal ([bool]($historyScript -match 'HistoryDragArea\.Add_Mouse[^\r\n]+\$
 Assert-Equal ([bool]($historyScript -match 'Register-HistoryWindowDragArea')) $true '历史拖拽事件使用独立注册函数'
 Assert-Equal ([bool]($historyScript -match '(?m)^\s*\$ui\s*=\s*@\{\}')) $false '历史窗口不得覆盖主窗口 UI 动态变量'
 Assert-Equal ([bool]($historyScript -match 'ChartKey "\$ServerId/gpu/\$gpuIndex/vram"')) $true '历史 GPU 用户选择以服务器和稳定 GPU 索引为锚点'
+Assert-Equal ([bool]($historyScript -match 'Renderer=\$\{function:Invoke-ServerPulseHistoryRender\}')) $true '历史查询状态捕获渲染器而非依赖动态命令查找'
+Assert-Equal ([bool]($historyScript -match '(?s)\$renderCore\s*=.+?GetNewClosure')) $false '历史生产渲染不得进入隔离 helper 的动态闭包'
+Assert-Equal ([bool]($mainScript -match 'function Show-ServerPulseErrorDialog')) $true '主窗口提供独立历史错误对话框'
+Assert-Equal ([bool]($mainScript -match 'ShowInTaskbar="False" WindowStartupLocation="CenterOwner" Topmost="True"')) $true '历史错误对话框独立置顶且不创建任务栏项'
+Assert-Equal ([bool]($mainScript -match "Context 'Open history window'")) $true '历史窗口打开异常写入错误日志'
+Assert-Equal ([bool]($mainScript -match '\$ui\.SummaryText\.Text\s*=\s*"历史记录错误')) $false '历史窗口打开异常不再覆盖主状态栏'
 Add-Type -AssemblyName PresentationFramework,System.Windows.Forms
+$renderDirectory=Join-Path ([IO.Path]::GetTempPath()) ("serverpulse-render-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    $renderRecorder=New-ServerPulseHistoryRecorder -Directory $renderDirectory -RetentionDays 30
+    $renderRecord=$record | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+    Save-HistoryMinuteRecord -Recorder $renderRecorder -Record $renderRecord
+    $renderUi=@{HistoryPanel=[Windows.Controls.StackPanel]::new();HistoryRangeStatus=[Windows.Controls.TextBlock]::new();HistoryFooterText=[Windows.Controls.TextBlock]::new()}
+    foreach($prefix in @('HistoryStart','HistoryEnd')){foreach($field in @('Year','Month','Day','Hour','Minute')){$renderUi["${prefix}${field}Box"]=[Windows.Controls.TextBox]::new();$renderUi["${prefix}${field}Error"]=[Windows.Controls.TextBlock]::new()}}
+    Set-HistoryDateFields -Ui $renderUi -Prefix HistoryStart -Value ([datetime]'2026-08-11 09:07')
+    Set-HistoryDateFields -Ui $renderUi -Prefix HistoryEnd -Value ([datetime]'2026-08-11 09:07')
+    $renderState=[PSCustomObject]@{Ui=$renderUi;Recorder=$renderRecorder;SelectionStore=@{};Renderer=${function:Invoke-ServerPulseHistoryRender};LastError=$null}
+    $isolatedRender={param($state);& $state.Renderer -State $state}.GetNewClosure()
+    $renderPassed=& $isolatedRender $renderState
+    Assert-Equal $renderPassed $true '捕获的历史渲染器可从隔离动态闭包调用'
+    Assert-Equal $renderUi.HistoryPanel.Children.Count 1 '隔离动态闭包正常生成历史服务器卡片'
+    Assert-Equal $renderState.LastError $null '隔离动态闭包渲染不产生 helper 解析错误'
+} finally {
+    Remove-Item -LiteralPath $renderDirectory -Recurse -Force -ErrorAction SilentlyContinue
+}
 $managerOwner=[Windows.Window]::new();$managerOwner.Show()
 $managerServer=New-ServerPulseManagedServer -Id 'manager-test' -Label 'Manager Test' -Source manual -SshTarget 'gpu.example' -HostName 'gpu.example' -Port 22 -User alice -Monitored $true
 $managerStore=[PSCustomObject]@{Version=1;Path=(Join-Path ([IO.Path]::GetTempPath()) 'serverpulse-manager-unused.json');Servers=@($managerServer)}
