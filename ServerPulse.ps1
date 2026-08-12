@@ -478,7 +478,7 @@ function Close-UserUsagePopup {
     $Manager.CurrentTarget = $null
     $Manager.IsPinned = $false
     if ($null -ne $previous) { $previous.Expanded = $false; Set-UserUsageTargetVisual $previous }
-    if ($window.IsVisible -and $window.WindowState -eq 'Normal' -and $script:dockSide -and $ui.EdgeButton.Tag -eq 'active') {
+    if ($window.IsVisible -and $window.WindowState -eq 'Normal' -and $script:dockSide -and $ui.EdgeButton.Tag -eq 'active' -and -not $window.IsMouseOver) {
         $hideTimer.Stop(); $hideTimer.Start()
     }
 }

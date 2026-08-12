@@ -272,6 +272,7 @@ Assert-Equal ([bool]($mainScript -match '\$Target\.Add_MouseEnter\(\{\s*param\(\
 Assert-Equal ([bool]($mainScript -match '(?s)if \(\$manager\.IsPinned.+?\$manager\.CurrentTarget\.Key -eq \$TargetState\.Key\).+?Close-UserUsagePopup')) $true '实时用户卡片再次点击关闭已固定弹窗'
 Assert-Equal ([bool]($mainScript -match '\$manager\.CurrentTarget = \$TargetState\s+\$manager\.IsPinned = \[bool\]\$Pinned')) $true '点击其他实时目标替换当前固定弹窗'
 Assert-Equal ([bool]($mainScript -match '(?s)\$eventArgs\.Key -eq \[Windows\.Input\.Key\]::Escape[^}]+Close-UserUsagePopup')) $true 'Esc 关闭实时用户弹窗'
+Assert-Equal ([bool]($mainScript -match '(?s)function Close-UserUsagePopup.+?-not \$window\.IsMouseOver.+?\$hideTimer\.Start\(\)')) $true '关闭用户弹窗时鼠标仍在主窗口内不得启动贴边收起'
 Assert-Equal ([bool]($mainScript -match '\("\{0\}:gpu:\{1\}:vram" -f \$Card\.ServerId,\$index\)')) $true 'GPU 用户弹窗以服务器和稳定 GPU 索引为锚点'
 Assert-Equal ([bool]($mainScript -match 'if \(\$isCurrent -and \$manager\.IsPinned\) \{ ''#79C8D8'' \}')) $true '固定实时用户目标使用稳定高亮色'
 $liveUnknownRowsPattern = '(?s)if \(\[string\]::IsNullOrWhiteSpace\(\$name\)\).+?"UID \$uid"'
