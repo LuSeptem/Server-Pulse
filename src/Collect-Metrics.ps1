@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 . (Join-Path $PSScriptRoot 'ServerPulse.Core.ps1')
 . (Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1')
+. (Join-Path $PSScriptRoot 'ServerPulse.Persistent.ps1')
 
 $config = Get-ServerPulseConfig -Path $ConfigPath
 if ($RuntimeInput -and $Worker) { throw 'RuntimeInput 与 Worker 不能同时使用' }
@@ -227,6 +228,7 @@ $corePath = Join-Path $PSScriptRoot 'ServerPulse.Core.ps1'
 $sshModulePath = Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1'
 $collectorRunspacePool = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1,32)
 $collectorRunspacePool.Open()
+$persistentStore=New-ServerPulsePersistentStore
 $collectorWorkerScript = @'
 param($ServerJson, $Script, $TimeoutMs, $CorePath, $SshModulePath, $AskPassPath)
 $ErrorActionPreference = 'Stop'
@@ -306,7 +308,7 @@ try {
             if([string]::IsNullOrWhiteSpace($requestLine)){continue}
             try {
                 $request=$requestLine|ConvertFrom-Json
-                $response=Invoke-ServerPulseCollection -Runtime $request
+                $response=Invoke-ServerPulsePersistentCollection -Runtime $request -Store $persistentStore -SampleScript $remoteScript
                 $requestLine=$null;$request=$null
                 [Console]::Out.WriteLine(($response|ConvertTo-Json -Depth 12 -Compress))
             } catch {
@@ -318,6 +320,7 @@ try {
         Invoke-ServerPulseCollection -Runtime $runtime | ConvertTo-Json -Depth 12 -Compress
     }
 } finally {
+    Remove-ServerPulsePersistentStore $persistentStore
     $collectorRunspacePool.Close()
     $collectorRunspacePool.Dispose()
 }

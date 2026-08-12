@@ -270,6 +270,7 @@ $script:serverStore = Initialize-ServerPulseServerStore -SeedConfig $config -Pat
 if ($script:firstServerStoreRun -and -not $SmokeTest) { Save-ServerPulseServerStore $script:serverStore }
 $script:sessionSecrets = New-ServerPulseSessionSecretStore
 $script:serverAuthStates = @{}
+$script:forceReconnectServers = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $script:askPassPath = Ensure-ServerPulseAskPassHelper (Join-Path $settingsDirectory 'bin')
 $configuredInterval = ConvertTo-RefreshIntervalSeconds ([Math]::Round($config.PollIntervalMs / 1000))
 $savedInterval = ConvertTo-RefreshIntervalSeconds $settings.RefreshIntervalSeconds
@@ -892,13 +893,18 @@ function Update-ServerCard($server) {
     $card = $script:cards[[string]$server.Id]
     if ($null -eq $card) { return }
     $online = $server.Status -eq 'online'
+    $retryAt=$null
+    if($server.PSObject.Properties.Name-contains'RetryAt'-and-not[string]::IsNullOrWhiteSpace([string]$server.RetryAt)){try{$retryAt=[datetime]::Parse([string]$server.RetryAt).ToUniversalTime()}catch{}}
+    $retrySeconds=if($null-ne$retryAt){[Math]::Max(0,[int][Math]::Ceiling(($retryAt-[datetime]::UtcNow).TotalSeconds))}else{0}
     $card.State.Text = switch([string]$server.Status){
         'online'{'● 在线'} 'authentication_required'{'● 待认证'} 'authentication_failed'{'● 认证暂停'}
-        'host_key_unknown'{'● 待确认指纹'} 'host_key_changed'{'● 指纹异常'} default{'● 离线'}
+        'host_key_unknown'{'● 待确认指纹'} 'host_key_changed'{'● 指纹异常'} 'connecting'{'● 连接中'}
+        'retry_wait'{"● $retrySeconds 秒后重试"} 'circuit_open'{'● 重试已暂停'} default{'● 离线'}
     }
-    $card.State.Foreground = New-Brush $(if ($online) { '#A7D948' } elseif($server.Status -eq 'connection'){ '#E4B64B' } else { '#FF6B6B' })
+    $card.State.Foreground = New-Brush $(if ($online) { '#A7D948' } elseif($server.Status-in@('connection','connecting','retry_wait')){ '#E4B64B' } else { '#FF6B6B' })
     $card.Error.Visibility = if ($online) { 'Collapsed' } else { 'Visible' }
-    $card.Error.Text = if ($online) { '' } else { [string]$server.Error }
+    $retryTimeText=if($null-ne$retryAt){$retryAt.ToLocalTime().ToString('HH:mm:ss')}else{'稍后'}
+    $card.Error.Text = if($online){''}elseif($server.Status-eq'retry_wait'){"$([string]$server.Error)`n下次自动重试：$retryTimeText（连续失败 $([int]$server.ConsecutiveFailures) 次）"}elseif($server.Status-eq'circuit_open'){"$([string]$server.Error)`n已停止自动连接；请打开「管理」并点击「重新检测」。"}else{[string]$server.Error}
     if (-not $online -or $null -eq $server.Metrics) {
         $card.Meta.Text = "SSH  $($server.Host)"
         Set-Metric $card.Cpu $null; Set-Metric $card.Memory $null
@@ -1057,6 +1063,14 @@ function Get-ServerPulseAuthState {
     return $script:serverAuthStates[$ServerId]
 }
 
+function Request-ServerPulseReconnect {
+    param([string]$ServerId)
+    if([string]::IsNullOrWhiteSpace($ServerId)){return}
+    [void]$script:forceReconnectServers.Add($ServerId)
+    $state=Get-ServerPulseAuthState $ServerId;$state.Paused=$false;$state.Status='connecting';$state.Notified=$false
+    $script:nextCollection=[datetime]::UtcNow
+}
+
 function Apply-ServerPulseManagedServers {
     param($Store,[object[]]$Rows)
     $script:serverStore=$Store
@@ -1085,7 +1099,7 @@ function Show-ServerPulseSshManager {
     $script:authManagerPrompted=$true
     $script:sshManagerOpen=$true
     try{
-        $manager=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows}
+        $manager=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnRetryRequested {param($serverId);Request-ServerPulseReconnect $serverId} -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows}
         $script:sshManagerWindow=$manager.Window
         $manager.Window.Add_Closed({$script:sshManagerOpen=$false;$script:sshManagerWindow=$null})
     }catch{$script:sshManagerOpen=$false;$script:sshManagerWindow=$null;throw}
@@ -1288,11 +1302,12 @@ function Start-Collection {
         $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
         return
     }
-    $runtimePayload=[PSCustomObject]@{SshTimeoutMs=$config.SshTimeoutMs;AskPassPath=$script:askPassPath;Servers=$runtimeServers}|ConvertTo-Json -Depth 6 -Compress
+    $forcedReconnects=@($script:forceReconnectServers)
+    $runtimePayload=[PSCustomObject]@{SshTimeoutMs=$config.SshTimeoutMs;PollIntervalSeconds=$script:refreshIntervalSeconds;AskPassPath=$script:askPassPath;ForceReconnect=$forcedReconnects;Servers=$runtimeServers}|ConvertTo-Json -Depth 6 -Compress
     $password=$null;$stored=$null
     try{
         [void](Start-CollectionWorker)
-        $script:collectionProcess.StandardInput.WriteLine($runtimePayload);$script:collectionProcess.StandardInput.Flush()
+        $script:collectionProcess.StandardInput.WriteLine($runtimePayload);$script:collectionProcess.StandardInput.Flush();foreach($serverId in $forcedReconnects){[void]$script:forceReconnectServers.Remove([string]$serverId)}
         $script:stdoutTask=$script:collectionProcess.StandardOutput.ReadLineAsync();$script:collectionBusy=$true
     }catch{
         $ui.SummaryText.Text="采集器启动失败：$($_.Exception.Message)";Stop-CollectionWorker
@@ -1311,7 +1326,7 @@ $pollTimer.Add_Tick({
         $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
     }
     if($script:collectionBusy -and $script:stdoutTask -and $script:stdoutTask.IsCompleted){
-        $stdout=([string]$script:stdoutTask.Result).Trim();$script:collectionBusy=$false;$script:stdoutTask=$null
+        $stdout=([string]$script:stdoutTask.Result).Trim();$script:collectionBusy=$false;$script:stdoutTask=$null;$connectionPending=$false
         if ($stdout) {
             try {
                 $snapshot = $stdout | ConvertFrom-Json
@@ -1343,6 +1358,7 @@ $pollTimer.Add_Tick({
                 $ui.UpdatedText.Text = [DateTime]::Now.ToString('HH:mm:ss')
                 $ui.FleetState.Text = if ($selectedCount -gt 0 -and $online -eq $selectedCount) { '  全部在线' } else { "  $online / $selectedCount 在线" }
                 $ui.FleetDot.Fill = New-Brush $(if ($selectedCount -gt 0 -and $online -eq $selectedCount) { '#A7D948' } elseif ($online -gt 0) { '#E4B64B' } else { '#FF6B6B' })
+                $connectionPending=@($servers|Where-Object{$_.Status-in@('connecting','retry_wait')}).Count-gt0
                 if ($SmokeTest -and -not $script:smokeFinished) {
                     [void]$window.Dispatcher.BeginInvoke(
                         [Action]{ Complete-SmokeTest },
@@ -1351,7 +1367,7 @@ $pollTimer.Add_Tick({
                 }
             } catch { $ui.SummaryText.Text = "采集结果错误：$($_.Exception.Message)" }
         } else { $ui.SummaryText.Text='采集器未返回数据' }
-        $script:nextCollection = [DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
+        $script:nextCollection = [DateTime]::UtcNow.AddSeconds($(if($connectionPending){1}else{$script:refreshIntervalSeconds}))
     }
     if (-not $script:collectionBusy -and [DateTime]::UtcNow -ge $script:nextCollection) { Start-Collection }
 })

@@ -107,8 +107,9 @@ function Complete-ServerPulseAuthenticationResult {
 }
 
 function Invoke-ServerManagerRowTest {
-    param($RowState)
+    param($RowState,[switch]$Manual)
     $context=$RowState.Context
+    if($Manual-and$null-ne$context.OnRetryRequested){& $context.OnRetryRequested ([string]$RowState.Server.Id)}
     $password=Get-ServerPulseAuthenticationPassword $RowState $context.SessionSecrets
     $RowState.TestButton.IsEnabled=$false;Set-ServerManagerRowStatus $RowState testing
     try{
@@ -121,7 +122,7 @@ function Invoke-ServerManagerRowTest {
 
 function Register-ServerManagerRowEvents {
     param($State)
-    $State.TestButton.Tag=$State;$State.TestButton.Add_Click({param($sender,$eventArgs);Invoke-ServerManagerRowTest $sender.Tag})
+    $State.TestButton.Tag=$State;$State.TestButton.Add_Click({param($sender,$eventArgs);Invoke-ServerManagerRowTest $sender.Tag -Manual})
     $State.Monitor.Tag=$State;$State.Monitor.Add_Checked({param($sender,$eventArgs);$sender.Tag.Server.Monitored=$true;if($sender.Tag.Status -eq 'unknown'){Invoke-ServerManagerRowTest $sender.Tag}})
     $State.Monitor.Add_Unchecked({param($sender,$eventArgs);$sender.Tag.Server.Monitored=$false})
     $State.Eye.Tag=$State;$State.Eye.Add_PreviewMouseLeftButtonDown({param($sender,$eventArgs);$s=$sender.Tag;$s.Reveal.Text=$s.PasswordBox.Password;$s.PasswordBox.Visibility='Collapsed';$s.Reveal.Visibility='Visible';$eventArgs.Handled=$true})
@@ -231,7 +232,7 @@ function Show-ServerPulseManualServerDialog {
 }
 
 function Show-ServerPulseServerManager {
-    param([Windows.Window]$Owner,$Store,[hashtable]$SessionSecrets,[string]$AskPassPath,[int]$TimeoutMs,[scriptblock]$OnApplied,[switch]$SmokeTest)
+    param([Windows.Window]$Owner,$Store,[hashtable]$SessionSecrets,[string]$AskPassPath,[int]$TimeoutMs,[scriptblock]$OnRetryRequested,[scriptblock]$OnApplied,[switch]$SmokeTest)
     $window=[Windows.Window]::new();$window.Title='Server Pulse · SSH 服务器';$window.Width=620;$window.Height=650;$window.MinWidth=520;$window.MinHeight=420;$window.Owner=$Owner;$window.WindowStartupLocation='CenterOwner';$window.ShowInTaskbar=$false;$window.Background=New-ServerManagerBrush '#0D100E';$window.Foreground=New-ServerManagerBrush '#E7ECE8';$window.FontFamily='Microsoft YaHei UI'
     $topmostBinding=[Windows.Data.Binding]::new('Topmost');$topmostBinding.Source=$Owner;$topmostBinding.Mode='OneWay';[void]$window.SetBinding([Windows.Window]::TopmostProperty,$topmostBinding)
     $root=[Windows.Controls.DockPanel]::new();$root.Margin=16;$window.Content=$root
@@ -243,7 +244,7 @@ function Show-ServerPulseServerManager {
     $scroll=[Windows.Controls.ScrollViewer]::new();$scroll.VerticalScrollBarVisibility='Auto';$panel=[Windows.Controls.StackPanel]::new();$scroll.Content=$panel;[void]$root.Children.Add($scroll)
     $workingSecrets=New-ServerPulseSessionSecretStore
     foreach($identity in @($SessionSecrets.Keys)){$secret=Get-ServerPulseSessionSecret $SessionSecrets $identity;if($null-ne$secret){Set-ServerPulseSessionSecret $workingSecrets $identity $secret};$secret=$null}
-    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnApplied=$OnApplied}
+    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied}
     foreach($server in @($Store.Servers)){ $copy=Copy-ServerPulseManagedServer $server;$row=New-ServerManagerRow $context $copy;[void]$context.Rows.Add($row);[void]$panel.Children.Add($row.Surface) }
     Start-ServerManagerCandidateDiscovery $context
     $add.Tag=$context;$add.Add_Click({param($sender,$eventArgs);$ctx=$sender.Tag;$result=Show-ServerPulseManualServerDialog $ctx.Window;if($null-ne$result){$row=New-ServerManagerRow $ctx $result.Server;[void]$ctx.Rows.Add($row);[void]$ctx.Panel.Children.Add($row.Surface);Invoke-ServerManagerRowTest $row}})

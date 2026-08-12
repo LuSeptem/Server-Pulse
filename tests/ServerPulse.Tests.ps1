@@ -2,6 +2,7 @@
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Core.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1')
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.Persistent.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1')
 
 $passed = 0
@@ -359,6 +360,8 @@ Assert-Equal ([bool]($mainScript -match 'function Hide-ServerPulseToTray')) $tru
 Assert-Equal ([bool]($mainScript -match '(?s)\$ui\.MinimizeButton\.Add_Click.+?Hide-ServerPulseToTray')) $true '最小化按钮隐藏到托盘'
 Assert-Equal ([bool]($mainScript -match '(?s)\$window\.Add_Closing.+?\$script:trayIcon\.Dispose\(\)')) $true '退出时释放托盘图标'
 Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager')) $true '主窗口和托盘可打开 SSH 服务器管理窗口'
+Assert-Equal ([bool]($mainScript -match '''retry_wait''\{"● \$retrySeconds 秒后重试"\}')) $true '主卡片显示断线自动重试倒计时'
+Assert-Equal ([bool]($mainScript -match '''circuit_open''\{''● 重试已暂停''\}')) $true '主卡片显示连接熔断暂停'
 Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen\).*\$script:sshManagerWindow\.Activate\(\).*return')) $true 'SSH 管理窗口具有单实例激活门闩'
 Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen-or\$script:sshManagerOpenQueued\)\{return\}')) $true '自动打开 SSH 管理窗口不会重复排队'
 Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager -Queued')) $true '排队的管理窗口调用可被手动打开取消'
@@ -433,8 +436,11 @@ Assert-Equal ([string]$managerRow.Passwordless.Parent.Children[1].ToolTip -match
 Assert-Equal $managerRow.SaveCredential.IsChecked $false '存入 Windows 凭据管理器默认不勾选'
 $originalAuthenticationBatch=${function:Invoke-ServerPulseAuthenticationBatch}
 try {
-    Set-Item -LiteralPath function:Invoke-ServerPulseAuthenticationBatch -Value { [PSCustomObject]@{Id='manager-test';Passed=$true;Status='online';AuthMode='passwordless';Error=$null} }
-    Invoke-ServerManagerRowTest $managerRow
+Set-Item -LiteralPath function:Invoke-ServerPulseAuthenticationBatch -Value { [PSCustomObject]@{Id='manager-test';Passed=$true;Status='online';AuthMode='passwordless';Error=$null} }
+$script:manualRetryId=$null;$managerRow.Context.OnRetryRequested={param($serverId);$script:manualRetryId=$serverId}
+Invoke-ServerManagerRowTest $managerRow -Manual
+Assert-Equal $script:manualRetryId 'manager-test' '手动重新检测立即请求解除 Worker 熔断和退避'
+Invoke-ServerManagerRowTest $managerRow
     Assert-Equal $managerRow.Status 'passwordless' '单服务器重新检测接受标量认证结果'
     Set-Item -LiteralPath function:Invoke-ServerPulseAuthenticationBatch -Value { throw 'mock internal detection error' }
     Invoke-ServerManagerRowTest $managerRow
@@ -621,6 +627,7 @@ $hostExecutablePath = Join-Path $PSScriptRoot '..\ServerPulse.exe'
 Assert-Equal ([bool]($collectorSource -notmatch '\bStart-Job\b')) $true '长期采集器不得为每台服务器创建 PowerShell 进程'
 Assert-Equal ([bool]($collectorSource -match 'CreateRunspacePool')) $true '长期采集器使用 Runspace Pool 并行采集'
 Assert-Equal ([bool]($collectorSource -match '\[Console\]::In\.ReadLine\(\)')) $true '长期采集器以逐行协议复用标准输入'
+Assert-Equal ([bool]($collectorSource -match 'Invoke-ServerPulsePersistentCollection')) $true 'Worker 使用每服务器长期 SSH 会话而非逐轮启动 ssh.exe'
 Assert-Equal ([bool]($mainSource -match '\$info\.Arguments=.*?-Worker')) $true '主窗口启动长期采集器而非逐轮采集进程'
 Assert-Equal ([bool]($launcherSource -match 'ServerPulse\.exe')) $true '兼容启动器优先启动 EXE 宿主'
 Assert-Equal (Test-Path -LiteralPath $hostSourcePath) $true '仓库包含可重复构建的 EXE 宿主源码'
@@ -651,8 +658,87 @@ try {
     Assert-Equal $workerProcess.HasExited $false '同一长期采集器连续处理两轮请求而不退出'
     Assert-Equal @($workerFirst.Servers).Count 0 '长期采集器返回第一轮快照'
     Assert-Equal @($workerSecond.Servers).Count 0 '长期采集器返回第二轮快照'
+    Assert-Equal ([bool]($workerFirst.PSObject.Properties.Name -contains 'WorkerError')) $false '兼容旧请求时长期采集器不返回内部错误'
 } finally {
     if($null-ne$workerProcess){try{$workerProcess.StandardInput.Close()}catch{};if(-not$workerProcess.WaitForExit(3000)){$workerProcess.Kill()};$workerProcess.Dispose()}
+}
+
+$retry=New-ServerPulseRetryState -CircuitThreshold 6
+$retryOne=Register-ServerPulseConnectionFailure -State $retry -Now ([datetime]'2026-08-13T00:00:00Z') -JitterFactor 1.0
+Assert-Equal $retryOne.DelaySeconds 5 '首次断线退避 5 秒'
+Assert-Equal $retryOne.CircuitOpen $false '首次断线不熔断'
+$retryTwo=Register-ServerPulseConnectionFailure -State $retry -Now ([datetime]'2026-08-13T00:00:05Z') -JitterFactor 1.0
+$retryThree=Register-ServerPulseConnectionFailure -State $retry -Now ([datetime]'2026-08-13T00:00:20Z') -JitterFactor 1.0
+$retryFour=Register-ServerPulseConnectionFailure -State $retry -Now ([datetime]'2026-08-13T00:00:50Z') -JitterFactor 1.0
+Assert-Equal (($retryTwo.DelaySeconds,$retryThree.DelaySeconds,$retryFour.DelaySeconds)-join ',') '15,30,60' '连续断线按 15、30、60 秒指数退避'
+$retryFive=Register-ServerPulseConnectionFailure -State $retry -Now ([datetime]'2026-08-13T00:01:50Z') -JitterFactor 1.0
+Assert-Equal $retryFive.DelaySeconds 300 '第五次断线退避 5 分钟'
+$retrySix=Register-ServerPulseConnectionFailure -State $retry -Now ([datetime]'2026-08-13T00:06:50Z') -JitterFactor 1.0
+Assert-Equal $retrySix.CircuitOpen $true '退避仍连续失败后熔断暂停'
+Assert-Equal $retrySix.NextRetryAt $null '熔断后停止自动重试'
+Reset-ServerPulseRetryState $retry
+Assert-Equal "$($retry.FailureCount):$($retry.CircuitOpen):$($null-eq$retry.NextRetryAt)" '0:False:True' '手动重新检测可清除熔断和退避'
+
+$persistentCountFile=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-persistent-count-'+[guid]::NewGuid().ToString('N'))
+$persistentWorker=$null
+try{
+    $persistentInfo=[Diagnostics.ProcessStartInfo]::new();$persistentInfo.FileName='powershell.exe';$persistentInfo.Arguments="-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot '..\src\Collect-Metrics.ps1')`" -ConfigPath `"$(Join-Path $PSScriptRoot '..\config\servers.json')`" -Worker";$persistentInfo.UseShellExecute=$false;$persistentInfo.CreateNoWindow=$true;$persistentInfo.RedirectStandardInput=$true;$persistentInfo.RedirectStandardOutput=$true;$persistentInfo.RedirectStandardError=$true
+    $persistentInfo.EnvironmentVariables['SERVERPULSE_MOCK_PERSISTENT']='1';$persistentInfo.EnvironmentVariables['SERVERPULSE_MOCK_BATCH']='ok';$persistentInfo.EnvironmentVariables['SERVERPULSE_MOCK_COUNT_FILE']=$persistentCountFile
+    $persistentWorker=[Diagnostics.Process]::Start($persistentInfo)
+    $persistentServer=[PSCustomObject]@{Id='persistent';Label='Persistent';Source='manual';SshTarget='mock';HostName='mock';Port=22;User='tester';AuthMode='passwordless';Password=$null}
+    $persistentRequest=[PSCustomObject]@{SshTimeoutMs=2000;PollIntervalSeconds=1;AskPassPath='';SshPath=(Join-Path $PSScriptRoot 'Mock-Ssh.cmd');Servers=@($persistentServer);ForceReconnect=@()}|ConvertTo-Json -Depth 5 -Compress
+    $persistentWorker.StandardInput.WriteLine($persistentRequest);$persistentWorker.StandardInput.Flush();$persistentFirst=$persistentWorker.StandardOutput.ReadLine()|ConvertFrom-Json
+    Start-Sleep -Milliseconds 350
+    $persistentWorker.StandardInput.WriteLine($persistentRequest);$persistentWorker.StandardInput.Flush();$persistentSecond=$persistentWorker.StandardOutput.ReadLine()|ConvertFrom-Json
+    $persistentWorker.StandardInput.WriteLine($persistentRequest);$persistentWorker.StandardInput.Flush();$persistentThird=$persistentWorker.StandardOutput.ReadLine()|ConvertFrom-Json
+    Assert-Equal $persistentSecond.Servers[0].Status 'online' '长期 SSH 会话读取远端完整采样帧'
+    Assert-Equal $persistentThird.Servers[0].Status 'online' '后续刷新复用同一会话的最新采样'
+    Assert-Equal @([IO.File]::ReadAllLines($persistentCountFile)).Count 1 '多轮刷新只启动一次 ssh.exe'
+    $forcedRequest=[PSCustomObject]@{SshTimeoutMs=2000;PollIntervalSeconds=1;AskPassPath='';SshPath=(Join-Path $PSScriptRoot 'Mock-Ssh.cmd');Servers=@($persistentServer);ForceReconnect=@('persistent')}|ConvertTo-Json -Depth 5 -Compress
+    $persistentWorker.StandardInput.WriteLine($forcedRequest);$persistentWorker.StandardInput.Flush();[void]($persistentWorker.StandardOutput.ReadLine());Start-Sleep -Milliseconds 150
+    Assert-Equal @([IO.File]::ReadAllLines($persistentCountFile)).Count 2 '手动重新检测立即终止旧会话并建立新 SSH 会话'
+}finally{
+    if($null-ne$persistentWorker){try{$persistentWorker.StandardInput.Close()}catch{};if(-not$persistentWorker.WaitForExit(3000)){$persistentWorker.Kill()};$persistentWorker.Dispose()}
+    if(Test-Path -LiteralPath $persistentCountFile){Remove-Item -LiteralPath $persistentCountFile -Force}
+}
+
+$passwordCountFile=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-password-count-'+[guid]::NewGuid().ToString('N'))
+$passwordWorker=$null;$passwordAskPassDirectory=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-password-askpass-'+[guid]::NewGuid().ToString('N'))
+try{
+    $passwordAskPass=Ensure-ServerPulseAskPassHelper $passwordAskPassDirectory
+    $passwordInfo=[Diagnostics.ProcessStartInfo]::new();$passwordInfo.FileName='powershell.exe';$passwordInfo.Arguments="-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot '..\src\Collect-Metrics.ps1')`" -ConfigPath `"$(Join-Path $PSScriptRoot '..\config\servers.json')`" -Worker";$passwordInfo.UseShellExecute=$false;$passwordInfo.CreateNoWindow=$true;$passwordInfo.RedirectStandardInput=$true;$passwordInfo.RedirectStandardOutput=$true;$passwordInfo.RedirectStandardError=$true
+    $passwordInfo.EnvironmentVariables['SERVERPULSE_MOCK_PERSISTENT']='password';$passwordInfo.EnvironmentVariables['SERVERPULSE_MOCK_COUNT_FILE']=$passwordCountFile
+    $passwordWorker=[Diagnostics.Process]::Start($passwordInfo)
+    $passwordServer=[PSCustomObject]@{Id='password-persistent';Label='Password';Source='manual';SshTarget='mock';HostName='mock';Port=22;User='tester';AuthMode='password';Password='mock-password'}
+    $passwordRequest=[PSCustomObject]@{SshTimeoutMs=4000;PollIntervalSeconds=1;AskPassPath=$passwordAskPass;SshPath=(Join-Path $PSScriptRoot 'Mock-Ssh.cmd');Servers=@($passwordServer);ForceReconnect=@()}|ConvertTo-Json -Depth 5 -Compress
+    $passwordWorker.StandardInput.WriteLine($passwordRequest);$passwordWorker.StandardInput.Flush();[void]($passwordWorker.StandardOutput.ReadLine());Start-Sleep -Milliseconds 350
+    $passwordWorker.StandardInput.WriteLine($passwordRequest);$passwordWorker.StandardInput.Flush();$passwordSnapshot=$passwordWorker.StandardOutput.ReadLine()|ConvertFrom-Json
+    Assert-Equal $passwordSnapshot.Servers[0].Status 'online' '密码认证同样进入长期 SSH 会话'
+    Assert-Equal @([IO.File]::ReadAllLines($passwordCountFile)).Count 1 '密码模式多轮采集也只启动一个 ssh.exe'
+}finally{
+    if($null-ne$passwordWorker){try{$passwordWorker.StandardInput.Close()}catch{};if(-not$passwordWorker.WaitForExit(3000)){$passwordWorker.Kill()};$passwordWorker.Dispose()}
+    if(Test-Path -LiteralPath $passwordCountFile){Remove-Item -LiteralPath $passwordCountFile -Force}
+    if(Test-Path -LiteralPath $passwordAskPassDirectory){Get-ChildItem -LiteralPath $passwordAskPassDirectory -File|Remove-Item -Force;Remove-Item -LiteralPath $passwordAskPassDirectory -Force}
+}
+
+$failureCountFile=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-failure-count-'+[guid]::NewGuid().ToString('N'))
+$failureWorker=$null
+try{
+    $failureInfo=[Diagnostics.ProcessStartInfo]::new();$failureInfo.FileName='powershell.exe';$failureInfo.Arguments="-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot '..\src\Collect-Metrics.ps1')`" -ConfigPath `"$(Join-Path $PSScriptRoot '..\config\servers.json')`" -Worker";$failureInfo.UseShellExecute=$false;$failureInfo.CreateNoWindow=$true;$failureInfo.RedirectStandardInput=$true;$failureInfo.RedirectStandardOutput=$true;$failureInfo.RedirectStandardError=$true
+    $failureInfo.EnvironmentVariables['SERVERPULSE_MOCK_PERSISTENT']='fail';$failureInfo.EnvironmentVariables['SERVERPULSE_MOCK_COUNT_FILE']=$failureCountFile
+    $failureWorker=[Diagnostics.Process]::Start($failureInfo)
+    $failureServer=[PSCustomObject]@{Id='failure';Label='Failure';Source='manual';SshTarget='mock';HostName='mock';Port=22;User='tester';AuthMode='passwordless';Password=$null}
+    $failureRequest=[PSCustomObject]@{SshTimeoutMs=2000;PollIntervalSeconds=1;AskPassPath='';SshPath=(Join-Path $PSScriptRoot 'Mock-Ssh.cmd');Servers=@($failureServer);ForceReconnect=@()}|ConvertTo-Json -Depth 5 -Compress
+    $failureWorker.StandardInput.WriteLine($failureRequest);$failureWorker.StandardInput.Flush();[void]($failureWorker.StandardOutput.ReadLine())
+    Start-Sleep -Milliseconds 250
+    $failureWorker.StandardInput.WriteLine($failureRequest);$failureWorker.StandardInput.Flush();$failedSecond=$failureWorker.StandardOutput.ReadLine()|ConvertFrom-Json
+    $failureWorker.StandardInput.WriteLine($failureRequest);$failureWorker.StandardInput.Flush();$failedThird=$failureWorker.StandardOutput.ReadLine()|ConvertFrom-Json
+    Assert-Equal $failedSecond.Servers[0].Status 'retry_wait' '网络断线进入退避等待而不是每轮重连'
+    Assert-Equal ([string]::IsNullOrWhiteSpace([string]$failedSecond.Servers[0].RetryAt)) $false '退避状态返回下一次重试时间'
+    Assert-Equal @([IO.File]::ReadAllLines($failureCountFile)).Count 1 '退避到期前不再启动新的 ssh.exe'
+}finally{
+    if($null-ne$failureWorker){try{$failureWorker.StandardInput.Close()}catch{};if(-not$failureWorker.WaitForExit(3000)){$failureWorker.Kill()};$failureWorker.Dispose()}
+    if(Test-Path -LiteralPath $failureCountFile){Remove-Item -LiteralPath $failureCountFile -Force}
 }
 
 Write-Output "PASS: $passed assertions"
