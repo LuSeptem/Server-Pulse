@@ -559,6 +559,32 @@ function Set-HistoryChartUnlocked {
     foreach($view in $State.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
 }
 
+function Get-HistoryChartPointSegments {
+    param(
+        [object[]]$Points,
+        [datetime]$Start,
+        [double]$Duration,
+        [double]$Width=242,
+        [double]$Height=76,
+        [double]$MaximumGapSeconds=90
+    )
+    $segments=[Collections.Generic.List[object]]::new();$current=[Windows.Media.PointCollection]::new();$previousTime=$null
+    foreach($point in @($Points|Sort-Object Time)){
+        if($null -eq $point.Value){
+            if($current.Count){$segments.Add([PSCustomObject]@{Points=$current});$current=[Windows.Media.PointCollection]::new()}
+            $previousTime=$null;continue
+        }
+        $pointTime=[datetime]$point.Time
+        if($null -ne $previousTime -and ($pointTime-$previousTime).TotalSeconds -gt $MaximumGapSeconds){
+            if($current.Count){$segments.Add([PSCustomObject]@{Points=$current});$current=[Windows.Media.PointCollection]::new()}
+        }
+        $x=[Math]::Max(0,[Math]::Min($Width,(($pointTime-$Start).TotalSeconds/$Duration)*$Width));$value=[Math]::Max(0,[Math]::Min(100,[double]$point.Value));$y=($Height-2)-($value/100*($Height-6))
+        $current.Add([Windows.Point]::new($x,$y));$previousTime=$pointTime
+    }
+    if($current.Count){$segments.Add([PSCustomObject]@{Points=$current})}
+    return $segments.ToArray()
+}
+
 function Update-HistoryChartUserSeries {
     param($State)
     foreach($shape in @($State.UserLineShapes)){[void]$State.Canvas.Children.Remove($shape)};$State.UserLineShapes.Clear();$State.UserLegend.Children.Clear()
@@ -568,12 +594,14 @@ function Update-HistoryChartUserSeries {
         $known=$null
         foreach($point in $State.UserPoints){$match=@($point.Users|Where-Object{$_.Identity -eq $identity}|Select-Object -First 1);if($match.Count){$known=$match[0];break}}
         if($null -eq $known){continue}
-        $segments=[Collections.Generic.List[object]]::new();$current=[Windows.Media.PointCollection]::new()
+        $segments=[Collections.Generic.List[object]]::new();$current=[Windows.Media.PointCollection]::new();$previousTime=$null
         foreach($point in $State.UserPoints){
-            if($point.Status -eq 'unavailable') { if($current.Count){$segments.Add($current);$current=[Windows.Media.PointCollection]::new()};continue }
+            $pointTime=[datetime]$point.Time
+            if($point.Status -eq 'unavailable') { if($current.Count){$segments.Add($current);$current=[Windows.Media.PointCollection]::new()};$previousTime=$null;continue }
+            if($null -ne $previousTime -and ($pointTime-$previousTime).TotalSeconds -gt 90){if($current.Count){$segments.Add($current);$current=[Windows.Media.PointCollection]::new()}}
             $match=@($point.Users|Where-Object{$_.Identity -eq $identity}|Select-Object -First 1);$value=if($match.Count){$match[0].PlotValue}else{0.0}
-            if($null -eq $value){if($current.Count){$segments.Add($current);$current=[Windows.Media.PointCollection]::new()};continue}
-            $x=[Math]::Max(0,[Math]::Min($State.Canvas.Width,(([datetime]$point.Time-$State.Start).TotalSeconds/$State.Duration)*$State.Canvas.Width));$y=74-([Math]::Max(0,[Math]::Min(100,[double]$value))/100*70);$current.Add([Windows.Point]::new($x,$y))
+            if($null -eq $value){if($current.Count){$segments.Add($current);$current=[Windows.Media.PointCollection]::new()};$previousTime=$null;continue}
+            $x=[Math]::Max(0,[Math]::Min($State.Canvas.Width,(($pointTime-$State.Start).TotalSeconds/$State.Duration)*$State.Canvas.Width));$y=74-([Math]::Max(0,[Math]::Min(100,[double]$value))/100*70);$current.Add([Windows.Point]::new($x,$y));$previousTime=$pointTime
         }
         if($current.Count){$segments.Add($current)}
         foreach($segment in $segments){$line=[Windows.Shapes.Polyline]::new();$line.Points=$segment;$line.Stroke=New-HistoryBrush $known.Color;$line.StrokeThickness=1.3;$dashes=[Windows.Media.DoubleCollection]::new();$dashes.Add(3);$dashes.Add(2);$line.StrokeDashArray=$dashes;$line.IsHitTestVisible=$false;[Windows.Controls.Panel]::SetZIndex($line,10);[void]$State.Canvas.Children.Add($line);$State.UserLineShapes.Add($line)}
@@ -678,7 +706,7 @@ function New-HistoryChartCard {
 
     $seriesViews=@($Series | ForEach-Object {
         [PSCustomObject]@{
-            Name=[string]$_.Name; Series=$_; IsVisible=$true; Line=$null; SingleDot=$null; Marker=$null; Toggle=$null; ToggleText=$null
+            Name=[string]$_.Name; Series=$_; IsVisible=$true; Line=$null; LineSegments=@(); SingleDot=$null; SingleDots=@(); Marker=$null; Toggle=$null; ToggleText=$null
             PopupRow=$null; PopupDot=$null; PopupText=$null
             ActiveBackground=(New-HistoryBrush '#263029'); InactiveBackground=(New-HistoryBrush '#171B18')
             ActiveForeground=(New-HistoryBrush ([string]$_.Color)); InactiveForeground=(New-HistoryBrush '#59635D')
@@ -739,18 +767,20 @@ function New-HistoryChartCard {
     }
     $duration = [Math]::Max(60.0, ($End - $Start).TotalSeconds)
     foreach ($view in $seriesViews) {
-        $polyline = [Windows.Shapes.Polyline]::new(); $polyline.Stroke = New-HistoryBrush ([string]$view.Series.Color); $polyline.StrokeThickness = 1.8; $polyline.StrokeLineJoin = 'Round'
-        $points = [Windows.Media.PointCollection]::new()
-        foreach ($point in @($view.Series.Points)) {
-            if ($null -eq $point.Value) { continue }
-            $x = [Math]::Max(0, [Math]::Min(242, (($point.Time - $Start).TotalSeconds / $duration) * 242)); $value = [Math]::Max(0, [Math]::Min(100, [double]$point.Value)); $y = 74 - ($value / 100 * 70)
-            $points.Add([Windows.Point]::new($x,$y))
+        $seriesLayer=[Windows.Controls.Canvas]::new();$seriesLayer.Width=242;$seriesLayer.Height=76;$seriesLayer.IsHitTestVisible=$false;$view.Line=$seriesLayer
+        $lineSegments=[Collections.Generic.List[object]]::new();$singleDots=[Collections.Generic.List[object]]::new()
+        foreach($segment in @(Get-HistoryChartPointSegments -Points @($view.Series.Points) -Start $Start -Duration $duration)){
+            $points=$segment.Points
+            if($points.Count -gt 1){
+                $polyline=[Windows.Shapes.Polyline]::new();$polyline.Stroke=New-HistoryBrush ([string]$view.Series.Color);$polyline.StrokeThickness=1.8;$polyline.StrokeLineJoin='Round';$polyline.Points=$points
+                [void]$seriesLayer.Children.Add($polyline);$lineSegments.Add($polyline)
+            } elseif($points.Count -eq 1) {
+                $dot=[Windows.Shapes.Ellipse]::new();$dot.Width=4;$dot.Height=4;$dot.Fill=New-HistoryBrush ([string]$view.Series.Color)
+                [Windows.Controls.Canvas]::SetLeft($dot,$points[0].X-2);[Windows.Controls.Canvas]::SetTop($dot,$points[0].Y-2);[void]$seriesLayer.Children.Add($dot);$singleDots.Add($dot)
+            }
         }
-        $polyline.Points = $points; $view.Line=$polyline; [void]$canvas.Children.Add($polyline)
-        if ($points.Count -eq 1) {
-            $dot = [Windows.Shapes.Ellipse]::new(); $dot.Width=4; $dot.Height=4; $dot.Fill=New-HistoryBrush ([string]$view.Series.Color)
-            [Windows.Controls.Canvas]::SetLeft($dot,$points[0].X-2); [Windows.Controls.Canvas]::SetTop($dot,$points[0].Y-2); $view.SingleDot=$dot; [void]$canvas.Children.Add($dot)
-        }
+        $view.LineSegments=@($lineSegments);$view.SingleDots=@($singleDots);if($singleDots.Count){$view.SingleDot=$singleDots[0]}
+        [void]$canvas.Children.Add($seriesLayer)
     }
     $hoverGuide=[Windows.Shapes.Line]::new(); $hoverGuide.Y1=2; $hoverGuide.Y2=74; $hoverGuide.Stroke=New-HistoryBrush '#6F7B73'; $hoverGuide.StrokeThickness=1; $hoverGuide.Opacity=0.7; $hoverGuide.Visibility='Collapsed'; $hoverGuide.IsHitTestVisible=$false
     $hoverDashes=[Windows.Media.DoubleCollection]::new(); $hoverDashes.Add(2.0); $hoverDashes.Add(3.0); $hoverGuide.StrokeDashArray=$hoverDashes; [Windows.Controls.Panel]::SetZIndex($hoverGuide,20); [void]$canvas.Children.Add($hoverGuide)

@@ -526,6 +526,28 @@ Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -n
 Assert-Equal ([Windows.Controls.Panel]::GetZIndex($wpfHoverCard)) 0 '历史详情关闭后恢复图表卡片默认层级'
 $wpfHoverWindow.Close()
 
+$gapStart=[datetime]'2026-08-11 09:00'
+$gapSeries=@([PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Latest=40;Points=@(
+    [PSCustomObject]@{Time=$gapStart;Value=10},
+    [PSCustomObject]@{Time=$gapStart.AddMinutes(1);Value=20},
+    [PSCustomObject]@{Time=$gapStart.AddMinutes(10);Value=30},
+    [PSCustomObject]@{Time=$gapStart.AddMinutes(11);Value=40}
+)})
+$gapCard=New-HistoryChartCard -Title '缺失采样' -Subtitle '' -Series $gapSeries -Start $gapStart -End $gapStart.AddMinutes(12)
+$gapView=$gapCard.Tag.Views[0]
+Assert-Equal ([bool]($gapView.PSObject.Properties.Name -contains 'LineSegments')) $true '历史主曲线暴露按有效区间拆分的线段集合'
+Assert-Equal @($gapView.LineSegments).Count 2 '历史主曲线不跨越缺失分钟直接连线'
+$gapUser=[PSCustomObject]@{Identity='uid:gap';Uid='gap';Name='gap-user';RawValue=10.0;PlotValue=10.0;Color='#F07178';IsSystem=$false}
+$gapUserPoints=@(
+    [PSCustomObject]@{Time=$gapStart;Status='ok';Kind='Cpu';TotalMiB=$null;DetailNote='';Users=@($gapUser)},
+    [PSCustomObject]@{Time=$gapStart.AddMinutes(1);Status='ok';Kind='Cpu';TotalMiB=$null;DetailNote='';Users=@($gapUser)},
+    [PSCustomObject]@{Time=$gapStart.AddMinutes(10);Status='ok';Kind='Cpu';TotalMiB=$null;DetailNote='';Users=@($gapUser)},
+    [PSCustomObject]@{Time=$gapStart.AddMinutes(11);Status='ok';Kind='Cpu';TotalMiB=$null;DetailNote='';Users=@($gapUser)}
+)
+$gapSelection=@{'gap:cpu'=@('uid:gap')}
+$gapUserCard=New-HistoryChartCard -Title '用户缺失采样' -Subtitle '' -Series $gapSeries -Start $gapStart -End $gapStart.AddMinutes(12) -UserPoints $gapUserPoints -UserKind Cpu -UserParentSeries GPU -ChartKey 'gap:cpu' -SelectionStore $gapSelection
+Assert-Equal @($gapUserCard.Tag.UserLineShapes).Count 2 '历史用户曲线同样不跨越缺失分钟直接连线'
+
 $colorA = Get-HistoryUserColor 'Alpha'
 $colorB = Get-HistoryUserColor 'alpha'
 Assert-Equal $colorA $colorB '历史用户颜色按身份稳定且忽略大小写'
