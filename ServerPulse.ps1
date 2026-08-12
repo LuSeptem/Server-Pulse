@@ -12,7 +12,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Server Pulse" Width="420" Height="560" MinWidth="340" MinHeight="300"
         WindowStyle="None" ResizeMode="CanResizeWithGrip" AllowsTransparency="True"
-        Background="Transparent" ShowInTaskbar="True" WindowStartupLocation="CenterScreen"
+        Background="Transparent" ShowInTaskbar="False" WindowStartupLocation="CenterScreen"
         FontFamily="Bahnschrift, Microsoft YaHei UI" Foreground="#E7EBE8">
   <Window.Resources>
     <Style x:Key="QuietButton" TargetType="Button">
@@ -91,8 +91,8 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
                   IsSnapToTickEnabled="True" ToolTip="透明度" Foreground="#A7D948" Margin="4,0,6,0"/>
           <Button x:Name="EdgeButton" Content="边" Style="{StaticResource QuietButton}" ToolTip="贴边自动隐藏"/>
           <Button x:Name="PinButton" Content="置" Style="{StaticResource QuietButton}" ToolTip="始终置顶"/>
-          <Button x:Name="MinimizeButton" Content="—" Style="{StaticResource QuietButton}" ToolTip="最小化"/>
-          <Button x:Name="CloseButton" Content="×" Style="{StaticResource QuietButton}" ToolTip="关闭"/>
+          <Button x:Name="MinimizeButton" Content="—" Style="{StaticResource QuietButton}" ToolTip="隐藏到托盘"/>
+          <Button x:Name="CloseButton" Content="×" Style="{StaticResource QuietButton}" ToolTip="退出"/>
         </StackPanel>
       </Grid>
 
@@ -950,6 +950,38 @@ $cursorTimer.Add_Tick({
     if ($touches) { Show-FromEdge }
 })
 
+function Show-ServerPulseFromTray {
+    if ($script:hiddenAtEdge) { Show-FromEdge }
+    if ($window.WindowState -eq [Windows.WindowState]::Minimized) { $window.WindowState = [Windows.WindowState]::Normal }
+    if (-not $window.IsVisible) { $window.Show() }
+    [void]$window.Activate()
+}
+
+function Hide-ServerPulseToTray {
+    Close-UserUsagePopup $script:userUsagePopupManager
+    $hideTimer.Stop(); $dockDetectTimer.Stop()
+    if ($script:hiddenAtEdge) { Show-FromEdge }
+    $window.WindowState = [Windows.WindowState]::Minimized
+}
+
+$script:trayMenu = [Windows.Forms.ContextMenuStrip]::new()
+$trayShowItem = $script:trayMenu.Items.Add('显示窗口')
+$trayHideItem = $script:trayMenu.Items.Add('隐藏窗口')
+[void]$script:trayMenu.Items.Add([Windows.Forms.ToolStripSeparator]::new())
+$trayExitItem = $script:trayMenu.Items.Add('退出')
+$trayShowItem.Add_Click({ Show-ServerPulseFromTray })
+$trayHideItem.Add_Click({ Hide-ServerPulseToTray })
+$trayExitItem.Add_Click({ $window.Close() })
+$script:trayIcon = [Windows.Forms.NotifyIcon]::new()
+$script:trayIcon.Text = 'Server Pulse - SSH 资源监控'
+$script:trayIcon.Icon = [Drawing.SystemIcons]::Application
+$script:trayIcon.ContextMenuStrip = $script:trayMenu
+$script:trayIcon.Visible = $true
+$script:trayIcon.Add_MouseClick({
+    param($sender,$eventArgs)
+    if ($eventArgs.Button -eq [Windows.Forms.MouseButtons]::Left) { Show-ServerPulseFromTray }
+})
+
 function Save-NativeScreenshot {
     $directory = Join-Path $scriptRoot 'tests\artifacts'
     if (-not (Test-Path -LiteralPath $directory)) { [void](New-Item -ItemType Directory -Path $directory) }
@@ -974,6 +1006,12 @@ function Complete-SmokeTest {
     $script:smokeFinished = $true
     try {
         $window.UpdateLayout()
+        if ($window.ShowInTaskbar) { throw '主窗口不应显示在任务栏' }
+        if ($null -eq $script:trayIcon -or -not $script:trayIcon.Visible) { throw '托盘图标创建失败' }
+        Hide-ServerPulseToTray
+        if ($window.WindowState -ne [Windows.WindowState]::Minimized) { throw '隐藏到托盘失败' }
+        Show-ServerPulseFromTray
+        if ($window.WindowState -ne [Windows.WindowState]::Normal -or -not $window.IsVisible) { throw '从托盘恢复窗口失败' }
         Save-NativeScreenshot
         $originalOpacity = $script:backgroundOpacity; Set-BackgroundOpacity 0.55
         if ($window.Opacity -ne 1.0) { throw '文字层透明度不应改变' }
@@ -1140,7 +1178,7 @@ $ui.EdgeButton.Add_Click({
     else { $ui.EdgeButton.Tag = 'active'; Schedule-EdgeHide }
 })
 $ui.PinButton.Add_Click({ $window.Topmost = -not $window.Topmost; $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null } })
-$ui.MinimizeButton.Add_Click({ Close-UserUsagePopup $script:userUsagePopupManager; $window.WindowState = 'Minimized' })
+$ui.MinimizeButton.Add_Click({ Hide-ServerPulseToTray })
 $ui.CloseButton.Add_Click({ Close-UserUsagePopup $script:userUsagePopupManager; $window.Close() })
 
 $window.Add_Loaded({
@@ -1152,6 +1190,9 @@ $window.Add_Loaded({
 $window.Add_Closing({
     Close-UserUsagePopup $script:userUsagePopupManager
     $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
+    $script:trayIcon.Visible = $false
+    $script:trayIcon.Dispose()
+    $script:trayMenu.Dispose()
     if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { $script:collectionProcess.Kill() }
     if (-not $SmokeTest) { try { [void](Flush-ServerPulseHistoryRecorder $script:historyRecorder) } catch { } }
     if (-not $SmokeTest) { Save-Settings }
@@ -1161,5 +1202,5 @@ $window.Add_Closing({
 if ($SmokeTest) {
     if ($script:smokeError) { throw $script:smokeError }
     if (-not $script:smokePassed) { throw '原生窗口冒烟测试未完成' }
-    Write-Output 'PASS: native window, resize, opacity, edge hide, SSH snapshot'
+    Write-Output 'PASS: native window, tray, resize, opacity, edge hide, SSH snapshot'
 }

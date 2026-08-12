@@ -267,6 +267,13 @@ if ($null -ne $historyTestFailure) { throw $historyTestFailure }
 $mainScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($mainScript -match '\.DragMove\(')) $false '禁止调用会触发 Windows Snap Assist 的 DragMove'
 Assert-Equal ([bool]($mainScript -match 'Update-ManualDragPosition')) $true '使用应用内坐标拖拽'
+Assert-Equal ([bool]($mainScript -match 'ShowInTaskbar="False"')) $true '主窗口不占用 Windows 任务栏'
+Assert-Equal ([bool]($mainScript -match '\[Windows\.Forms\.NotifyIcon\]::new\(\)')) $true '创建 Windows 托盘图标'
+Assert-Equal ([bool]($mainScript -match '\[Windows\.Forms\.ContextMenuStrip\]::new\(\)')) $true '托盘图标提供操作菜单'
+Assert-Equal ([bool]($mainScript -match 'function Show-ServerPulseFromTray')) $true '托盘可恢复主窗口'
+Assert-Equal ([bool]($mainScript -match 'function Hide-ServerPulseToTray')) $true '托盘可隐藏主窗口'
+Assert-Equal ([bool]($mainScript -match '(?s)\$ui\.MinimizeButton\.Add_Click.+?Hide-ServerPulseToTray')) $true '最小化按钮隐藏到托盘'
+Assert-Equal ([bool]($mainScript -match '(?s)\$window\.Add_Closing.+?\$script:trayIcon\.Dispose\(\)')) $true '退出时释放托盘图标'
 Assert-Equal ([bool]($mainScript -match 'Register-UserUsageTarget')) $true '实时卡片注册用户占用交互目标'
 Assert-Equal ([bool]($mainScript -match '\$Target\.Add_MouseEnter\(\{\s*param\(\$sender[^}]+Invoke-UserUsageTargetMouseEnter \$sender\.Tag')) $true '实时用户悬停回调通过 sender.Tag 保持注册后生命周期'
 Assert-Equal ([bool]($mainScript -match '(?s)if \(\$manager\.IsPinned.+?\$manager\.CurrentTarget\.Key -eq \$TargetState\.Key\).+?Close-UserUsagePopup')) $true '实时用户卡片再次点击关闭已固定弹窗'
