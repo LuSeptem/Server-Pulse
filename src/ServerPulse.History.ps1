@@ -555,6 +555,7 @@ function Set-HistoryChartUnlocked {
     param($State)
     $State.IsLocked=$false;$State.LockedTime=$null;$State.Expanded=$false
     $State.Guide.Visibility='Collapsed';$State.Popup.Visibility='Collapsed';$State.Popup.IsHitTestVisible=$false
+    [Windows.Controls.Panel]::SetZIndex($State.Card,0)
     foreach($view in $State.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
 }
 
@@ -610,7 +611,7 @@ function Show-HistoryChartSample {
     $State.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm');$State.UserPanel.Children.Clear();$userPoint=Get-HistoryChartUserPoint $State $sample.Time
     $parent=@($State.Views|Where-Object{$_.Name -eq $State.UserParentSeries}|Select-Object -First 1);$showUsers=($null -ne $userPoint -and (-not $parent.Count -or $parent[0].IsVisible))
     if($showUsers){if($userPoint.Status -eq 'unavailable'){$text=New-HistoryText '该分钟尚未记录用户明细' 8 '#7C8780';[void]$State.UserPanel.Children.Add($text)}else{$normal=@($userPoint.Users|Where-Object{-not $_.IsSystem -and ($_.RawValue -gt 0 -or $State.SelectedUsers.Contains([string]$_.Identity))}|Sort-Object @{Expression='RawValue';Descending=$true},Name);$system=@($userPoint.Users|Where-Object{$_.IsSystem}|Select-Object -First 1);$take=if($State.Expanded){$normal.Count}else{[Math]::Min(8,$normal.Count)};for($index=0;$index -lt $take;$index++){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $normal[$index]))};if(-not $State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount ($normal.Count-8)))}elseif($State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount 0))};if($system.Count){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $system[0]))};if(-not [string]::IsNullOrWhiteSpace([string]$userPoint.DetailNote)){$noteText=if($userPoint.Status -eq 'partial'){"部分采集 · $($userPoint.DetailNote)"}else{$userPoint.DetailNote};$note=New-HistoryText $noteText 7 '#66716A';$note.Margin=[Windows.Thickness]::new(2,3,0,0);[void]$State.UserPanel.Children.Add($note)}}}
-    $rowCount=@($State.Views|Where-Object{$_.PopupRow.Visibility -eq 'Visible'}).Count+$State.UserPanel.Children.Count;$State.Popup.Height=25+(14*$rowCount);$popupLeft=if($sample.X -gt ($State.Canvas.Width/2)){$sample.X-$State.Popup.Width-7}else{$sample.X+7};[Windows.Controls.Canvas]::SetLeft($State.Popup,$popupLeft);[Windows.Controls.Canvas]::SetTop($State.Popup,4);$State.Popup.IsHitTestVisible=[bool]$State.IsLocked;$State.Guide.Visibility='Visible';$State.Popup.Visibility='Visible'
+    $rowCount=@($State.Views|Where-Object{$_.PopupRow.Visibility -eq 'Visible'}).Count+$State.UserPanel.Children.Count;$State.Popup.Height=25+(14*$rowCount);$popupLeft=if($sample.X -gt ($State.Canvas.Width/2)){$sample.X-$State.Popup.Width-7}else{$sample.X+7};[Windows.Controls.Canvas]::SetLeft($State.Popup,$popupLeft);[Windows.Controls.Canvas]::SetTop($State.Popup,4);$State.Popup.IsHitTestVisible=[bool]$State.IsLocked;[Windows.Controls.Panel]::SetZIndex($State.Card,100);$State.Guide.Visibility='Visible';$State.Popup.Visibility='Visible'
 }
 
 function Register-HistoryChartInteractions {
@@ -716,7 +717,7 @@ function New-HistoryChartCard {
                 $sender.BorderBrush=if($view.IsVisible){$view.ActiveBorder}else{$view.InactiveBorder}
                 $sender.ToolTip=if($view.IsVisible){"点击隐藏 $($view.Name)"}else{"点击显示 $($view.Name)"}
                 $state=$sender.DataContext
-                if($null -ne $state){$state.Guide.Visibility='Collapsed';$state.Popup.Visibility='Collapsed';foreach($itemView in $state.Views){$itemView.Marker.Visibility='Collapsed';$itemView.PopupRow.Visibility='Collapsed'};Update-HistoryChartUserSeries $state}
+                if($null -ne $state){Set-HistoryChartUnlocked $state;Update-HistoryChartUserSeries $state}
                 $event.Handled=$true
             })
             [void]$togglePanel.Children.Add($toggle)

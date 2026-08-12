@@ -460,12 +460,15 @@ $wpfHoverSeries=@(
     [PSCustomObject]@{Name='VRAM';Suffix='%';Color='#79C8D8';Latest=80;Points=@([PSCustomObject]@{Time=$wpfHoverTime;Value=80})},
     [PSCustomObject]@{Name='TEMP';Suffix='°C';Color='#E4B64B';Latest=64;Points=@([PSCustomObject]@{Time=$wpfHoverTime;Value=64})}
 )
-$wpfHoverWindow=[Windows.Window]::new(); $wpfHoverCard=New-HistoryChartCard -Title 'GPU 0' -Subtitle '' -Series $wpfHoverSeries -Start $wpfHoverTime.AddMinutes(-30) -End $wpfHoverTime.AddMinutes(30); $wpfHoverWindow.Content=$wpfHoverCard
+$wpfHoverWindow=[Windows.Window]::new(); $wpfHoverWindow.Width=600; $wpfHoverCard=New-HistoryChartCard -Title 'GPU 0' -Subtitle '' -Series $wpfHoverSeries -Start $wpfHoverTime.AddMinutes(-30) -End $wpfHoverTime.AddMinutes(30)
+$wpfHoverBlocker=[Windows.Controls.Border]::new(); $wpfHoverBlocker.Width=264; $wpfHoverBlocker.Height=142; $wpfHoverBlocker.Background=New-HistoryBrush '#1B201D'
+$wpfHoverWrap=[Windows.Controls.WrapPanel]::new(); [void]$wpfHoverWrap.Children.Add($wpfHoverCard); [void]$wpfHoverWrap.Children.Add($wpfHoverBlocker); $wpfHoverWindow.Content=$wpfHoverWrap
 $wpfHoverWindow.Show(); $wpfHoverWindow.UpdateLayout()
 Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $null -ne $_.Toggle }).Count 3 'GPU 图表提供三个指标显示开关'
 $wpfHoverMove=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverMove.RoutedEvent=[Windows.UIElement]::MouseMoveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverMove)
 Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count 3 'WPF 悬停同时标记同分钟三条曲线'
 Assert-Equal $wpfHoverCard.Tag.Popup.IsHitTestVisible $false '未锁定的历史悬停浮窗必须穿透鼠标以继续扫图'
+Assert-Equal ([Windows.Controls.Panel]::GetZIndex($wpfHoverCard) -gt [Windows.Controls.Panel]::GetZIndex($wpfHoverBlocker)) $true '显示历史详情时当前图表卡片必须高于后续 GPU 卡片'
 $wpfPopupLeft=[Windows.Controls.Canvas]::GetLeft($wpfHoverCard.Tag.Popup); $wpfPopupRight=$wpfPopupLeft+$wpfHoverCard.Tag.Popup.Width; $wpfSampleX=[Windows.Controls.Canvas]::GetLeft($wpfHoverCard.Tag.Markers[0].Shape)+4.5
 Assert-Equal (($wpfPopupRight -le ($wpfSampleX-7)) -or ($wpfPopupLeft -ge ($wpfSampleX+7))) $true '历史悬停浮窗必须避开当前采样线'
 Assert-Equal $wpfHoverCard.Tag.TimeBlock.Text '2026-08-11 09:45' 'WPF 悬停显示完整具体时间'
@@ -484,6 +487,7 @@ Assert-Equal $wpfHoverCard.Tag.Popup.IsHitTestVisible $true '锁定后的历史�
 $wpfHoverLeave=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverLeave.RoutedEvent=[Windows.UIElement]::MouseLeaveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
 $wpfHoverCard.Tag.IsLocked=$false; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
 Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -ne 'Collapsed' }).Count 0 '未锁定时鼠标移出后隐藏全部悬停标记'
+Assert-Equal ([Windows.Controls.Panel]::GetZIndex($wpfHoverCard)) 0 '历史详情关闭后恢复图表卡片默认层级'
 $wpfHoverWindow.Close()
 
 $colorA = Get-HistoryUserColor 'Alpha'
