@@ -2,6 +2,8 @@
 
 Server Pulse 是一个原生 Windows WPF 监控浮窗，直接通过本机 `ssh.exe` 读取计算服务器的 GPU、CPU 和内存状态。它不是网页：没有 HTTP 服务、端口、浏览器、Electron、Node.js 或 npm 依赖。
 
+项目图标位于 `assets/server-pulse.svg`：深色服务器机架配合荧光绿监控脉冲，采用透明画布内的圆角方形构图，适合应用列表、托盘图标源文件和项目页面使用。
+
 默认监控本机 SSH 配置中已配置免密登录的 `3090` 与 `a6000` 两个主机别名。
 
 ## 功能
