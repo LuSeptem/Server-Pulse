@@ -342,10 +342,17 @@ try{
 }
 
 $mainScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw -Encoding UTF8
+$iconPath=Join-Path $PSScriptRoot '..\assets\server-pulse.ico';$iconBytes=[IO.File]::ReadAllBytes($iconPath)
+Assert-Equal (($iconBytes[0..3]-join',')) '0,0,1,0' 'Server Pulse 托盘资源是有效 ICO 容器'
+$iconCount=[BitConverter]::ToUInt16($iconBytes,4);Assert-Equal $iconCount 6 'ICO 包含六种分辨率'
+$iconSizes=for($iconIndex=0;$iconIndex-lt$iconCount;$iconIndex++){$iconWidth=[int]$iconBytes[6+($iconIndex*16)];if($iconWidth-eq0){$iconWidth=256};$iconWidth}
+Assert-Equal (($iconSizes|Sort-Object)-join',') '16,20,24,32,48,256' 'ICO 包含托盘和高分辨率所需尺寸'
 Assert-Equal ([bool]($mainScript -match '\.DragMove\(')) $false '禁止调用会触发 Windows Snap Assist 的 DragMove'
 Assert-Equal ([bool]($mainScript -match 'Update-ManualDragPosition')) $true '使用应用内坐标拖拽'
 Assert-Equal ([bool]($mainScript -match 'ShowInTaskbar="False"')) $true '主窗口不占用 Windows 任务栏'
 Assert-Equal ([bool]($mainScript -match '\[Windows\.Forms\.NotifyIcon\]::new\(\)')) $true '创建 Windows 托盘图标'
+Assert-Equal ([bool]($mainScript -match 'Join-Path \$scriptRoot ''assets\\server-pulse\.ico''')) $true '托盘加载 Server Pulse 多分辨率图标'
+Assert-Equal ([bool]($mainScript -match '\$script:trayOwnedIcon\.Dispose\(\)')) $true '退出时释放自定义托盘图标句柄'
 Assert-Equal ([bool]($mainScript -match '\[Windows\.Forms\.ContextMenuStrip\]::new\(\)')) $true '托盘图标提供操作菜单'
 Assert-Equal ([bool]($mainScript -match 'function Show-ServerPulseFromTray')) $true '托盘可恢复主窗口'
 Assert-Equal ([bool]($mainScript -match 'function Hide-ServerPulseToTray')) $true '托盘可隐藏主窗口'

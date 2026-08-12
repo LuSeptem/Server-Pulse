@@ -1032,7 +1032,15 @@ $trayServersItem.Add_Click({ Show-ServerPulseFromTray; Show-ServerPulseSshManage
 $trayExitItem.Add_Click({ $window.Close() })
 $script:trayIcon = [Windows.Forms.NotifyIcon]::new()
 $script:trayIcon.Text = 'Server Pulse - SSH 资源监控'
-$script:trayIcon.Icon = [Drawing.SystemIcons]::Application
+$script:trayOwnedIcon = $null
+$trayIconPath = Join-Path $scriptRoot 'assets\server-pulse.ico'
+try {
+    if (-not (Test-Path -LiteralPath $trayIconPath)) { throw '图标资源不存在' }
+    $script:trayOwnedIcon = [Drawing.Icon]::new($trayIconPath)
+    $script:trayIcon.Icon = $script:trayOwnedIcon
+} catch {
+    $script:trayIcon.Icon = [Drawing.SystemIcons]::Application
+}
 $script:trayIcon.ContextMenuStrip = $script:trayMenu
 $script:trayIcon.Visible = $true
 $script:trayIcon.Add_MouseClick({
@@ -1067,6 +1075,7 @@ function Complete-SmokeTest {
         $window.UpdateLayout()
         if ($window.ShowInTaskbar) { throw '主窗口不应显示在任务栏' }
         if ($null -eq $script:trayIcon -or -not $script:trayIcon.Visible) { throw '托盘图标创建失败' }
+        if ($null -eq $script:trayOwnedIcon) { throw 'Server Pulse 自定义托盘图标加载失败' }
         Hide-ServerPulseToTray
         if ($window.WindowState -ne [Windows.WindowState]::Minimized) { throw '隐藏到托盘失败' }
         Show-ServerPulseFromTray
@@ -1296,6 +1305,7 @@ $window.Add_Closing({
     $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
     $script:trayIcon.Visible = $false
     $script:trayIcon.Dispose()
+    if ($null -ne $script:trayOwnedIcon) { $script:trayOwnedIcon.Dispose(); $script:trayOwnedIcon = $null }
     $script:trayMenu.Dispose()
     Clear-ServerPulseSessionSecrets $script:sessionSecrets
     if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { $script:collectionProcess.Kill() }
