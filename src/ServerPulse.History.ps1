@@ -338,6 +338,16 @@ function New-HistoryChartCard {
     $card.BorderThickness = [Windows.Thickness]::new(1)
     $card.CornerRadius = [Windows.CornerRadius]::new(7)
 
+    $seriesViews=@($Series | ForEach-Object {
+        [PSCustomObject]@{
+            Name=[string]$_.Name; Series=$_; IsVisible=$true; Line=$null; SingleDot=$null; Marker=$null; Toggle=$null; ToggleText=$null
+            PopupRow=$null; PopupDot=$null; PopupText=$null
+            ActiveBackground=(New-HistoryBrush '#263029'); InactiveBackground=(New-HistoryBrush '#171B18')
+            ActiveForeground=(New-HistoryBrush ([string]$_.Color)); InactiveForeground=(New-HistoryBrush '#59635D')
+            ActiveBorder=(New-HistoryBrush ([string]$_.Color)); InactiveBorder=(New-HistoryBrush '#303732')
+        }
+    })
+
     $layout = [Windows.Controls.Grid]::new()
     $row1 = [Windows.Controls.RowDefinition]::new(); $row1.Height = 'Auto'
     $row2 = [Windows.Controls.RowDefinition]::new(); $row2.Height = '*'
@@ -347,89 +357,105 @@ function New-HistoryChartCard {
     $header = [Windows.Controls.Grid]::new()
     [void]$header.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
     $rightColumn = [Windows.Controls.ColumnDefinition]::new(); $rightColumn.Width = 'Auto'; [void]$header.ColumnDefinitions.Add($rightColumn)
-    $titleBlock = New-HistoryText $Title 10 '#E1E6E3'; $titleBlock.FontWeight = 'SemiBold'
-    $latestParts = @($Series | ForEach-Object {
-        if ($null -ne $_.Latest) {
-            $suffix = if ($_.PSObject.Properties.Name -contains 'Suffix') { [string]$_.Suffix } else { '' }
-            "{0} {1:0}{2}" -f $_.Name, [double]$_.Latest, $suffix
+    $titleBlock = New-HistoryText $Title 10 '#E1E6E3'; $titleBlock.FontWeight = 'SemiBold'; $titleBlock.VerticalAlignment='Center'
+    [void]$header.Children.Add($titleBlock)
+    if ($seriesViews.Count -gt 1) {
+        $togglePanel=[Windows.Controls.StackPanel]::new(); $togglePanel.Orientation='Horizontal'; $togglePanel.HorizontalAlignment='Right'
+        foreach ($view in $seriesViews) {
+            $suffix=if($view.Series.PSObject.Properties.Name -contains 'Suffix'){[string]$view.Series.Suffix}else{''}
+            $latestText=if($null -eq $view.Series.Latest){$view.Name}else{"{0} {1:0}{2}" -f $view.Name,[double]$view.Series.Latest,$suffix}
+            $toggle=[Windows.Controls.Border]::new(); $toggle.Tag=$view; $toggle.Padding=[Windows.Thickness]::new(4,2,4,2); $toggle.Margin=[Windows.Thickness]::new(2,0,0,0); $toggle.CornerRadius=[Windows.CornerRadius]::new(3)
+            $toggleText=New-HistoryText $latestText 7 ([string]$view.Series.Color); $toggleText.FontWeight='SemiBold'; $toggleText.IsHitTestVisible=$false; $toggle.Child=$toggleText
+            $toggle.Background=$view.ActiveBackground; $toggle.BorderBrush=$view.ActiveBorder; $toggle.BorderThickness=[Windows.Thickness]::new(1); $toggle.Cursor='Hand'
+            $toggle.ToolTip="点击隐藏 $($view.Name)"
+            $view.Toggle=$toggle; $view.ToggleText=$toggleText
+            $toggle.Add_MouseLeftButtonDown({
+                param($sender,$event)
+                $view=$sender.Tag; $view.IsVisible=-not $view.IsVisible
+                $visibility=if($view.IsVisible){'Visible'}else{'Collapsed'}
+                if($null -ne $view.Line){$view.Line.Visibility=$visibility}; if($null -ne $view.SingleDot){$view.SingleDot.Visibility=$visibility}; if($null -ne $view.Marker){$view.Marker.Visibility='Collapsed'}
+                $sender.Background=if($view.IsVisible){$view.ActiveBackground}else{$view.InactiveBackground}
+                $view.ToggleText.Foreground=if($view.IsVisible){$view.ActiveForeground}else{$view.InactiveForeground}
+                $sender.BorderBrush=if($view.IsVisible){$view.ActiveBorder}else{$view.InactiveBorder}
+                $sender.ToolTip=if($view.IsVisible){"点击隐藏 $($view.Name)"}else{"点击显示 $($view.Name)"}
+                $state=$sender.DataContext
+                if($null -ne $state){$state.Guide.Visibility='Collapsed';$state.Popup.Visibility='Collapsed';foreach($itemView in $state.Views){$itemView.Marker.Visibility='Collapsed';$itemView.PopupRow.Visibility='Collapsed'}}
+                $event.Handled=$true
+            })
+            [void]$togglePanel.Children.Add($toggle)
         }
-    })
-    $latestBlock = New-HistoryText ($latestParts -join ' · ') 8 '#98A39C'; $latestBlock.HorizontalAlignment = 'Right'
-    [Windows.Controls.Grid]::SetColumn($latestBlock,1)
-    [void]$header.Children.Add($titleBlock); [void]$header.Children.Add($latestBlock)
+        [Windows.Controls.Grid]::SetColumn($togglePanel,1); [void]$header.Children.Add($togglePanel)
+    } else {
+        $latestParts=@($seriesViews | ForEach-Object { if($null -ne $_.Series.Latest){$suffix=if($_.Series.PSObject.Properties.Name -contains 'Suffix'){[string]$_.Series.Suffix}else{''};"{0} {1:0}{2}" -f $_.Name,[double]$_.Series.Latest,$suffix} })
+        $latestBlock=New-HistoryText ($latestParts -join ' · ') 8 '#98A39C'; $latestBlock.HorizontalAlignment='Right'; [Windows.Controls.Grid]::SetColumn($latestBlock,1); [void]$header.Children.Add($latestBlock)
+    }
     [Windows.Controls.Grid]::SetRow($header,0); [void]$layout.Children.Add($header)
 
     $canvas = [Windows.Controls.Canvas]::new(); $canvas.Width = 242; $canvas.Height = 76; $canvas.Margin = [Windows.Thickness]::new(0,7,0,5)
     $canvas.Background=New-HistoryBrush '#00131714'; $canvas.Cursor='Cross'; $canvas.ClipToBounds=$false
     foreach ($y in @(2.0,38.0,74.0)) {
-        $line = [Windows.Shapes.Line]::new(); $line.X1=0; $line.X2=242; $line.Y1=$y; $line.Y2=$y
-        $line.Stroke = New-HistoryBrush '#2B312D'; $line.StrokeThickness=1
-        [void]$canvas.Children.Add($line)
+        $gridLine = [Windows.Shapes.Line]::new(); $gridLine.X1=0; $gridLine.X2=242; $gridLine.Y1=$y; $gridLine.Y2=$y
+        $gridLine.Stroke = New-HistoryBrush '#2B312D'; $gridLine.StrokeThickness=1; [void]$canvas.Children.Add($gridLine)
     }
     $duration = [Math]::Max(60.0, ($End - $Start).TotalSeconds)
-    foreach ($item in $Series) {
-        $polyline = [Windows.Shapes.Polyline]::new()
-        $polyline.Stroke = New-HistoryBrush ([string]$item.Color)
-        $polyline.StrokeThickness = 1.8
-        $polyline.StrokeLineJoin = 'Round'
+    foreach ($view in $seriesViews) {
+        $polyline = [Windows.Shapes.Polyline]::new(); $polyline.Stroke = New-HistoryBrush ([string]$view.Series.Color); $polyline.StrokeThickness = 1.8; $polyline.StrokeLineJoin = 'Round'
         $points = [Windows.Media.PointCollection]::new()
-        foreach ($point in @($item.Points)) {
+        foreach ($point in @($view.Series.Points)) {
             if ($null -eq $point.Value) { continue }
-            $x = [Math]::Max(0, [Math]::Min(242, (($point.Time - $Start).TotalSeconds / $duration) * 242))
-            $value = [Math]::Max(0, [Math]::Min(100, [double]$point.Value))
-            $y = 74 - ($value / 100 * 70)
+            $x = [Math]::Max(0, [Math]::Min(242, (($point.Time - $Start).TotalSeconds / $duration) * 242)); $value = [Math]::Max(0, [Math]::Min(100, [double]$point.Value)); $y = 74 - ($value / 100 * 70)
             $points.Add([Windows.Point]::new($x,$y))
         }
-        $polyline.Points = $points
-        [void]$canvas.Children.Add($polyline)
+        $polyline.Points = $points; $view.Line=$polyline; [void]$canvas.Children.Add($polyline)
         if ($points.Count -eq 1) {
-            $dot = [Windows.Shapes.Ellipse]::new(); $dot.Width=4; $dot.Height=4; $dot.Fill=New-HistoryBrush ([string]$item.Color)
-            [Windows.Controls.Canvas]::SetLeft($dot,$points[0].X-2); [Windows.Controls.Canvas]::SetTop($dot,$points[0].Y-2)
-            [void]$canvas.Children.Add($dot)
+            $dot = [Windows.Shapes.Ellipse]::new(); $dot.Width=4; $dot.Height=4; $dot.Fill=New-HistoryBrush ([string]$view.Series.Color)
+            [Windows.Controls.Canvas]::SetLeft($dot,$points[0].X-2); [Windows.Controls.Canvas]::SetTop($dot,$points[0].Y-2); $view.SingleDot=$dot; [void]$canvas.Children.Add($dot)
         }
     }
     $hoverGuide=[Windows.Shapes.Line]::new(); $hoverGuide.Y1=2; $hoverGuide.Y2=74; $hoverGuide.Stroke=New-HistoryBrush '#6F7B73'; $hoverGuide.StrokeThickness=1; $hoverGuide.Opacity=0.7; $hoverGuide.Visibility='Collapsed'; $hoverGuide.IsHitTestVisible=$false
     $hoverDashes=[Windows.Media.DoubleCollection]::new(); $hoverDashes.Add(2.0); $hoverDashes.Add(3.0); $hoverGuide.StrokeDashArray=$hoverDashes; [Windows.Controls.Panel]::SetZIndex($hoverGuide,20); [void]$canvas.Children.Add($hoverGuide)
     $hoverMarkers=@()
-    foreach ($item in $Series) {
-        $marker=[Windows.Shapes.Ellipse]::new(); $marker.Width=9; $marker.Height=9; $marker.Fill=New-HistoryBrush '#131714'; $marker.Stroke=New-HistoryBrush ([string]$item.Color); $marker.StrokeThickness=2; $marker.Visibility='Collapsed'; $marker.IsHitTestVisible=$false
-        [Windows.Controls.Panel]::SetZIndex($marker,22); [void]$canvas.Children.Add($marker)
-        $hoverMarkers += [PSCustomObject]@{Name=[string]$item.Name;Shape=$marker}
+    foreach ($view in $seriesViews) {
+        $marker=[Windows.Shapes.Ellipse]::new(); $marker.Width=9; $marker.Height=9; $marker.Fill=New-HistoryBrush '#131714'; $marker.Stroke=New-HistoryBrush ([string]$view.Series.Color); $marker.StrokeThickness=2; $marker.Visibility='Collapsed'; $marker.IsHitTestVisible=$false
+        [Windows.Controls.Panel]::SetZIndex($marker,22); [void]$canvas.Children.Add($marker); $view.Marker=$marker; $hoverMarkers += [PSCustomObject]@{Name=$view.Name;Shape=$marker}
     }
-    $hoverPopup=[Windows.Controls.Border]::new(); $hoverPopup.Width=154; $hoverPopup.Height=54; $hoverPopup.Padding=[Windows.Thickness]::new(7,4,7,4); $hoverPopup.Background=New-HistoryBrush '#F20D110F'; $hoverPopup.BorderBrush=New-HistoryBrush '#455047'; $hoverPopup.BorderThickness=[Windows.Thickness]::new(1); $hoverPopup.CornerRadius=[Windows.CornerRadius]::new(5); $hoverPopup.Visibility='Collapsed'; $hoverPopup.IsHitTestVisible=$false
+    $hoverPopup=[Windows.Controls.Border]::new(); $hoverPopup.Width=154; $hoverPopup.Height=67; $hoverPopup.Padding=[Windows.Thickness]::new(7,4,7,4); $hoverPopup.Background=New-HistoryBrush '#F20D110F'; $hoverPopup.BorderBrush=New-HistoryBrush '#455047'; $hoverPopup.BorderThickness=[Windows.Thickness]::new(1); $hoverPopup.CornerRadius=[Windows.CornerRadius]::new(5); $hoverPopup.Visibility='Collapsed'; $hoverPopup.IsHitTestVisible=$false
     $hoverPopup.Effect=[Windows.Media.Effects.DropShadowEffect]@{Color=[Windows.Media.Colors]::Black;BlurRadius=8;ShadowDepth=2;Opacity=0.45}
-    $hoverStack=[Windows.Controls.StackPanel]::new(); $hoverTime=New-HistoryText '' 7 '#98A39C'; $hoverValue=New-HistoryText '' 8 '#EDF2EF'; $hoverValue.FontWeight='SemiBold'; $hoverValue.TextWrapping='Wrap'; $hoverValue.Margin=[Windows.Thickness]::new(0,2,0,0); [void]$hoverStack.Children.Add($hoverTime); [void]$hoverStack.Children.Add($hoverValue); $hoverPopup.Child=$hoverStack
-    [Windows.Controls.Panel]::SetZIndex($hoverPopup,24); [void]$canvas.Children.Add($hoverPopup)
-    $hoverState=[PSCustomObject]@{Kind='HistoryChart';Canvas=$canvas;Guide=$hoverGuide;Markers=@($hoverMarkers);Popup=$hoverPopup;TimeBlock=$hoverTime;ValueBlock=$hoverValue;Series=$Series;Start=$Start;End=$End;Resolver=${function:Get-HistoryChartHoverSample}}
+    $hoverStack=[Windows.Controls.StackPanel]::new(); $hoverTime=New-HistoryText '' 7 '#98A39C'; [void]$hoverStack.Children.Add($hoverTime)
+    foreach($view in $seriesViews){
+        $popupRow=[Windows.Controls.StackPanel]::new(); $popupRow.Orientation='Horizontal'; $popupRow.Margin=[Windows.Thickness]::new(0,2,0,0); $popupRow.Visibility='Collapsed'
+        $popupDot=[Windows.Shapes.Ellipse]::new(); $popupDot.Width=6; $popupDot.Height=6; $popupDot.Fill=New-HistoryBrush ([string]$view.Series.Color); $popupDot.Margin=[Windows.Thickness]::new(0,3,6,0); $popupDot.VerticalAlignment='Top'
+        $popupText=New-HistoryText '' 8 '#EDF2EF'; $popupText.FontWeight='SemiBold'
+        [void]$popupRow.Children.Add($popupDot); [void]$popupRow.Children.Add($popupText); [void]$hoverStack.Children.Add($popupRow)
+        $view.PopupRow=$popupRow; $view.PopupDot=$popupDot; $view.PopupText=$popupText
+    }
+    $hoverPopup.Child=$hoverStack; [Windows.Controls.Panel]::SetZIndex($hoverPopup,24); [void]$canvas.Children.Add($hoverPopup)
+    $hoverState=[PSCustomObject]@{Kind='HistoryChart';Canvas=$canvas;Guide=$hoverGuide;Markers=@($hoverMarkers);Popup=$hoverPopup;TimeBlock=$hoverTime;Views=@($seriesViews);Start=$Start;End=$End;Resolver=${function:Get-HistoryChartHoverSample}}
+    foreach($view in $seriesViews){if($null -ne $view.Toggle){$view.Toggle.DataContext=$hoverState}}
     $canvas.Tag=$hoverState; $card.Tag=$hoverState
     $canvas.Add_MouseMove({
         param($sender,$event)
-        $cursor=$event.GetPosition($sender)
-        $sample=& $hoverState.Resolver -Series $hoverState.Series -Start $hoverState.Start -End $hoverState.End -CursorX $cursor.X -Width $sender.Width -Height $sender.Height
+        $state=$sender.Tag; $visibleViews=@($state.Views | Where-Object { $_.IsVisible })
+        foreach($view in $state.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
+        if($visibleViews.Count -eq 0){$state.Guide.Visibility='Collapsed';$state.Popup.Visibility='Collapsed';return}
+        $cursor=$event.GetPosition($sender); $sample=& $state.Resolver -Series @($visibleViews | ForEach-Object { $_.Series }) -Start $state.Start -End $state.End -CursorX $cursor.X -Width $sender.Width -Height $sender.Height
         if ($null -eq $sample) { return }
-        $hoverState.Guide.X1=$sample.X; $hoverState.Guide.X2=$sample.X
-        foreach ($markerInfo in $hoverState.Markers) { $markerInfo.Shape.Visibility='Collapsed' }
+        $state.Guide.X1=$sample.X; $state.Guide.X2=$sample.X
         foreach ($value in $sample.Values) {
-            $markerInfo=@($hoverState.Markers | Where-Object { $_.Name -eq $value.Name } | Select-Object -First 1)
-            if ($markerInfo.Count -eq 0) { continue }
-            [Windows.Controls.Canvas]::SetLeft($markerInfo[0].Shape,$sample.X-4.5); [Windows.Controls.Canvas]::SetTop($markerInfo[0].Shape,$value.Y-4.5)
-            $markerInfo[0].Shape.Visibility='Visible'
+            $view=@($visibleViews | Where-Object { $_.Name -eq $value.Name } | Select-Object -First 1); if($view.Count -eq 0){continue}; $view=$view[0]
+            [Windows.Controls.Canvas]::SetLeft($view.Marker,$sample.X-4.5); [Windows.Controls.Canvas]::SetTop($view.Marker,$value.Y-4.5); $view.Marker.Visibility='Visible'
+            $view.PopupText.Text=("{0}  {1:0.##}{2}" -f $value.Name,$value.Value,$value.Suffix); $view.PopupRow.Visibility='Visible'
         }
-        $hoverState.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm')
-        $hoverState.ValueBlock.Text=(@($sample.Values | ForEach-Object { "{0} {1:0.##}{2}" -f $_.Name,$_.Value,$_.Suffix }) -join '  ·  ')
-        $popupWidth=$hoverState.Popup.Width; $popupLeft=if($sample.X -gt ($sender.Width/2)){$sample.X-$popupWidth-7}else{$sample.X+7}; [Windows.Controls.Canvas]::SetLeft($hoverState.Popup,[Math]::Max(0,[Math]::Min($sender.Width-$popupWidth,$popupLeft))); [Windows.Controls.Canvas]::SetTop($hoverState.Popup,4)
-        $hoverState.Guide.Visibility='Visible'; $hoverState.Popup.Visibility='Visible'
-    }.GetNewClosure())
-    $canvas.Add_MouseLeave({ $hoverState.Guide.Visibility='Collapsed'; foreach($markerInfo in $hoverState.Markers){$markerInfo.Shape.Visibility='Collapsed'}; $hoverState.Popup.Visibility='Collapsed' }.GetNewClosure())
+        $state.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm'); $state.Popup.Height=25+(14*$sample.Values.Count)
+        $popupWidth=$state.Popup.Width; $popupLeft=if($sample.X -gt ($sender.Width/2)){$sample.X-$popupWidth-7}else{$sample.X+7}; [Windows.Controls.Canvas]::SetLeft($state.Popup,[Math]::Max(0,[Math]::Min($sender.Width-$popupWidth,$popupLeft))); [Windows.Controls.Canvas]::SetTop($state.Popup,4)
+        $state.Guide.Visibility='Visible'; $state.Popup.Visibility='Visible'
+    })
+    $canvas.Add_MouseLeave({param($sender,$event);$state=$sender.Tag;$state.Guide.Visibility='Collapsed';foreach($view in $state.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'};$state.Popup.Visibility='Collapsed'})
     [Windows.Controls.Grid]::SetRow($canvas,1); [void]$layout.Children.Add($canvas)
 
-    $footer = [Windows.Controls.Grid]::new()
-    $subtitleBlock = New-HistoryText $Subtitle 7 '#66716A'; $subtitleBlock.TextTrimming = 'CharacterEllipsis'
-    $endBlock = New-HistoryText ($End.ToString('MM-dd HH:mm')) 7 '#505A54'; $endBlock.HorizontalAlignment = 'Right'
-    [void]$footer.Children.Add($subtitleBlock); [void]$footer.Children.Add($endBlock)
-    [Windows.Controls.Grid]::SetRow($footer,2); [void]$layout.Children.Add($footer)
-    $card.Child = $layout
-    return $card
+    $footer = [Windows.Controls.Grid]::new(); $subtitleBlock = New-HistoryText $Subtitle 7 '#66716A'; $subtitleBlock.TextTrimming = 'CharacterEllipsis'; $endBlock = New-HistoryText ($End.ToString('MM-dd HH:mm')) 7 '#505A54'; $endBlock.HorizontalAlignment = 'Right'
+    [void]$footer.Children.Add($subtitleBlock); [void]$footer.Children.Add($endBlock); [Windows.Controls.Grid]::SetRow($footer,2); [void]$layout.Children.Add($footer)
+    $card.Child = $layout; return $card
 }
 
 function Get-HistoryServerFromRecord {
@@ -659,62 +685,62 @@ function Show-ServerPulseHistoryWindow {
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
         foreach ($field in @('Year','Month','Day','Hour','Minute')) { $names += "${prefix}${field}Box"; $names += "${prefix}${field}Error" }
     }
-    $ui = @{}; foreach ($name in $names) { $ui[$name] = $historyWindow.FindName($name) }
+    $historyUi = @{}; foreach ($name in $names) { $historyUi[$name] = $historyWindow.FindName($name) }
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
-        $ui["${prefix}YearBox"].ToolTip='2000–9999'; $ui["${prefix}MonthBox"].ToolTip='1–12'
-        $ui["${prefix}DayBox"].ToolTip='按年、月校验实际天数'; $ui["${prefix}HourBox"].ToolTip='0–23'; $ui["${prefix}MinuteBox"].ToolTip='0–59'
+        $historyUi["${prefix}YearBox"].ToolTip='2000–9999'; $historyUi["${prefix}MonthBox"].ToolTip='1–12'
+        $historyUi["${prefix}DayBox"].ToolTip='按年、月校验实际天数'; $historyUi["${prefix}HourBox"].ToolTip='0–23'; $historyUi["${prefix}MinuteBox"].ToolTip='0–59'
     }
 
     $end = [DateTime]::Now; $end = [datetime]::new($end.Year,$end.Month,$end.Day,$end.Hour,$end.Minute,0)
     $start = $end.AddHours(-1)
-    Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start
-    Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $end
+    Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start
+    Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $end
 
     $renderCore = {
-        $startResult = Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
-        $endResult = Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd'
+        $startResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
+        $endResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryEnd'
         if ($null -eq $startResult.Value -or $null -eq $endResult.Value) {
-            $ui.HistoryRangeStatus.Text='请修正红色时间字段'; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'; return
+            $historyUi.HistoryRangeStatus.Text='请修正红色时间字段'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'; return
         }
         $rangeStart = $startResult.Value; $rangeEnd = $endResult.Value
         if ($rangeEnd -lt $rangeStart) {
-            $ui.HistoryRangeStatus.Text='结束时间不能早于开始时间'; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'; return
+            $historyUi.HistoryRangeStatus.Text='结束时间不能早于开始时间'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'; return
         }
         $records = @(Get-ServerPulseHistoryRecords -Recorder $Recorder -Start $rangeStart -End $rangeEnd)
-        $ui.HistoryPanel.Children.Clear()
+        $historyUi.HistoryPanel.Children.Clear()
         if ($records.Count -eq 0) {
             $empty = New-HistoryText '所选时间段暂无记录' 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
-            [void]$ui.HistoryPanel.Children.Add($empty)
+            [void]$historyUi.HistoryPanel.Children.Add($empty)
         } else {
             $serverIds = @($records | ForEach-Object { @($_.Servers) } | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
-            foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $ui.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd }
+            foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $historyUi.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd }
         }
         $minutes = [Math]::Max(0,[int][Math]::Round(($rangeEnd-$rangeStart).TotalMinutes))
-        $ui.HistoryRangeStatus.Text="$($records.Count) 个分钟点 · $minutes 分钟"; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
-        $ui.HistoryFooterText.Text='本地按分钟平均保存 CPU、MEM、LOAD、GPU、显存、温度、功耗与风扇'
+        $historyUi.HistoryRangeStatus.Text="$($records.Count) 个分钟点 · $minutes 分钟"; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
+        $historyUi.HistoryFooterText.Text='本地按分钟平均保存 CPU、MEM、LOAD、GPU、显存、温度、功耗与风扇'
     }.GetNewClosure()
     $render = {
         try { & $renderCore }
         catch {
             $message=[string]$_.Exception.Message
             if ($message.Length -gt 140) { $message=$message.Substring(0,137) + '...' }
-            $ui.HistoryPanel.Children.Clear()
+            $historyUi.HistoryPanel.Children.Clear()
             $errorText=New-HistoryText ("无法读取占用记录`n{0}" -f $message) 12 '#FF8A80'
             $errorText.TextAlignment='Center'; $errorText.TextWrapping='Wrap'; $errorText.HorizontalAlignment='Center'; $errorText.Margin=[Windows.Thickness]::new(18,90,18,0)
-            [void]$ui.HistoryPanel.Children.Add($errorText)
-            $ui.HistoryRangeStatus.Text='查询失败'; $ui.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
-            $ui.HistoryFooterText.Text='请检查本地历史记录文件后重试'
+            [void]$historyUi.HistoryPanel.Children.Add($errorText)
+            $historyUi.HistoryRangeStatus.Text='查询失败'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
+            $historyUi.HistoryFooterText.Text='请检查本地历史记录文件后重试'
         }
     }.GetNewClosure()
-    [void](Register-HistoryWindowDragArea -DragArea $ui.HistoryDragArea)
-    Register-HistoryWindowCloseButton -Button $ui.HistoryCloseButton
-    $ui.HistoryQueryButton.Add_Click($render)
-    $ui.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $now;&$render }.GetNewClosure())
+    [void](Register-HistoryWindowDragArea -DragArea $historyUi.HistoryDragArea)
+    Register-HistoryWindowCloseButton -Button $historyUi.HistoryCloseButton
+    $historyUi.HistoryQueryButton.Add_Click($render)
+    $historyUi.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $now;&$render }.GetNewClosure())
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
         foreach ($field in @('Year','Month','Day','Hour','Minute')) {
             $currentPrefix = $prefix
-            $box = $ui["${prefix}${field}Box"]
-            $box.Add_TextChanged({ [void](Set-HistoryDateInputValidation -Ui $ui -Prefix $currentPrefix) }.GetNewClosure())
+            $box = $historyUi["${prefix}${field}Box"]
+            $box.Add_TextChanged({ [void](Set-HistoryDateInputValidation -Ui $historyUi -Prefix $currentPrefix) }.GetNewClosure())
             $box.Add_PreviewKeyDown({ param($sender,$event); if($event.Key -eq 'Enter'){&$render;$event.Handled=$true} }.GetNewClosure())
         }
     }
@@ -725,7 +751,7 @@ function Show-ServerPulseHistoryWindow {
         $invalidHistoryDirectory=Join-Path ([IO.Path]::GetTempPath()) ("serverpulse-invalid-history-{0}" -f [guid]::NewGuid().ToString('N'))
         [void](New-Item -ItemType Directory -Path $invalidHistoryDirectory)
         Set-Content -LiteralPath (Join-Path $invalidHistoryDirectory ($end.ToString('yyyy-MM-dd') + '.json')) -Value '{ invalid json' -Encoding UTF8
-        $queryState=[PSCustomObject]@{Button=$ui.HistoryQueryButton;Completed=$false;Passed=$true;Error=$null}
+        $queryState=[PSCustomObject]@{Button=$historyUi.HistoryQueryButton;Completed=$false;Passed=$true;Error=$null}
         try {
             $Recorder.Directory=$invalidHistoryDirectory
             [void]$historyWindow.Dispatcher.BeginInvoke([Action]{
@@ -741,14 +767,14 @@ function Show-ServerPulseHistoryWindow {
             }
             if (-not $queryState.Completed) { $queryState.Passed=$false; $queryState.Error='异步查询点击超时' }
             $queryClickPassed=$queryState.Passed; $queryClickError=$queryState.Error
-            $queryFailureContained=($queryClickPassed -and $ui.HistoryRangeStatus.Text -eq '查询失败' -and $ui.HistoryPanel.Children.Count -eq 1)
+            $queryFailureContained=($queryClickPassed -and $historyUi.HistoryRangeStatus.Text -eq '查询失败' -and $historyUi.HistoryPanel.Children.Count -eq 1)
         } finally {
             $Recorder.Directory=$originalHistoryDirectory
             Remove-Item -LiteralPath $invalidHistoryDirectory -Recurse -Force -ErrorAction SilentlyContinue
         }
-        Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start.AddMinutes(1)
-        Set-HistoryDateFields -Ui $ui -Prefix 'HistoryEnd' -Value $end
-        $changedQueryState=[PSCustomObject]@{Button=$ui.HistoryQueryButton;Completed=$false;Passed=$true;Error=$null}
+        Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start.AddMinutes(1)
+        Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $end
+        $changedQueryState=[PSCustomObject]@{Button=$historyUi.HistoryQueryButton;Completed=$false;Passed=$true;Error=$null}
         [void]$historyWindow.Dispatcher.BeginInvoke([Action]{
             try { $changedQueryState.Button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent)) }
             catch { $changedQueryState.Passed=$false; $changedQueryState.Error=$_.Exception.Message }
@@ -762,10 +788,10 @@ function Show-ServerPulseHistoryWindow {
         }
         if (-not $changedQueryState.Completed) { $changedQueryState.Passed=$false; $changedQueryState.Error='修改时间后的异步查询点击超时' }
         $changedRangeQueryPassed=($changedQueryState.Passed -and $historyWindow.IsVisible)
-        $ui.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart'
-        $validationPassed=($null -eq $invalidResult.Value -and $ui.HistoryStartMonthError.Visibility -eq 'Visible' -and $ui.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
-        Set-HistoryDateFields -Ui $ui -Prefix 'HistoryStart' -Value $start; &$render; $historyWindow.UpdateLayout()
-        $normalRenderPassed=($ui.HistoryRangeStatus.Text -ne '查询失败')
+        $historyUi.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
+        $validationPassed=($null -eq $invalidResult.Value -and $historyUi.HistoryStartMonthError.Visibility -eq 'Visible' -and $historyUi.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
+        Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start; &$render; $historyWindow.UpdateLayout()
+        $normalRenderPassed=($historyUi.HistoryRangeStatus.Text -ne '查询失败')
         $hoverTestTime=$start.AddMinutes(30)
         $hoverTestSeries=@(
             [PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Latest=72;Points=@([PSCustomObject]@{Time=$hoverTestTime;Value=72})},
@@ -773,33 +799,36 @@ function Show-ServerPulseHistoryWindow {
             [PSCustomObject]@{Name='TEMP';Suffix='°C';Color='#E4B64B';Latest=61;Points=@([PSCustomObject]@{Time=$hoverTestTime;Value=61})}
         )
         $hoverTestCard=New-HistoryChartCard -Title 'HOVER TEST' -Subtitle '' -Series $hoverTestSeries -Start $start -End $end
-        [void]$ui.HistoryPanel.Children.Add($hoverTestCard); $historyWindow.UpdateLayout()
+        [void]$historyUi.HistoryPanel.Children.Add($hoverTestCard); $historyWindow.UpdateLayout()
         $hoverInteractionPassed=$false; $hoverInteractionError=$null
         try {
             $mouseMove=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $mouseMove.RoutedEvent=[Windows.UIElement]::MouseMoveEvent
             $hoverTestCard.Tag.Canvas.RaiseEvent($mouseMove)
             $visibleMarkers=@($hoverTestCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count
-            $shown=($visibleMarkers -eq 3 -and $hoverTestCard.Tag.Popup.Visibility -eq 'Visible' -and $hoverTestCard.Tag.TimeBlock.Text -eq $hoverTestTime.ToString('yyyy-MM-dd HH:mm') -and $hoverTestCard.Tag.ValueBlock.Text -match '^GPU.*VRAM.*TEMP')
+            $visibleRows=@($hoverTestCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' })
+            $shown=($visibleMarkers -eq 3 -and $visibleRows.Count -eq 3 -and $hoverTestCard.Tag.Popup.Visibility -eq 'Visible' -and $hoverTestCard.Tag.TimeBlock.Text -eq $hoverTestTime.ToString('yyyy-MM-dd HH:mm') -and $visibleRows[0].PopupText.Text -match '^GPU' -and $visibleRows[1].PopupText.Text -match '^VRAM' -and $visibleRows[2].PopupText.Text -match '^TEMP')
+            $vramView=$hoverTestCard.Tag.Views[1]; $toggleDown=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left); $toggleDown.RoutedEvent=[Windows.UIElement]::MouseLeftButtonDownEvent; $vramView.Toggle.RaiseEvent($toggleDown); $hoverTestCard.Tag.Canvas.RaiseEvent($mouseMove)
+            $togglePassed=(-not $vramView.IsVisible -and $vramView.Line.Visibility -eq 'Collapsed' -and @($hoverTestCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count -eq 2 -and @($hoverTestCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' }).Count -eq 2)
             $mouseLeave=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $mouseLeave.RoutedEvent=[Windows.UIElement]::MouseLeaveEvent
             $hoverTestCard.Tag.Canvas.RaiseEvent($mouseLeave)
             $hidden=(@($hoverTestCard.Tag.Markers | Where-Object { $_.Shape.Visibility -ne 'Collapsed' }).Count -eq 0 -and $hoverTestCard.Tag.Popup.Visibility -eq 'Collapsed')
-            $hoverInteractionPassed=($shown -and $hidden)
+            $hoverInteractionPassed=($shown -and $togglePassed -and $hidden)
         } catch { $hoverInteractionError=$_.Exception.Message }
-        [void]$ui.HistoryPanel.Children.Remove($hoverTestCard)
+        [void]$historyUi.HistoryPanel.Children.Remove($hoverTestCard)
         if ($ScreenshotPath) { Save-HistoryWindowScreenshot -Window $historyWindow -Path $ScreenshotPath }
-        $startValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryStart').Value; $endValue=(Set-HistoryDateInputValidation -Ui $ui -Prefix 'HistoryEnd').Value
-        $closeCenter=$ui.HistoryCloseButton.TransformToAncestor($historyWindow).Transform([Windows.Point]::new($ui.HistoryCloseButton.ActualWidth/2,$ui.HistoryCloseButton.ActualHeight/2))
+        $startValue=(Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart').Value; $endValue=(Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryEnd').Value
+        $closeCenter=$historyUi.HistoryCloseButton.TransformToAncestor($historyWindow).Transform([Windows.Point]::new($historyUi.HistoryCloseButton.ActualWidth/2,$historyUi.HistoryCloseButton.ActualHeight/2))
         $closeHit=$historyWindow.InputHitTest($closeCenter); $closeHitNode=$closeHit
-        while ($null -ne $closeHitNode -and $closeHitNode -ne $ui.HistoryCloseButton) { $closeHitNode=[Windows.Media.VisualTreeHelper]::GetParent($closeHitNode) }
-        $closeHitTestPassed=($closeHitNode -eq $ui.HistoryCloseButton)
+        while ($null -ne $closeHitNode -and $closeHitNode -ne $historyUi.HistoryCloseButton) { $closeHitNode=[Windows.Media.VisualTreeHelper]::GetParent($closeHitNode) }
+        $closeHitTestPassed=($closeHitNode -eq $historyUi.HistoryCloseButton)
         $closeHitElement=if($null -ne $closeHit){"$($closeHit.GetType().Name):$($closeHit.Name)"}else{'none'}
-        $closeAncestor=$ui.HistoryCloseButton; $closeSeparatedFromDragArea=$true
+        $closeAncestor=$historyUi.HistoryCloseButton; $closeSeparatedFromDragArea=$true
         while ($null -ne $closeAncestor) {
-            if ($closeAncestor -eq $ui.HistoryDragArea) { $closeSeparatedFromDragArea=$false; break }
+            if ($closeAncestor -eq $historyUi.HistoryDragArea) { $closeSeparatedFromDragArea=$false; break }
             $closeAncestor=[Windows.Media.VisualTreeHelper]::GetParent($closeAncestor)
         }
         $historyWindow.Hide()
-        $script:historyCloseSmokeState=[PSCustomObject]@{Button=$ui.HistoryCloseButton;Window=$historyWindow;Completed=$false;ClosedByHandler=$false;Error=$null}
+        $script:historyCloseSmokeState=[PSCustomObject]@{Button=$historyUi.HistoryCloseButton;Window=$historyWindow;Completed=$false;ClosedByHandler=$false;Error=$null}
         [void]$historyWindow.Dispatcher.BeginInvoke([Action]{
             try { $script:historyCloseSmokeState.Button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent)) }
             catch { $script:historyCloseSmokeState.Error=$_.Exception.Message }
@@ -813,7 +842,7 @@ function Show-ServerPulseHistoryWindow {
         $closeButtonPassed=($script:historyCloseSmokeState.Completed -and $script:historyCloseSmokeState.ClosedByHandler)
         $closeButtonError=$script:historyCloseSmokeState.Error
         Remove-Variable -Name historyCloseSmokeState -Scope Script -ErrorAction SilentlyContinue
-        $result=[PSCustomObject]@{PanelCount=$ui.HistoryPanel.Children.Count;Status=[string]$ui.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeButtonError;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea}
+        $result=[PSCustomObject]@{PanelCount=$historyUi.HistoryPanel.Children.Count;Status=[string]$historyUi.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeButtonError;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea}
         return $result
     }
     [void]$historyWindow.ShowDialog()

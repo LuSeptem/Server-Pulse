@@ -124,6 +124,7 @@ Assert-Equal ([bool]($historyScript -match 'HistoryCloseButton\.Add_Click\(\{\s*
 Assert-Equal ([bool]($historyScript -match '\[Windows\.Window\]::GetWindow\(\$sender\)')) $true '历史关闭回调从按钮解析所属窗口'
 Assert-Equal ([bool]($historyScript -match 'HistoryDragArea\.Add_Mouse[^\r\n]+\$drag')) $false '历史拖拽回调不得依赖动态拖拽变量'
 Assert-Equal ([bool]($historyScript -match 'Register-HistoryWindowDragArea')) $true '历史拖拽事件使用独立注册函数'
+Assert-Equal ([bool]($historyScript -match '(?m)^\s*\$ui\s*=\s*@\{\}')) $false '历史窗口不得覆盖主窗口 UI 动态变量'
 Add-Type -AssemblyName PresentationFramework,System.Windows.Forms
 $closeTestWindow=[Windows.Window]::new(); $closeTestButton=[Windows.Controls.Button]::new(); $closeTestWindow.Content=$closeTestButton
 Register-HistoryWindowCloseButton -Button $closeTestButton
@@ -154,10 +155,19 @@ $wpfHoverSeries=@(
 )
 $wpfHoverWindow=[Windows.Window]::new(); $wpfHoverCard=New-HistoryChartCard -Title 'GPU 0' -Subtitle '' -Series $wpfHoverSeries -Start $wpfHoverTime.AddMinutes(-30) -End $wpfHoverTime.AddMinutes(30); $wpfHoverWindow.Content=$wpfHoverCard
 $wpfHoverWindow.Show(); $wpfHoverWindow.UpdateLayout()
+Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $null -ne $_.Toggle }).Count 3 'GPU 图表提供三个指标显示开关'
 $wpfHoverMove=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverMove.RoutedEvent=[Windows.UIElement]::MouseMoveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverMove)
 Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count 3 'WPF 悬停同时标记同分钟三条曲线'
 Assert-Equal $wpfHoverCard.Tag.TimeBlock.Text '2026-08-11 09:45' 'WPF 悬停显示完整具体时间'
-Assert-Equal ([bool]($wpfHoverCard.Tag.ValueBlock.Text -match '^GPU 55%.*VRAM 80%.*TEMP 64°C$')) $true 'WPF 悬停同时显示同分钟全部结果'
+Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' }).Count 3 '悬停浮窗将三个指标分行显示'
+Assert-Equal $wpfHoverCard.Tag.Views[0].PopupText.Text 'GPU  55%' '悬停行显示 GPU 数值'
+Assert-Equal $wpfHoverCard.Tag.Views[1].PopupDot.Fill.ToString() '#FF79C8D8' '悬停行使用对应曲线颜色标记'
+$wpfToggleDown=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left); $wpfToggleDown.RoutedEvent=[Windows.UIElement]::MouseLeftButtonDownEvent; $wpfHoverCard.Tag.Views[1].Toggle.RaiseEvent($wpfToggleDown)
+Assert-Equal $wpfHoverCard.Tag.Views[1].IsVisible $false '点击 VRAM 开关隐藏指标'
+Assert-Equal $wpfHoverCard.Tag.Views[1].Line.Visibility 'Collapsed' '隐藏指标同时隐藏对应曲线'
+$wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverMove)
+Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -eq 'Visible' }).Count 2 '隐藏后仅标记其余可见曲线'
+Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' }).Count 2 '隐藏后浮窗不显示该指标行'
 $wpfHoverLeave=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverLeave.RoutedEvent=[Windows.UIElement]::MouseLeaveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
 Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -ne 'Collapsed' }).Count 0 '鼠标移出后隐藏全部悬停标记'
 $wpfHoverWindow.Close()
