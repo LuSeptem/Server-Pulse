@@ -246,6 +246,7 @@ function New-Text([string]$Text, [double]$Size, [string]$Color) {
 
 function New-MetricCell([string]$Label) {
     $panel = [Windows.Controls.StackPanel]::new()
+    $panel.Background = [Windows.Media.Brushes]::Transparent
     $panel.Margin = [Windows.Thickness]::new(0, 0, 9, 0)
     $labelBlock = New-Text $Label 8 '#6C7770'
     $labelBlock.Margin = [Windows.Thickness]::new(0, 0, 0, 1)
@@ -263,6 +264,384 @@ function New-MetricCell([string]$Label) {
     [void]$panel.Children.Add($bar)
     return @{ Panel = $panel; Value = $valueBlock; Bar = $bar }
 }
+
+function Get-UserUsageProperty {
+    param($InputObject, [string[]]$Names, $Default = $null)
+
+    if ($null -eq $InputObject) { return $Default }
+    foreach ($name in $Names) {
+        $property = $InputObject.PSObject.Properties[$name]
+        if ($null -ne $property -and $null -ne $property.Value) { return $property.Value }
+    }
+    return $Default
+}
+
+function ConvertTo-UserUsageNumber($Value) {
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) { return $null }
+    try { return [double]$Value } catch { return $null }
+}
+
+function Get-UserUsageStatus($Usage) {
+    if ($null -eq $Usage) { return 'unavailable' }
+    $status = [string](Get-UserUsageProperty $Usage @('Status','status') 'unavailable')
+    $status = $status.Trim().ToLowerInvariant()
+    if ($status -notin @('ok','partial','unavailable')) { return 'unavailable' }
+    return $status
+}
+
+function Get-UserUsageRows {
+    param($TargetState)
+
+    $usage = $TargetState.Usage
+    $users = @(Get-UserUsageProperty $usage @('Users','UserUsage','Items') @())
+    $rows = foreach ($user in $users) {
+        if ($null -eq $user) { continue }
+        $uid = Get-UserUsageProperty $user @('Uid','UID','UserId') $null
+        $name = [string](Get-UserUsageProperty $user @('Name','UserName','Username','DisplayName') '')
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            $name = if ($null -ne $uid) { "UID $uid" } else { '未知用户' }
+        }
+
+        if ($TargetState.Kind -eq 'cpu') {
+            $value = ConvertTo-UserUsageNumber (Get-UserUsageProperty $user @('Percent','CpuPercent','Utilization','Value') $null)
+            $percent = $value
+        } else {
+            $value = ConvertTo-UserUsageNumber (Get-UserUsageProperty $user @('RssMiB','MemoryUsedMiB','UsedMiB','MemoryMiB','MiB','ValueMiB','Value') $null)
+            $percent = ConvertTo-UserUsageNumber (Get-UserUsageProperty $user @('Percent','MemoryPercent','VramPercent') $null)
+            if ($null -eq $percent -and $null -ne $value -and $TargetState.TotalMiB -gt 0) {
+                $percent = $value * 100.0 / $TargetState.TotalMiB
+            }
+        }
+
+        [PSCustomObject]@{
+            Key = if ($null -ne $uid) { "uid:$uid" } else { "name:$name" }
+            Name = $name
+            Value = $value
+            Percent = $percent
+            SortValue = if ($null -eq $value) { 0.0 } else { [double]$value }
+        }
+    }
+    return @($rows | Sort-Object -Property @{Expression='SortValue';Descending=$true}, @{Expression='Name';Descending=$false})
+}
+
+function Format-UserUsageValue {
+    param([string]$Kind, $Value, $Percent)
+
+    if ($null -eq $Value) { return '—' }
+    if ($Kind -eq 'cpu') { return ('{0:0.0}%' -f [double]$Value) }
+    $percentText = if ($null -eq $Percent) { '—' } else { '{0:0.0}%' -f [double]$Percent }
+    return ('{0:0.0} GB · {1}' -f ([double]$Value / 1024.0), $percentText)
+}
+
+function Get-SystemUserUsageRow {
+    param($TargetState)
+
+    $usage = $TargetState.Usage
+    $status = Get-UserUsageStatus $usage
+    if ($TargetState.Kind -eq 'cpu') {
+        $value = ConvertTo-UserUsageNumber (Get-UserUsageProperty $usage @('SystemUnattributedPercent','UnattributedPercent','SystemPercent') $null)
+        $percent = $value
+    } else {
+        $value = ConvertTo-UserUsageNumber (Get-UserUsageProperty $usage @('SystemUnattributedMiB','UnattributedMiB','UnmappedMiB') $null)
+        $percent = ConvertTo-UserUsageNumber (Get-UserUsageProperty $usage @('SystemUnattributedPercent','UnattributedPercent','UnmappedPercent') $null)
+        if ($null -eq $percent -and $null -ne $value -and $TargetState.TotalMiB -gt 0) {
+            $percent = $value * 100.0 / $TargetState.TotalMiB
+        }
+    }
+    if ($status -eq 'unavailable') { $value = $null; $percent = $null }
+    return [PSCustomObject]@{ Name='系统/未归属'; Value=$value; Percent=$percent }
+}
+
+function New-UserUsagePopupRow {
+    param([string]$Name, [string]$Value, [switch]$System)
+
+    $row = [Windows.Controls.Grid]::new()
+    $row.Margin = [Windows.Thickness]::new(0, 0, 0, 5)
+    [void]$row.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
+    $right = [Windows.Controls.ColumnDefinition]::new(); $right.Width = 'Auto'; [void]$row.ColumnDefinitions.Add($right)
+    $nameBlock = New-Text $Name 10 $(if ($System) { '#8C9690' } else { '#D7DDD9' })
+    $nameBlock.TextTrimming = 'CharacterEllipsis'; $nameBlock.MaxWidth = 154
+    $valueBlock = New-Text $Value 10 $(if ($System) { '#8C9690' } else { '#F0F3F1' })
+    $valueBlock.FontWeight = 'SemiBold'; $valueBlock.Margin = [Windows.Thickness]::new(10,0,0,0)
+    [Windows.Controls.Grid]::SetColumn($valueBlock,1)
+    [void]$row.Children.Add($nameBlock); [void]$row.Children.Add($valueBlock)
+    return $row
+}
+
+function Register-UserUsageExpandButton {
+    param([Windows.Controls.Button]$Button, $Manager)
+
+    $Button.Tag = $Manager
+    $Button.Add_Click({
+        param($sender,$eventArgs)
+        $popupManager = $sender.Tag
+        if ($null -eq $popupManager -or $null -eq $popupManager.CurrentTarget) { return }
+        $popupManager.CurrentTarget.Expanded = -not [bool]$popupManager.CurrentTarget.Expanded
+        Update-UserUsagePopupContent $popupManager
+        $eventArgs.Handled = $true
+    })
+}
+
+function Update-UserUsagePopupContent {
+    param($Manager)
+
+    $state = $Manager.CurrentTarget
+    if ($null -eq $state) { return }
+    $Manager.Header.Text = "$($state.Title) · 用户占用"
+    $Manager.Mode.Text = if ($Manager.IsPinned) { '● 已固定' } else { '悬停预览' }
+    $Manager.Mode.Foreground = New-Brush $(if ($Manager.IsPinned) { '#A7D948' } else { '#6F7A73' })
+    $Manager.Rows.Children.Clear()
+
+    $status = Get-UserUsageStatus $state.Usage
+    $Manager.Status.Text = switch ($status) {
+        'ok' { '归属数据完整' }
+        'partial' { '部分归属 · 未读取项计入未归属' }
+        default { '用户归属不可用' }
+    }
+    $Manager.Status.Foreground = New-Brush $(if ($status -eq 'ok') { '#6F7A73' } elseif ($status -eq 'partial') { '#E4B64B' } else { '#FF7B72' })
+
+    $rows = @(Get-UserUsageRows $state | Where-Object { $_.SortValue -gt 0.0001 })
+    $visibleRows = if ($state.Expanded) { $rows } else { @($rows | Select-Object -First 8) }
+    foreach ($row in $visibleRows) {
+        [void]$Manager.Rows.Children.Add((New-UserUsagePopupRow -Name $row.Name -Value (Format-UserUsageValue $state.Kind $row.Value $row.Percent)))
+    }
+    if ($rows.Count -eq 0 -and $status -ne 'unavailable') {
+        $empty = New-Text '暂无可归属的活跃用户' 10 '#68736C'; $empty.Margin = [Windows.Thickness]::new(0,2,0,7)
+        [void]$Manager.Rows.Children.Add($empty)
+    }
+
+    if ($rows.Count -gt 8) {
+        $toggle = [Windows.Controls.Button]::new()
+        $toggle.Content = if ($state.Expanded) { '收起' } else { "其他（$($rows.Count - 8) 用户）" }
+        $toggle.Height = 25; $toggle.Margin = [Windows.Thickness]::new(0,1,0,7); $toggle.Cursor = 'Hand'
+        $toggle.Foreground = New-Brush '#A7D948'; $toggle.Background = New-Brush '#202521'; $toggle.BorderBrush = New-Brush '#353C37'; $toggle.BorderThickness = [Windows.Thickness]::new(1)
+        Register-UserUsageExpandButton -Button $toggle -Manager $Manager
+        [void]$Manager.Rows.Children.Add($toggle)
+    }
+
+    $divider = [Windows.Controls.Border]::new(); $divider.Height = 1; $divider.Background = New-Brush '#303632'; $divider.Margin = [Windows.Thickness]::new(0,1,0,7)
+    [void]$Manager.Rows.Children.Add($divider)
+    $system = Get-SystemUserUsageRow $state
+    [void]$Manager.Rows.Children.Add((New-UserUsagePopupRow -Name $system.Name -Value (Format-UserUsageValue $state.Kind $system.Value $system.Percent) -System))
+
+    if ($state.Kind -eq 'memory') {
+        $overlap = ConvertTo-UserUsageNumber (Get-UserUsageProperty $state.Usage @('RssOverlapMiB','OverlapMiB') $null)
+        $Manager.Footer.Text = if ($null -ne $overlap -and $overlap -gt 0) {
+            'RSS 估算 · 共享页可能重复（约 {0:0.0} GB）' -f ($overlap / 1024.0)
+        } else { 'RSS 快速估算 · 共享页可能重复计入' }
+    } elseif ($state.Kind -eq 'vram') {
+        $Manager.Footer.Text = '逐卡显存 · 驱动与未映射占用归入未归属'
+    } else {
+        $Manager.Footer.Text = 'CPU 按整台服务器 0–100% 归一化'
+    }
+}
+
+function Set-UserUsageTargetVisual {
+    param($TargetState)
+
+    if ($null -eq $TargetState -or $null -eq $TargetState.ValueElement) { return }
+    $manager = $TargetState.Manager
+    $isCurrent = $null -ne $manager.CurrentTarget -and $manager.CurrentTarget.Key -eq $TargetState.Key
+    $color = if ($isCurrent -and $manager.IsPinned) { '#79C8D8' } elseif ($TargetState.IsHover) { '#FFFFFF' } else { $TargetState.DefaultForeground }
+    $TargetState.ValueElement.Foreground = New-Brush $color
+}
+
+function Open-UserUsagePopup {
+    param($TargetState, [switch]$Pinned)
+
+    if ($null -eq $TargetState -or $null -eq $TargetState.Manager) { return }
+    $manager = $TargetState.Manager
+    $previous = $manager.CurrentTarget
+    if ($null -ne $previous -and $previous.Key -ne $TargetState.Key) {
+        $previous.Expanded = $false
+        Set-UserUsageTargetVisual $previous
+    }
+    if ($null -eq $previous -or $previous.Key -ne $TargetState.Key) { $TargetState.Expanded = $false }
+    $manager.CurrentTarget = $TargetState
+    $manager.IsPinned = [bool]$Pinned
+    $manager.CloseTimer.Stop()
+    $manager.Popup.PlacementTarget = $TargetState.Target
+    Update-UserUsagePopupContent $manager
+    $manager.Popup.IsOpen = $true
+    Set-UserUsageTargetVisual $TargetState
+    if ($null -ne $script:hideTimer) { $script:hideTimer.Stop() }
+    if ($null -ne $script:dockDetectTimer) { $script:dockDetectTimer.Stop() }
+}
+
+function Close-UserUsagePopup {
+    param($Manager)
+
+    if ($null -eq $Manager) { return }
+    $previous = $Manager.CurrentTarget
+    $Manager.CloseTimer.Stop()
+    $Manager.Popup.IsOpen = $false
+    $Manager.CurrentTarget = $null
+    $Manager.IsPinned = $false
+    if ($null -ne $previous) { $previous.Expanded = $false; Set-UserUsageTargetVisual $previous }
+    if ($window.IsVisible -and $window.WindowState -eq 'Normal' -and $script:dockSide -and $ui.EdgeButton.Tag -eq 'active') {
+        $hideTimer.Stop(); $hideTimer.Start()
+    }
+}
+
+function Invoke-UserUsageTargetMouseEnter {
+    param($TargetState)
+
+    if ($null -eq $TargetState) { return }
+    $TargetState.IsHover = $true
+    $manager = $TargetState.Manager
+    $manager.CloseTimer.Stop()
+    if (-not $manager.IsPinned) {
+        Open-UserUsagePopup $TargetState -Pinned:$false
+    }
+    Set-UserUsageTargetVisual $TargetState
+}
+
+function Invoke-UserUsageTargetMouseLeave {
+    param($TargetState)
+
+    if ($null -eq $TargetState) { return }
+    $TargetState.IsHover = $false
+    Set-UserUsageTargetVisual $TargetState
+    if (-not $TargetState.Manager.IsPinned) {
+        $TargetState.Manager.CloseTimer.Stop(); $TargetState.Manager.CloseTimer.Start()
+    }
+}
+
+function Invoke-UserUsageTargetClick {
+    param($TargetState)
+
+    if ($null -eq $TargetState) { return }
+    $manager = $TargetState.Manager
+    if ($manager.IsPinned -and $null -ne $manager.CurrentTarget -and $manager.CurrentTarget.Key -eq $TargetState.Key) {
+        Close-UserUsagePopup $manager
+    } else {
+        Open-UserUsagePopup $TargetState -Pinned
+    }
+}
+
+function Register-UserUsageTarget {
+    param(
+        [Windows.FrameworkElement]$Target,
+        [string]$Key,
+        [ValidateSet('cpu','memory','vram')][string]$Kind,
+        [string]$Title,
+        [Windows.Controls.TextBlock]$ValueElement,
+        [string]$DefaultForeground,
+        $Manager
+    )
+
+    $state = [PSCustomObject]@{
+        Key=$Key; Kind=$Kind; Title=$Title; Target=$Target; ValueElement=$ValueElement
+        DefaultForeground=$DefaultForeground; Usage=$null; TotalMiB=0.0; Expanded=$false
+        IsHover=$false; Manager=$Manager
+    }
+    $Target.Tag = $state
+    $Target.Cursor = 'Hand'
+    $Target.ToolTip = '悬停查看用户占用，单击固定'
+    $Manager.Targets[$Key] = $Target
+    $Target.Add_MouseEnter({ param($sender,$eventArgs); Invoke-UserUsageTargetMouseEnter $sender.Tag })
+    $Target.Add_MouseLeave({ param($sender,$eventArgs); Invoke-UserUsageTargetMouseLeave $sender.Tag })
+    $Target.Add_MouseLeftButtonDown({
+        param($sender,$eventArgs)
+        Invoke-UserUsageTargetClick $sender.Tag
+        $eventArgs.Handled = $true
+    })
+    return $state
+}
+
+function Update-UserUsageTarget {
+    param([Windows.FrameworkElement]$Target, $Usage, [double]$TotalMiB = 0.0, [string]$Title)
+
+    if ($null -eq $Target -or $null -eq $Target.Tag) { return }
+    $state = $Target.Tag
+    $state.Usage = $Usage
+    $state.TotalMiB = [Math]::Max(0.0, $TotalMiB)
+    if (-not [string]::IsNullOrWhiteSpace($Title)) { $state.Title = $Title }
+    $status = Get-UserUsageStatus $Usage
+    $Target.ToolTip = switch ($status) {
+        'ok' { '悬停查看用户占用，单击固定' }
+        'partial' { '用户归属不完整；悬停查看，单击固定' }
+        default { '当前无法读取用户归属' }
+    }
+    if ($null -ne $state.Manager.CurrentTarget -and $state.Manager.CurrentTarget.Key -eq $state.Key -and $state.Manager.Popup.IsOpen) {
+        Update-UserUsagePopupContent $state.Manager
+    }
+}
+
+function New-UserUsagePopupManager {
+    $popup = [Windows.Controls.Primitives.Popup]::new()
+    $popup.AllowsTransparency = $true
+    $popup.StaysOpen = $true
+    $popup.Placement = [Windows.Controls.Primitives.PlacementMode]::Right
+    $popup.HorizontalOffset = 8
+
+    $surface = [Windows.Controls.Border]::new()
+    $surface.Width = 286; $surface.MaxHeight = 430
+    $surface.Padding = [Windows.Thickness]::new(12,10,12,10)
+    $surface.CornerRadius = [Windows.CornerRadius]::new(8)
+    $surface.Background = New-AlphaBrush '#111512' 0.98
+    $surface.BorderBrush = New-Brush '#3A433C'; $surface.BorderThickness = [Windows.Thickness]::new(1)
+    $shadow = [Windows.Media.Effects.DropShadowEffect]::new(); $shadow.BlurRadius=18; $shadow.ShadowDepth=3; $shadow.Opacity=0.55; $shadow.Color=[Windows.Media.Colors]::Black
+    $surface.Effect = $shadow
+
+    $layout = [Windows.Controls.StackPanel]::new()
+    $headerGrid = [Windows.Controls.Grid]::new()
+    [void]$headerGrid.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
+    $modeColumn = [Windows.Controls.ColumnDefinition]::new(); $modeColumn.Width='Auto'; [void]$headerGrid.ColumnDefinitions.Add($modeColumn)
+    $header = New-Text '用户占用' 11 '#F0F3F1'; $header.FontWeight='SemiBold'
+    $mode = New-Text '悬停预览' 8 '#6F7A73'; $mode.HorizontalAlignment='Right'; [Windows.Controls.Grid]::SetColumn($mode,1)
+    [void]$headerGrid.Children.Add($header); [void]$headerGrid.Children.Add($mode)
+    $status = New-Text '用户归属不可用' 8 '#6F7A73'; $status.Margin=[Windows.Thickness]::new(0,3,0,8)
+    $scroll = [Windows.Controls.ScrollViewer]::new(); $scroll.MaxHeight=315; $scroll.VerticalScrollBarVisibility='Auto'; $scroll.HorizontalScrollBarVisibility='Disabled'
+    $rows = [Windows.Controls.StackPanel]::new(); $scroll.Content=$rows
+    $footer = New-Text '' 8 '#59635D'; $footer.Margin=[Windows.Thickness]::new(0,7,0,0); $footer.TextWrapping='Wrap'
+    [void]$layout.Children.Add($headerGrid); [void]$layout.Children.Add($status); [void]$layout.Children.Add($scroll); [void]$layout.Children.Add($footer)
+    $surface.Child = $layout; $popup.Child = $surface
+
+    $timer = [Windows.Threading.DispatcherTimer]::new(); $timer.Interval=[TimeSpan]::FromMilliseconds(180)
+    $manager = [PSCustomObject]@{
+        Popup=$popup; Surface=$surface; Header=$header; Mode=$mode; Status=$status; Rows=$rows; Footer=$footer
+        CloseTimer=$timer; CurrentTarget=$null; IsPinned=$false; Targets=@{}
+    }
+    $timer.Tag = $manager
+    $timer.Add_Tick({ param($sender,$eventArgs); $sender.Stop(); Close-UserUsagePopup $sender.Tag })
+    $surface.Tag = $manager
+    $surface.Add_MouseEnter({ param($sender,$eventArgs); $sender.Tag.CloseTimer.Stop() })
+    $surface.Add_MouseLeave({
+        param($sender,$eventArgs)
+        if (-not $sender.Tag.IsPinned) { $sender.Tag.CloseTimer.Stop(); $sender.Tag.CloseTimer.Start() }
+    })
+    return $manager
+}
+
+function Register-UserUsageWindowEvents {
+    param([Windows.Window]$HostWindow, $Manager)
+
+    $eventState = [PSCustomObject]@{ UserUsageManager=$Manager }
+    $HostWindow.Resources['ServerPulse.UserUsageEventState'] = $eventState
+    $HostWindow.Add_MouseLeftButtonDown({
+        param($sender,$eventArgs)
+        Close-UserUsagePopup $sender.Resources['ServerPulse.UserUsageEventState'].UserUsageManager
+    })
+    $HostWindow.Add_PreviewKeyDown({
+        param($sender,$eventArgs)
+        if ($eventArgs.Key -eq [Windows.Input.Key]::Escape) {
+            Close-UserUsagePopup $sender.Resources['ServerPulse.UserUsageEventState'].UserUsageManager
+            $eventArgs.Handled = $true
+        }
+    })
+    $HostWindow.Add_StateChanged({
+        param($sender,$eventArgs)
+        if ($sender.WindowState -eq [Windows.WindowState]::Minimized) { Close-UserUsagePopup $sender.Resources['ServerPulse.UserUsageEventState'].UserUsageManager }
+    })
+    $HostWindow.Add_IsVisibleChanged({
+        param($sender,$eventArgs)
+        if (-not $sender.IsVisible) { Close-UserUsagePopup $sender.Resources['ServerPulse.UserUsageEventState'].UserUsageManager }
+    })
+}
+
+$script:userUsagePopupManager = New-UserUsagePopupManager
+Register-UserUsageWindowEvents -HostWindow $window -Manager $script:userUsagePopupManager
 
 function Add-ServerCard($server) {
     $surface = [Windows.Controls.Border]::new()
@@ -295,6 +674,8 @@ function Add-ServerCard($server) {
 
     $metricsGrid = [Windows.Controls.Primitives.UniformGrid]::new(); $metricsGrid.Columns = 2
     $cpu = New-MetricCell 'CPU'; $memory = New-MetricCell 'MEM'
+    [void](Register-UserUsageTarget -Target $cpu.Panel -Key ("{0}:cpu" -f [string]$server.id) -Kind cpu -Title ("{0} · CPU" -f [string]$server.label) -ValueElement $cpu.Value -DefaultForeground '#D8DEDA' -Manager $script:userUsagePopupManager)
+    [void](Register-UserUsageTarget -Target $memory.Panel -Key ("{0}:memory" -f [string]$server.id) -Kind memory -Title ("{0} · MEM" -f [string]$server.label) -ValueElement $memory.Value -DefaultForeground '#D8DEDA' -Manager $script:userUsagePopupManager)
     [void]$metricsGrid.Children.Add($cpu.Panel); [void]$metricsGrid.Children.Add($memory.Panel)
     [Windows.Controls.Grid]::SetRow($metricsGrid, 2); [void]$layout.Children.Add($metricsGrid)
 
@@ -308,8 +689,8 @@ function Add-ServerCard($server) {
     $surface.Child = $layout
     [void]$ui.ServerPanel.Children.Add($surface)
     $script:cards[[string]$server.id] = @{
-        Surface=$surface; State=$state; Meta=$meta; Cpu=$cpu; Memory=$memory;
-        GpuSummary=$gpuSummary; GpuWrap=$gpuWrap; Error=$error
+        ServerId=[string]$server.id; Label=[string]$server.label; Surface=$surface; State=$state; Meta=$meta; Cpu=$cpu; Memory=$memory;
+        GpuSummary=$gpuSummary; GpuWrap=$gpuWrap; GpuCards=@{}; Error=$error
     }
 }
 
@@ -340,6 +721,77 @@ function Set-Metric($cell, $value) {
     $cell.Bar.Foreground = if ($cell.Bar.Value -ge 90) { New-Brush '#FF6B6B' } elseif ($cell.Bar.Value -ge 75) { New-Brush '#E4B64B' } else { New-Brush '#A7D948' }
 }
 
+function New-GpuCardControl {
+    param($Card, $Gpu)
+
+    $index = [int]$Gpu.Index
+    $chip = [Windows.Controls.Border]::new()
+    $chip.Width = 164; $chip.Background = New-AlphaBrush '#222724' $script:backgroundOpacity
+    $chip.CornerRadius = [Windows.CornerRadius]::new(6); $chip.Margin = [Windows.Thickness]::new(0,0,7,7); $chip.Padding = [Windows.Thickness]::new(9,7,9,8)
+    $gpuPanel = [Windows.Controls.StackPanel]::new()
+    $gpuHeader = [Windows.Controls.Grid]::new(); [void]$gpuHeader.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
+    $gpuHeaderRight = [Windows.Controls.ColumnDefinition]::new(); $gpuHeaderRight.Width = 'Auto'; [void]$gpuHeader.ColumnDefinitions.Add($gpuHeaderRight)
+    $gpuLabel = New-Text ("GPU {0}" -f $index) 10 '#DCE3DE'; $gpuLabel.FontWeight = 'SemiBold'
+    $gpuTemp = New-Text '—°C' 9 '#8A958E'; $gpuTemp.HorizontalAlignment = 'Right'; [Windows.Controls.Grid]::SetColumn($gpuTemp,1)
+    [void]$gpuHeader.Children.Add($gpuLabel); [void]$gpuHeader.Children.Add($gpuTemp)
+
+    $loadValue = New-Text '—' 19 '#F2F5F3'; $loadValue.FontWeight = 'SemiBold'; $loadValue.Margin = [Windows.Thickness]::new(0,5,0,3)
+    $loadBar = [Windows.Controls.ProgressBar]::new(); $loadBar.Minimum=0; $loadBar.Maximum=100; $loadBar.Height=3; $loadBar.Value=0
+    $loadBar.Background=New-Brush '#343B36'; $loadBar.Foreground=New-Brush '#A7D948'
+
+    $vramEntry = [Windows.Controls.Border]::new(); $vramEntry.Background=[Windows.Media.Brushes]::Transparent; $vramEntry.Padding=[Windows.Thickness]::new(0,4,0,0)
+    $vramPanel = [Windows.Controls.StackPanel]::new()
+    $vramText = New-Text '显存  —' 9 '#B5BDB8'; $vramText.Margin = [Windows.Thickness]::new(0,0,0,3)
+    $vramBar = [Windows.Controls.ProgressBar]::new(); $vramBar.Minimum=0; $vramBar.Maximum=100; $vramBar.Height=3; $vramBar.Value=0
+    $vramBar.Background=New-Brush '#343B36'; $vramBar.Foreground=New-Brush '#79C8D8'
+    [void]$vramPanel.Children.Add($vramText); [void]$vramPanel.Children.Add($vramBar); $vramEntry.Child=$vramPanel
+    [void](Register-UserUsageTarget -Target $vramEntry -Key ("{0}:gpu:{1}:vram" -f $Card.ServerId,$index) -Kind vram -Title ("{0} · GPU {1} VRAM" -f $Card.Label,$index) -ValueElement $vramText -DefaultForeground '#B5BDB8' -Manager $script:userUsagePopupManager)
+
+    [void]$gpuPanel.Children.Add($gpuHeader); [void]$gpuPanel.Children.Add($loadValue); [void]$gpuPanel.Children.Add($loadBar); [void]$gpuPanel.Children.Add($vramEntry)
+    $chip.Child = $gpuPanel
+    [void]$Card.GpuWrap.Children.Add($chip)
+    return @{
+        Chip=$chip; Label=$gpuLabel; Temperature=$gpuTemp; LoadValue=$loadValue; LoadBar=$loadBar
+        VramEntry=$vramEntry; VramText=$vramText; VramBar=$vramBar
+    }
+}
+
+function Update-GpuCardControl {
+    param($Control, $Gpu, $Card)
+
+    $Control.Chip.Visibility = 'Visible'
+    $Control.Label.Text = "GPU $([int]$Gpu.Index)"
+    $temperature = ConvertTo-UserUsageNumber $Gpu.TemperatureC
+    $Control.Temperature.Text = if ($null -eq $temperature) { '—°C' } else { '{0:0}°C' -f $temperature }
+    $Control.LoadValue.Text = Format-Percent $Gpu.Utilization
+    $utilization = ConvertTo-UserUsageNumber $Gpu.Utilization
+    $Control.LoadBar.Value = if ($null -eq $utilization) { 0 } else { [Math]::Max(0,[Math]::Min(100,$utilization)) }
+    $Control.LoadBar.Foreground = if ($Control.LoadBar.Value -ge 90) { New-Brush '#FF6B6B' } elseif ($Control.LoadBar.Value -ge 75) { New-Brush '#E4B64B' } else { New-Brush '#A7D948' }
+
+    $usedMiB = ConvertTo-UserUsageNumber $Gpu.MemoryUsedMiB
+    $totalMiB = ConvertTo-UserUsageNumber $Gpu.MemoryTotalMiB
+    $vramPercent = if ($null -ne $usedMiB -and $null -ne $totalMiB -and $totalMiB -gt 0) { $usedMiB * 100.0 / $totalMiB } else { 0.0 }
+    $Control.VramText.Text = "显存  $((Format-Memory $usedMiB)) / $((Format-Memory $totalMiB))"
+    $Control.VramBar.Value = [Math]::Max(0,[Math]::Min(100,$vramPercent))
+    $userMemory = Get-UserUsageProperty $Gpu @('UserMemory') $null
+    Update-UserUsageTarget -Target $Control.VramEntry -Usage $userMemory -TotalMiB $(if ($null -eq $totalMiB) { 0.0 } else { $totalMiB }) -Title ("{0} · GPU {1} VRAM" -f $Card.Label,[int]$Gpu.Index)
+}
+
+function Hide-InactiveGpuCardControls {
+    param($Card, [hashtable]$ActiveIndexes)
+
+    foreach ($entry in @($Card.GpuCards.GetEnumerator())) {
+        if (-not $ActiveIndexes.ContainsKey([string]$entry.Key)) {
+            $entry.Value.Chip.Visibility = 'Collapsed'
+            Update-UserUsageTarget -Target $entry.Value.VramEntry -Usage $null -TotalMiB 0
+            $current = $script:userUsagePopupManager.CurrentTarget
+            if ($null -ne $current -and $current.Key -eq $entry.Value.VramEntry.Tag.Key) {
+                Close-UserUsagePopup $script:userUsagePopupManager
+            }
+        }
+    }
+}
+
 function Update-ServerCard($server) {
     $card = $script:cards[[string]$server.Id]
     if ($null -eq $card) { return }
@@ -351,8 +803,10 @@ function Update-ServerCard($server) {
     if (-not $online -or $null -eq $server.Metrics) {
         $card.Meta.Text = "SSH  $($server.Host)"
         Set-Metric $card.Cpu $null; Set-Metric $card.Memory $null
+        Update-UserUsageTarget -Target $card.Cpu.Panel -Usage $null -TotalMiB 0
+        Update-UserUsageTarget -Target $card.Memory.Panel -Usage $null -TotalMiB 0
         $card.GpuSummary.Text = 'GPU · 暂无指标'
-        $card.GpuWrap.Children.Clear()
+        Hide-InactiveGpuCardControls -Card $card -ActiveIndexes @{}
         return
     }
 
@@ -361,27 +815,22 @@ function Update-ServerCard($server) {
     Set-Metric $card.Cpu $metrics.Cpu.Utilization
     Set-Metric $card.Memory $metrics.Memory.Percent
     $card.Memory.Value.Text = Format-MemoryUsage $metrics.Memory.Percent $metrics.Memory.UsedMiB $metrics.Memory.TotalMiB
+    Update-UserUsageTarget -Target $card.Cpu.Panel -Usage (Get-UserUsageProperty $metrics.Cpu @('UserUsage') $null) -Title ("{0} · CPU" -f $card.Label)
+    Update-UserUsageTarget -Target $card.Memory.Panel -Usage (Get-UserUsageProperty $metrics.Memory @('UserUsage') $null) -TotalMiB $(if ($null -eq $metrics.Memory.TotalMiB) { 0.0 } else { [double]$metrics.Memory.TotalMiB }) -Title ("{0} · MEM" -f $card.Label)
     $gpus = @($metrics.Gpus)
     $used = ($gpus | Where-Object { $null -ne $_.MemoryUsedMiB } | Measure-Object MemoryUsedMiB -Sum).Sum
     $total = ($gpus | Where-Object { $null -ne $_.MemoryTotalMiB } | Measure-Object MemoryTotalMiB -Sum).Sum
     $card.GpuSummary.Text = "GPU  {0} 块   ·   总显存 {1} / {2}" -f $gpus.Count, (Format-Memory $used), (Format-Memory $total)
-    $card.GpuWrap.Children.Clear()
-    foreach ($gpu in $gpus) {
-        $chip = [Windows.Controls.Border]::new(); $chip.Width = 164; $chip.Background = New-AlphaBrush '#222724' $script:backgroundOpacity; $chip.CornerRadius = [Windows.CornerRadius]::new(6); $chip.Margin = [Windows.Thickness]::new(0,0,7,7); $chip.Padding = [Windows.Thickness]::new(9,7,9,8)
-        $gpuPanel = [Windows.Controls.StackPanel]::new()
-        $gpuHeader = [Windows.Controls.Grid]::new(); [void]$gpuHeader.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new()); $gpuHeaderRight = [Windows.Controls.ColumnDefinition]::new(); $gpuHeaderRight.Width = 'Auto'; [void]$gpuHeader.ColumnDefinitions.Add($gpuHeaderRight)
-        $gpuLabel = New-Text ("GPU {0}" -f [int]$gpu.Index) 10 '#DCE3DE'; $gpuLabel.FontWeight = 'SemiBold'
-        $gpuTemp = New-Text ("{0:0}°C" -f [double]$gpu.TemperatureC) 9 '#8A958E'; $gpuTemp.HorizontalAlignment = 'Right'; [Windows.Controls.Grid]::SetColumn($gpuTemp,1)
-        [void]$gpuHeader.Children.Add($gpuLabel); [void]$gpuHeader.Children.Add($gpuTemp)
-        $loadValue = New-Text (Format-Percent $gpu.Utilization) 19 '#F2F5F3'; $loadValue.FontWeight = 'SemiBold'; $loadValue.Margin = [Windows.Thickness]::new(0,5,0,3)
-        $loadBar = [Windows.Controls.ProgressBar]::new(); $loadBar.Minimum=0; $loadBar.Maximum=100; $loadBar.Height=3; $loadBar.Value=if($null -eq $gpu.Utilization){0}else{[double]$gpu.Utilization}; $loadBar.Background=New-Brush '#343B36'; $loadBar.Foreground=New-Brush '#A7D948'
-        $vramPercent = if ($gpu.MemoryTotalMiB -and [double]$gpu.MemoryTotalMiB -gt 0) { [double]$gpu.MemoryUsedMiB * 100 / [double]$gpu.MemoryTotalMiB } else { 0 }
-        $vramText = New-Text ("显存  {0} / {1}" -f (Format-Memory $gpu.MemoryUsedMiB), (Format-Memory $gpu.MemoryTotalMiB)) 9 '#B5BDB8'; $vramText.Margin = [Windows.Thickness]::new(0,7,0,3)
-        $vramBar = [Windows.Controls.ProgressBar]::new(); $vramBar.Minimum=0; $vramBar.Maximum=100; $vramBar.Height=3; $vramBar.Value=$vramPercent; $vramBar.Background=New-Brush '#343B36'; $vramBar.Foreground=New-Brush '#79C8D8'
-        [void]$gpuPanel.Children.Add($gpuHeader); [void]$gpuPanel.Children.Add($loadValue); [void]$gpuPanel.Children.Add($loadBar); [void]$gpuPanel.Children.Add($vramText); [void]$gpuPanel.Children.Add($vramBar)
-        $chip.Child = $gpuPanel
-        [void]$card.GpuWrap.Children.Add($chip)
+    $activeIndexes = @{}
+    foreach ($gpu in @($gpus | Sort-Object { [int]$_.Index })) {
+        $indexKey = [string][int]$gpu.Index
+        $activeIndexes[$indexKey] = $true
+        if (-not $card.GpuCards.ContainsKey($indexKey)) {
+            $card.GpuCards[$indexKey] = New-GpuCardControl -Card $card -Gpu $gpu
+        }
+        Update-GpuCardControl -Control $card.GpuCards[$indexKey] -Gpu $gpu -Card $card
     }
+    Hide-InactiveGpuCardControls -Card $card -ActiveIndexes $activeIndexes
 }
 
 function Save-Settings {
@@ -442,7 +891,7 @@ function Stop-ManualDrag {
 }
 
 function Hide-ToEdge {
-    if (-not $script:dockSide -or $script:hiddenAtEdge -or $ui.EdgeButton.Tag -ne 'active') { return }
+    if (-not $script:dockSide -or $script:hiddenAtEdge -or $ui.EdgeButton.Tag -ne 'active' -or $script:userUsagePopupManager.Popup.IsOpen) { return }
     $work = Get-WorkArea
     $script:shownLeft = $window.Left; $script:shownTop = $window.Top
     $script:internalMove = $true
@@ -468,8 +917,10 @@ $hideTimer.Add_Tick({ $hideTimer.Stop(); Hide-ToEdge })
 $dockDetectTimer = [Windows.Threading.DispatcherTimer]::new(); $dockDetectTimer.Interval = [TimeSpan]::FromMilliseconds(160)
 $dockDetectTimer.Add_Tick({ $dockDetectTimer.Stop(); Schedule-EdgeHide })
 function Schedule-EdgeHide {
-    if ($script:internalMove -or $script:hiddenAtEdge) { return }
-    $work = Get-WorkArea
+    param($WorkArea = $null)
+
+    if ($script:internalMove -or $script:hiddenAtEdge -or $script:userUsagePopupManager.Popup.IsOpen) { return }
+    $work = if ($null -ne $WorkArea) { $WorkArea } else { Get-WorkArea }
     $script:dockSide = $null
     $targetLeft = $window.Left; $targetTop = $window.Top
     if ($window.Left -le $work.Left + 28) { $script:dockSide = 'left'; $targetLeft = $work.Left }
@@ -553,6 +1004,10 @@ function Complete-SmokeTest {
         [void]$window.Dispatcher.BeginInvoke([Action]{ $probeFrame.Continue=$false }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::ApplicationIdle)
         [Windows.Threading.Dispatcher]::PushFrame($probeFrame)
         if (-not $script:dispatcherProbeHandled) { throw '未处理的 UI 事件异常未被安全拦截' }
+        # The pointer may have opened a hover preview while the smoke screenshot was rendered.
+        # Close it so the edge-docking probe tests docking itself, not the intentional popup pause.
+        Close-UserUsagePopup $script:userUsagePopupManager
+        $hideTimer.Stop(); $dockDetectTimer.Stop(); Show-FromEdge
         $dragLeft = $window.Left; $dragTop = $window.Top
         $script:isDragging = $true; $script:dragStartCursor = [PSCustomObject]@{X=100;Y=100}; $script:dragStartLeft=$dragLeft; $script:dragStartTop=$dragTop; $script:dragScaleX=1.0; $script:dragScaleY=1.0
         Update-ManualDragPosition ([PSCustomObject]@{X=132;Y=118})
@@ -565,7 +1020,7 @@ function Complete-SmokeTest {
         $script:dragStartCursor = [PSCustomObject]@{X=($window.Left + 110) * $work.ScaleX;Y=($window.Top + 16) * $work.ScaleY}
         $script:dragStartLeft = $window.Left; $script:dragStartTop = $window.Top; $script:dragScaleX=$work.ScaleX; $script:dragScaleY=$work.ScaleY
         Update-ManualDragPosition ([PSCustomObject]@{X=$work.Left * $work.ScaleX;Y=$script:dragStartCursor.Y})
-        $script:isDragging = $false; Schedule-EdgeHide
+        $script:isDragging = $false; Schedule-EdgeHide -WorkArea $work
         if ($script:dockSide -ne 'left' -or -not $hideTimer.IsEnabled) { throw "左侧越界贴边检测失败（Left=$($window.Left)）" }
         $hideTimer.Stop(); Hide-ToEdge
         if (-not $script:hiddenAtEdge) { throw '左侧贴边隐藏验证失败' }
@@ -576,7 +1031,7 @@ function Complete-SmokeTest {
         $script:dragStartCursor = [PSCustomObject]@{X=($window.Left + 110) * $work.ScaleX;Y=($window.Top + 16) * $work.ScaleY}
         $script:dragStartLeft = $window.Left; $script:dragStartTop = $window.Top; $script:dragScaleX=$work.ScaleX; $script:dragScaleY=$work.ScaleY
         Update-ManualDragPosition ([PSCustomObject]@{X=($work.Left + $work.Width) * $work.ScaleX;Y=$script:dragStartCursor.Y})
-        $script:isDragging = $false; Schedule-EdgeHide
+        $script:isDragging = $false; Schedule-EdgeHide -WorkArea $work
         if ($script:dockSide -ne 'right' -or -not $hideTimer.IsEnabled) { throw "右侧越界贴边检测失败（Right=$($window.Left + $window.ActualWidth)）" }
         $hideTimer.Stop(); Hide-ToEdge
         if (-not $script:hiddenAtEdge) { throw '右侧贴边隐藏验证失败' }
@@ -664,7 +1119,7 @@ $window.Add_LocationChanged({
         $hideTimer.Stop(); $dockDetectTimer.Stop(); $dockDetectTimer.Start()
     }
 })
-$window.Add_MouseLeave({ if ($script:dockSide -and -not $script:hiddenAtEdge -and $ui.EdgeButton.Tag -eq 'active') { $hideTimer.Start() } })
+$window.Add_MouseLeave({ if ($script:dockSide -and -not $script:hiddenAtEdge -and $ui.EdgeButton.Tag -eq 'active' -and -not $script:userUsagePopupManager.Popup.IsOpen) { $hideTimer.Start() } })
 $ui.OpacitySlider.Add_ValueChanged({ Set-BackgroundOpacity ($ui.OpacitySlider.Value / 100) })
 $ui.RefreshIntervalBox.Add_PreviewTextInput({ param($sender,$event); if ($event.Text -notmatch '^\d+$') { $event.Handled = $true } })
 $ui.RefreshIntervalBox.Add_PreviewKeyDown({
@@ -685,8 +1140,8 @@ $ui.EdgeButton.Add_Click({
     else { $ui.EdgeButton.Tag = 'active'; Schedule-EdgeHide }
 })
 $ui.PinButton.Add_Click({ $window.Topmost = -not $window.Topmost; $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null } })
-$ui.MinimizeButton.Add_Click({ $window.WindowState = 'Minimized' })
-$ui.CloseButton.Add_Click({ $window.Close() })
+$ui.MinimizeButton.Add_Click({ Close-UserUsagePopup $script:userUsagePopupManager; $window.WindowState = 'Minimized' })
+$ui.CloseButton.Add_Click({ Close-UserUsagePopup $script:userUsagePopupManager; $window.Close() })
 
 $window.Add_Loaded({
     if ($null -ne $settings.Left -and $null -ne $settings.Top) {
@@ -695,6 +1150,7 @@ $window.Add_Loaded({
     $cursorTimer.Start(); $pollTimer.Start(); Start-Collection
 })
 $window.Add_Closing({
+    Close-UserUsagePopup $script:userUsagePopupManager
     $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
     if ($script:collectionProcess -and -not $script:collectionProcess.HasExited) { $script:collectionProcess.Kill() }
     if (-not $SmokeTest) { try { [void](Flush-ServerPulseHistoryRecorder $script:historyRecorder) } catch { } }

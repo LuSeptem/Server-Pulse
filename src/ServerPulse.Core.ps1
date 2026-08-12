@@ -67,6 +67,10 @@ function ConvertFrom-ServerMetricsOutput {
 
     $values = @{}
     $gpuLines = [Collections.Generic.List[string]]::new()
+    $cpuUserLines = [Collections.Generic.List[string]]::new()
+    $memoryUserLines = [Collections.Generic.List[string]]::new()
+    $gpuUserLines = [Collections.Generic.List[string]]::new()
+    $gpuUnmappedLines = [Collections.Generic.List[string]]::new()
     $readingGpus = $false
 
     foreach ($rawLine in ($Output -split "`r?`n")) {
@@ -85,7 +89,15 @@ function ConvertFrom-ServerMetricsOutput {
         }
         $separator = $line.IndexOf('=')
         if ($separator -gt 0) {
-            $values[$line.Substring(0, $separator)] = $line.Substring($separator + 1)
+            $key = $line.Substring(0, $separator)
+            $value = $line.Substring($separator + 1)
+            switch ($key) {
+                'CPU_USER' { $cpuUserLines.Add($value); continue }
+                'MEMORY_USER' { $memoryUserLines.Add($value); continue }
+                'GPU_USER' { $gpuUserLines.Add($value); continue }
+                'GPU_UNMAPPED' { $gpuUnmappedLines.Add($value); continue }
+                default { $values[$key] = $value }
+            }
         }
     }
 
@@ -94,32 +106,135 @@ function ConvertFrom-ServerMetricsOutput {
         throw '远程指标输出不完整'
     }
 
+    $protocolVersion = ConvertTo-MetricNumber $values['PROTOCOL_VERSION']
+    $memoryUsedKiB = ConvertTo-MetricNumber $values['MEM_USED_KIB']
+    $memoryTotalKiB = ConvertTo-MetricNumber $values['MEM_TOTAL_KIB']
+    $cpuUserStatus = if ($protocolVersion -ge 2 -and $values['CPU_USER_STATUS'] -in @('ok', 'partial', 'unavailable')) {
+        $values['CPU_USER_STATUS']
+    } else { 'unavailable' }
+    $memoryUserStatus = if ($protocolVersion -ge 2 -and $values['MEMORY_USER_STATUS'] -in @('ok', 'partial', 'unavailable')) {
+        $values['MEMORY_USER_STATUS']
+    } else { 'unavailable' }
+    $gpuUserStatus = if ($protocolVersion -ge 2 -and $values['GPU_USER_STATUS'] -in @('ok', 'partial', 'unavailable')) {
+        $values['GPU_USER_STATUS']
+    } else { 'unavailable' }
+
+    $cpuUsers = foreach ($line in $cpuUserLines) {
+        $fields = @($line -split "`t", 3)
+        if ($fields.Count -ne 3) { continue }
+        $percent = ConvertTo-MetricNumber $fields[2]
+        if ($null -eq $percent) { continue }
+        [PSCustomObject]@{
+            Uid     = $fields[0]
+            Name    = if ($fields[1]) { $fields[1] } else { "UID $($fields[0])" }
+            Percent = [Math]::Min(100.0, [Math]::Max(0.0, $percent))
+        }
+    }
+    $memoryUsers = foreach ($line in $memoryUserLines) {
+        $fields = @($line -split "`t", 3)
+        if ($fields.Count -ne 3) { continue }
+        $usedMiB = ConvertTo-MetricNumber $fields[2]
+        if ($null -eq $usedMiB) { continue }
+        [PSCustomObject]@{
+            Uid     = $fields[0]
+            Name    = if ($fields[1]) { $fields[1] } else { "UID $($fields[0])" }
+            UsedMiB = [Math]::Max(0.0, $usedMiB)
+            Percent = if ($null -eq $memoryTotalKiB -or $memoryTotalKiB -le 0) { $null } else { [Math]::Max(0.0, $usedMiB * 1024 * 100 / $memoryTotalKiB) }
+        }
+    }
+
+    $gpuUsersByUuid = @{}
+    foreach ($line in $gpuUserLines) {
+        $fields = @($line -split "`t", 4)
+        if ($fields.Count -ne 4) { continue }
+        $usedMiB = ConvertTo-MetricNumber $fields[3]
+        if ($null -eq $usedMiB) { continue }
+        if (-not $gpuUsersByUuid.ContainsKey($fields[0])) {
+            $gpuUsersByUuid[$fields[0]] = [Collections.Generic.List[object]]::new()
+        }
+        $gpuUsersByUuid[$fields[0]].Add([PSCustomObject]@{
+            Uid     = $fields[1]
+            Name    = if ($fields[2]) { $fields[2] } else { "UID $($fields[1])" }
+            UsedMiB = [Math]::Max(0.0, $usedMiB)
+        })
+    }
+    $gpuUnmappedByUuid = @{}
+    foreach ($line in $gpuUnmappedLines) {
+        $fields = @($line -split "`t", 2)
+        if ($fields.Count -ne 2) { continue }
+        $count = ConvertTo-MetricNumber $fields[1]
+        if ($null -ne $count) { $gpuUnmappedByUuid[$fields[0]] = [int]$count }
+    }
+
     $gpus = foreach ($line in $gpuLines) {
         $fields = @(Split-MetricCsvLine $line)
         if ($fields.Count -lt 10) { continue }
+        $uuid = if ($fields[2]) { $fields[2] } else { $null }
+        $memoryUsedMiB = ConvertTo-MetricNumber $fields[4]
+        $memoryTotalMiB = ConvertTo-MetricNumber $fields[5]
+        $gpuUsers = if ($null -ne $uuid -and $gpuUsersByUuid.ContainsKey($uuid)) { @($gpuUsersByUuid[$uuid]) } else { @() }
+        $gpuAttributedMiB = 0.0
+        foreach ($gpuUser in $gpuUsers) { $gpuAttributedMiB += [double]$gpuUser.UsedMiB }
+        $gpuAttributedMiB = [Math]::Round($gpuAttributedMiB, 3)
+        $gpuUnattributedMiB = if ($null -eq $memoryUsedMiB) { $null } else { [Math]::Round([Math]::Max(0.0, $memoryUsedMiB - $gpuAttributedMiB), 3) }
+        foreach ($gpuUser in $gpuUsers) {
+            $gpuUser | Add-Member -NotePropertyName Percent -NotePropertyValue $(if ($null -eq $memoryTotalMiB -or $memoryTotalMiB -le 0) { $null } else { $gpuUser.UsedMiB * 100 / $memoryTotalMiB })
+        }
         [PSCustomObject]@{
             Index          = ConvertTo-MetricNumber $fields[0]
             Name           = if ($fields[1]) { $fields[1] } else { 'NVIDIA GPU' }
-            Uuid           = if ($fields[2]) { $fields[2] } else { $null }
+            Uuid           = $uuid
             Utilization    = ConvertTo-MetricNumber $fields[3]
-            MemoryUsedMiB  = ConvertTo-MetricNumber $fields[4]
-            MemoryTotalMiB = ConvertTo-MetricNumber $fields[5]
+            MemoryUsedMiB  = $memoryUsedMiB
+            MemoryTotalMiB = $memoryTotalMiB
             TemperatureC   = ConvertTo-MetricNumber $fields[6]
             PowerDrawW     = ConvertTo-MetricNumber $fields[7]
             PowerLimitW    = ConvertTo-MetricNumber $fields[8]
             FanPercent     = ConvertTo-MetricNumber $fields[9]
+            UserMemory     = [PSCustomObject]@{
+                Status            = $gpuUserStatus
+                Users             = @($gpuUsers)
+                UnattributedMiB   = $gpuUnattributedMiB
+                AttributedMiB     = $gpuAttributedMiB
+                UnmappedProcesses = if ($null -ne $uuid -and $gpuUnmappedByUuid.ContainsKey($uuid)) { $gpuUnmappedByUuid[$uuid] } else { 0 }
+            }
         }
     }
 
-    $memoryUsedKiB = ConvertTo-MetricNumber $values['MEM_USED_KIB']
-    $memoryTotalKiB = ConvertTo-MetricNumber $values['MEM_TOTAL_KIB']
+    $cpuAttributedPercent = 0.0
+    foreach ($cpuUser in @($cpuUsers)) { $cpuAttributedPercent += [double]$cpuUser.Percent }
+    $cpuAttributedPercent = [Math]::Round($cpuAttributedPercent, 3)
+    $memoryAttributedMiB = 0.0
+    foreach ($memoryUser in @($memoryUsers)) { $memoryAttributedMiB += [double]$memoryUser.UsedMiB }
+    $memoryAttributedMiB = [Math]::Round($memoryAttributedMiB, 3)
+    $memoryUsedMiB = if ($null -eq $memoryUsedKiB) { $null } else { $memoryUsedKiB / 1024 }
     [PSCustomObject]@{
         Hostname      = $values['HOSTNAME']
-        Cpu           = [PSCustomObject]@{ Utilization = $cpu }
+        ProtocolVersion = if ($null -eq $protocolVersion) { 1 } else { [int]$protocolVersion }
+        Cpu           = [PSCustomObject]@{
+            Utilization = $cpu
+            Percent     = $cpu
+            UserUsage   = [PSCustomObject]@{
+                Status              = $cpuUserStatus
+                Users               = @($cpuUsers)
+                UnattributedPercent = [Math]::Round([Math]::Max(0.0, $cpu - $cpuAttributedPercent), 3)
+                OverlapPercent      = [Math]::Round([Math]::Max(0.0, $cpuAttributedPercent - $cpu), 3)
+                AttributedPercent   = $cpuAttributedPercent
+                SkippedProcesses    = if ($null -eq (ConvertTo-MetricNumber $values['CPU_USER_SKIPPED'])) { 0 } else { [int](ConvertTo-MetricNumber $values['CPU_USER_SKIPPED']) }
+            }
+        }
         Memory        = [PSCustomObject]@{
-            UsedMiB  = if ($null -eq $memoryUsedKiB) { $null } else { $memoryUsedKiB / 1024 }
+            UsedMiB  = $memoryUsedMiB
             TotalMiB = if ($null -eq $memoryTotalKiB) { $null } else { $memoryTotalKiB / 1024 }
             Percent  = ConvertTo-MetricNumber $values['MEM_PERCENT']
+            UserUsage = [PSCustomObject]@{
+                Status           = $memoryUserStatus
+                Users            = @($memoryUsers)
+                UnattributedMiB  = if ($null -eq $memoryUsedMiB) { $null } else { [Math]::Round([Math]::Max(0.0, $memoryUsedMiB - $memoryAttributedMiB), 3) }
+                OverlapMiB       = if ($null -eq $memoryUsedMiB) { 0.0 } else { [Math]::Round([Math]::Max(0.0, $memoryAttributedMiB - $memoryUsedMiB), 3) }
+                AttributedMiB    = $memoryAttributedMiB
+                SkippedProcesses = if ($null -eq (ConvertTo-MetricNumber $values['MEMORY_USER_SKIPPED'])) { 0 } else { [int](ConvertTo-MetricNumber $values['MEMORY_USER_SKIPPED']) }
+            }
         }
         Load          = [PSCustomObject]@{
             One     = ConvertTo-MetricNumber $values['LOAD_1']

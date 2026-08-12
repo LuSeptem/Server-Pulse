@@ -38,6 +38,79 @@ function Get-HistoryLastValue {
     return $null
 }
 
+function Get-HistoryUserUsageState {
+    param(
+        $InputObject,
+        [string[]]$Path,
+        [ValidateSet('Cpu','Memory','GpuMemory')][string]$Kind
+    )
+
+    $source = Get-HistoryObjectValue $InputObject $Path
+    $status = if ($null -eq $source) { 'unavailable' } else { [string](Get-HistoryObjectValue $source @('Status')) }
+    if ($status -notin @('ok','partial')) { return [PSCustomObject]@{Status='unavailable';Users=@();System=$null;Overlap=$null;Attributed=$null;Skipped=$null;Weight=0} }
+    $users = foreach ($user in @(Get-HistoryObjectValue $source @('Users'))) {
+        if ($null -eq $user) { continue }
+        $name = [string](Get-HistoryObjectValue $user @('Name')); if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $uid = [string](Get-HistoryObjectValue $user @('Uid'))
+        $value = switch ($Kind) {
+            'Cpu' { Get-HistoryObjectValue $user @('Percent') }
+            default { Get-HistoryObjectValue $user @('UsedMiB') }
+        }
+        if ($null -eq $value) { continue }
+        $percent=Get-HistoryObjectValue $user @('Percent')
+        [PSCustomObject]@{Uid=$uid;Name=$name;Value=[double]$value;Percent=if($null -eq $percent){$null}else{[double]$percent}}
+    }
+    $system = switch ($Kind) {
+        'Cpu' { Get-HistoryObjectValue $source @('UnattributedPercent') }
+        default { Get-HistoryObjectValue $source @('UnattributedMiB') }
+    }
+    $overlap=if($Kind -eq 'Cpu'){Get-HistoryObjectValue $source @('OverlapPercent')}elseif($Kind -eq 'Memory'){Get-HistoryObjectValue $source @('OverlapMiB')}else{$null}
+    $attributed=if($Kind -eq 'Cpu'){Get-HistoryObjectValue $source @('AttributedPercent')}else{Get-HistoryObjectValue $source @('AttributedMiB')}
+    $skipped=if($Kind -eq 'GpuMemory'){Get-HistoryObjectValue $source @('UnmappedProcesses')}else{Get-HistoryObjectValue $source @('SkippedProcesses')}
+    return [PSCustomObject]@{Status=$status;Users=@($users);System=$system;Overlap=$overlap;Attributed=$attributed;Skipped=$skipped;Weight=1}
+}
+
+function Merge-HistoryUserUsageSamples {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Samples,
+        [ValidateSet('Cpu','Memory','GpuMemory')][string]$Kind
+    )
+
+    $valid = @($Samples | Where-Object { $_.Status -in @('ok','partial') })
+    if ($valid.Count -eq 0) { return [PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@()} }
+    $identities = @{}
+    foreach ($sample in $valid) {
+        foreach ($user in @($sample.Users)) {
+            $key = if (-not [string]::IsNullOrWhiteSpace([string]$user.Uid)) { "uid:$($user.Uid)" } else { "name:$($user.Name)" }
+            if (-not $identities.ContainsKey($key)) { $identities[$key]=[PSCustomObject]@{Key=$key;Uid=[string]$user.Uid;Name=[string]$user.Name} }
+        }
+    }
+    $users = foreach ($identity in $identities.Values) {
+        $sum=0.0;$percentSum=0.0;$hasPercent=$false
+        foreach ($sample in $valid) {
+            $match=@($sample.Users | Where-Object {
+                if ($identity.Uid) { [string]$_.Uid -eq $identity.Uid } else { [string]::IsNullOrWhiteSpace([string]$_.Uid) -and [string]$_.Name -eq $identity.Name }
+            } | Select-Object -First 1)
+            if ($match.Count -gt 0) { $sum += [double]$match[0].Value;if($null -ne $match[0].Percent){$percentSum += [double]$match[0].Percent;$hasPercent=$true} }
+        }
+        $average=[Math]::Round($sum/$valid.Count,2)
+        if ($Kind -eq 'Cpu') { [PSCustomObject]@{Uid=$identity.Uid;Name=$identity.Name;Percent=$average} }
+        else { [PSCustomObject]@{Uid=$identity.Uid;Name=$identity.Name;UsedMiB=$average;Percent=if($hasPercent){[Math]::Round($percentSum/$valid.Count,2)}else{$null}} }
+    }
+    $systemValues=@($valid | Where-Object { $null -ne $_.System } | ForEach-Object { [double]$_.System })
+    $status=if(@($valid | Where-Object {$_.Status -eq 'partial'}).Count -gt 0){'partial'}else{'ok'}
+    $result=[ordered]@{Status=$status;ValidSamples=$valid.Count;Users=@($users | Sort-Object @{Expression={if($Kind -eq 'Cpu'){$_.Percent}else{$_.UsedMiB}};Descending=$true},Name)}
+    if ($systemValues.Count -gt 0) {
+        if ($Kind -eq 'Cpu') { $result.UnattributedPercent=[Math]::Round(($systemValues|Measure-Object -Average).Average,2) }
+        else { $result.UnattributedMiB=[Math]::Round(($systemValues|Measure-Object -Average).Average,2) }
+    }
+    $overlapValues=@($valid|Where-Object{$null -ne $_.Overlap}|ForEach-Object{[double]$_.Overlap});$attributedValues=@($valid|Where-Object{$null -ne $_.Attributed}|ForEach-Object{[double]$_.Attributed});$skippedValues=@($valid|Where-Object{$null -ne $_.Skipped}|ForEach-Object{[double]$_.Skipped})
+    if($overlapValues.Count){if($Kind -eq 'Cpu'){$result.OverlapPercent=[Math]::Round(($overlapValues|Measure-Object -Average).Average,2)}else{$result.OverlapMiB=[Math]::Round(($overlapValues|Measure-Object -Average).Average,2)}}
+    if($attributedValues.Count){if($Kind -eq 'Cpu'){$result.AttributedPercent=[Math]::Round(($attributedValues|Measure-Object -Average).Average,2)}else{$result.AttributedMiB=[Math]::Round(($attributedValues|Measure-Object -Average).Average,2)}}
+    if($skippedValues.Count){if($Kind -eq 'GpuMemory'){$result.UnmappedProcesses=[Math]::Round(($skippedValues|Measure-Object -Average).Average,2)}else{$result.SkippedProcesses=[Math]::Round(($skippedValues|Measure-Object -Average).Average,2)}}
+    return [PSCustomObject]$result
+}
+
 function ConvertTo-HistoryMinuteRecord {
     param(
         [Parameter(Mandatory)][object[]]$Snapshots,
@@ -53,8 +126,11 @@ function ConvertTo-HistoryMinuteRecord {
         $gpus = foreach ($gpuGroup in ($gpuSamples | Group-Object { [int]$_.Index })) {
             $items = @($gpuGroup.Group)
             $last = $items[-1]
+            $gpuUserSamples=@($items | ForEach-Object { Get-HistoryUserUsageState $_ @('UserMemory') 'GpuMemory' })
+            $gpuUserUsage=Merge-HistoryUserUsageSamples -Samples $gpuUserSamples -Kind 'GpuMemory'
             [PSCustomObject]@{
                 Index          = [int]$last.Index
+                ValidSamples   = $items.Count
                 Name           = [string]$last.Name
                 Uuid           = [string]$last.Uuid
                 Utilization    = Get-HistoryAverage $items @('Utilization')
@@ -64,8 +140,11 @@ function ConvertTo-HistoryMinuteRecord {
                 PowerDrawW     = Get-HistoryAverage $items @('PowerDrawW')
                 PowerLimitW    = Get-HistoryAverage $items @('PowerLimitW')
                 FanPercent     = Get-HistoryAverage $items @('FanPercent')
+                UserMemory     = $gpuUserUsage
             }
         }
+        $cpuUserSamples=@($onlineSamples | ForEach-Object { Get-HistoryUserUsageState $_ @('Metrics','Cpu','UserUsage') 'Cpu' })
+        $memoryUserSamples=@($onlineSamples | ForEach-Object { Get-HistoryUserUsageState $_ @('Metrics','Memory','UserUsage') 'Memory' })
         [PSCustomObject]@{
             Id            = [string]$latest.Id
             Label         = [string]$latest.Label
@@ -75,9 +154,11 @@ function ConvertTo-HistoryMinuteRecord {
             LatencyMs     = Get-HistoryAverage $onlineSamples @('LatencyMs')
             Hostname      = [string](Get-HistoryLastValue $onlineSamples @('Metrics','Hostname'))
             CpuPercent    = Get-HistoryAverage $onlineSamples @('Metrics','Cpu','Utilization')
+            CpuUserUsage  = Merge-HistoryUserUsageSamples -Samples $cpuUserSamples -Kind 'Cpu'
             MemoryUsedMiB = Get-HistoryAverage $onlineSamples @('Metrics','Memory','UsedMiB')
             MemoryTotalMiB= Get-HistoryAverage $onlineSamples @('Metrics','Memory','TotalMiB')
             MemoryPercent = Get-HistoryAverage $onlineSamples @('Metrics','Memory','Percent')
+            MemoryUserUsage= Merge-HistoryUserUsageSamples -Samples $memoryUserSamples -Kind 'Memory'
             LoadOne       = Get-HistoryAverage $onlineSamples @('Metrics','Load','One')
             LoadFive      = Get-HistoryAverage $onlineSamples @('Metrics','Load','Five')
             LoadFifteen   = Get-HistoryAverage $onlineSamples @('Metrics','Load','Fifteen')
@@ -103,7 +184,87 @@ function New-ServerPulseHistoryRecorder {
         RetentionDays = [Math]::Max(1, $RetentionDays)
         Minute        = $null
         Snapshots     = [Collections.Generic.List[object]]::new()
+        ReadErrors    = [Collections.Generic.List[string]]::new()
     }
+}
+
+function Write-HistoryReadError {
+    param([Parameter(Mandatory)]$Recorder,[Parameter(Mandatory)][string]$Message)
+    if ($Recorder.PSObject.Properties.Name -contains 'ReadErrors') { $Recorder.ReadErrors.Add($Message) }
+    $logger=Get-Command Write-ServerPulseErrorLog -ErrorAction SilentlyContinue
+    if ($null -ne $logger) {
+        try { [void](Write-ServerPulseErrorLog -Exception ([IO.InvalidDataException]::new($Message)) -Context 'History JSONL read') } catch { }
+    }
+}
+
+function Get-HistoryStoredUsageState {
+    param($Source,[ValidateSet('Cpu','Memory','GpuMemory')][string]$Kind)
+    if ($null -eq $Source) { return [PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@();System=0.0;Overlap=0.0;Attributed=0.0;Skipped=0.0} }
+    $status=[string](Get-HistoryObjectValue $Source @('Status'))
+    if ($status -notin @('ok','partial')) { return [PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@();System=0.0;Overlap=0.0;Attributed=0.0;Skipped=0.0} }
+    $validSamples=Get-HistoryObjectValue $Source @('ValidSamples'); if($null -eq $validSamples){$validSamples=1}
+    $users=foreach($user in @(Get-HistoryObjectValue $Source @('Users'))){
+        $name=[string](Get-HistoryObjectValue $user @('Name'));if([string]::IsNullOrWhiteSpace($name)){continue}
+        $value=if($Kind -eq 'Cpu'){Get-HistoryObjectValue $user @('Percent')}else{Get-HistoryObjectValue $user @('UsedMiB')}
+        if($null -eq $value){continue}
+        $percent=Get-HistoryObjectValue $user @('Percent')
+        [PSCustomObject]@{Uid=[string](Get-HistoryObjectValue $user @('Uid'));Name=$name;Value=[double]$value;Percent=if($null -eq $percent){$null}else{[double]$percent}}
+    }
+    $system=if($Kind -eq 'Cpu'){Get-HistoryObjectValue $Source @('UnattributedPercent')}else{Get-HistoryObjectValue $Source @('UnattributedMiB')}
+    if($null -eq $system){$system=0.0}
+    $overlap=if($Kind -eq 'Cpu'){Get-HistoryObjectValue $Source @('OverlapPercent')}elseif($Kind -eq 'Memory'){Get-HistoryObjectValue $Source @('OverlapMiB')}else{0.0};if($null -eq $overlap){$overlap=0.0}
+    $attributed=if($Kind -eq 'Cpu'){Get-HistoryObjectValue $Source @('AttributedPercent')}else{Get-HistoryObjectValue $Source @('AttributedMiB')};if($null -eq $attributed){$attributed=0.0}
+    $skipped=if($Kind -eq 'GpuMemory'){Get-HistoryObjectValue $Source @('UnmappedProcesses')}else{Get-HistoryObjectValue $Source @('SkippedProcesses')};if($null -eq $skipped){$skipped=0.0}
+    return [PSCustomObject]@{Status=$status;ValidSamples=[int]$validSamples;Users=@($users);System=[double]$system;Overlap=[double]$overlap;Attributed=[double]$attributed;Skipped=[double]$skipped}
+}
+
+function Merge-HistoryStoredUserUsage {
+    param([object[]]$Usages,[ValidateSet('Cpu','Memory','GpuMemory')][string]$Kind)
+    $states=@($Usages|ForEach-Object{Get-HistoryStoredUsageState $_ $Kind}|Where-Object{$_.ValidSamples -gt 0})
+    $total=($states|Measure-Object ValidSamples -Sum).Sum
+    if($null -eq $total -or $total -le 0){return [PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@()}}
+    $identities=@{}
+    foreach($state in $states){foreach($user in $state.Users){$key=if($user.Uid){"uid:$($user.Uid)"}else{"name:$($user.Name)"};if(-not $identities.ContainsKey($key)){$identities[$key]=[PSCustomObject]@{Uid=$user.Uid;Name=$user.Name}}}}
+    $users=foreach($identity in $identities.Values){
+        $sum=0.0;$percentSum=0.0;$hasPercent=$false
+        foreach($state in $states){$match=@($state.Users|Where-Object{if($identity.Uid){$_.Uid -eq $identity.Uid}else{-not $_.Uid -and $_.Name -eq $identity.Name}}|Select-Object -First 1);if($match.Count){$sum += [double]$match[0].Value*$state.ValidSamples;if($null -ne $match[0].Percent){$percentSum += [double]$match[0].Percent*$state.ValidSamples;$hasPercent=$true}}}
+        $average=[Math]::Round($sum/$total,2)
+        if($Kind -eq 'Cpu'){[PSCustomObject]@{Uid=$identity.Uid;Name=$identity.Name;Percent=$average}}else{[PSCustomObject]@{Uid=$identity.Uid;Name=$identity.Name;UsedMiB=$average;Percent=if($hasPercent){[Math]::Round($percentSum/$total,2)}else{$null}}}
+    }
+    $system=0.0;$overlap=0.0;$attributed=0.0;$skipped=0.0;foreach($state in $states){$system += $state.System*$state.ValidSamples;$overlap += $state.Overlap*$state.ValidSamples;$attributed += $state.Attributed*$state.ValidSamples;$skipped += $state.Skipped*$state.ValidSamples};$system=[Math]::Round($system/$total,2);$overlap=[Math]::Round($overlap/$total,2);$attributed=[Math]::Round($attributed/$total,2);$skipped=[Math]::Round($skipped/$total,2)
+    $result=[ordered]@{Status=if(@($states|Where-Object{$_.Status -eq 'partial'}).Count){'partial'}else{'ok'};ValidSamples=[int]$total;Users=@($users)}
+    if($Kind -eq 'Cpu'){$result.UnattributedPercent=$system}else{$result.UnattributedMiB=$system}
+    if($Kind -eq 'Cpu'){$result.OverlapPercent=$overlap;$result.AttributedPercent=$attributed;$result.SkippedProcesses=$skipped}elseif($Kind -eq 'Memory'){$result.OverlapMiB=$overlap;$result.AttributedMiB=$attributed;$result.SkippedProcesses=$skipped}else{$result.AttributedMiB=$attributed;$result.UnmappedProcesses=$skipped}
+    return [PSCustomObject]$result
+}
+
+function Get-HistoryWeightedAverage {
+    param([object[]]$Rows,[string[]]$Path,[string]$WeightProperty='OnlineSamples')
+    $sum=0.0;$weightSum=0.0
+    foreach($row in $Rows){$value=Get-HistoryObjectValue $row $Path;if($null -eq $value){continue};$weight=Get-HistoryObjectValue $row @($WeightProperty);if($null -eq $weight -or [double]$weight -le 0){$weight=1};$sum += [double]$value*[double]$weight;$weightSum += [double]$weight}
+    if($weightSum -le 0){return $null};return [Math]::Round($sum/$weightSum,2)
+}
+
+function Get-HistoryNumberSum {
+    param([object[]]$Rows,[string]$Property,[double]$Default=0)
+    $sum=0.0
+    foreach($row in $Rows){$value=Get-HistoryObjectValue $row @($Property);if($null -eq $value){$sum += $Default}else{$sum += [double]$value}}
+    return $sum
+}
+
+function Merge-HistoryMinuteRecords {
+    param([Parameter(Mandatory)][object[]]$Records)
+    if($Records.Count -eq 1){$Records[0].Timestamp=(ConvertTo-HistoryRecordTime $Records[0]).ToString('yyyy-MM-ddTHH:mm:ss');return $Records[0]}
+    $servers=foreach($serverGroup in (@($Records|ForEach-Object{@($_.Servers)})|Group-Object{[string]$_.Id})){
+        $rows=@($serverGroup.Group);$last=$rows[-1]
+        $gpuRows=@($rows|ForEach-Object{@($_.Gpus)})
+        $gpus=foreach($gpuGroup in ($gpuRows|Group-Object{[int]$_.Index})){
+            $items=@($gpuGroup.Group);$gpuLast=$items[-1]
+            [PSCustomObject]@{Index=[int]$gpuLast.Index;ValidSamples=[int](Get-HistoryNumberSum $items 'ValidSamples' 1);Name=[string]$gpuLast.Name;Uuid=[string]$gpuLast.Uuid;Utilization=Get-HistoryWeightedAverage $items @('Utilization') 'ValidSamples';MemoryUsedMiB=Get-HistoryWeightedAverage $items @('MemoryUsedMiB') 'ValidSamples';MemoryTotalMiB=Get-HistoryWeightedAverage $items @('MemoryTotalMiB') 'ValidSamples';TemperatureC=Get-HistoryWeightedAverage $items @('TemperatureC') 'ValidSamples';PowerDrawW=Get-HistoryWeightedAverage $items @('PowerDrawW') 'ValidSamples';PowerLimitW=Get-HistoryWeightedAverage $items @('PowerLimitW') 'ValidSamples';FanPercent=Get-HistoryWeightedAverage $items @('FanPercent') 'ValidSamples';UserMemory=Merge-HistoryStoredUserUsage @($items|ForEach-Object{Get-HistoryObjectValue $_ @('UserMemory')}) 'GpuMemory'}
+        }
+        [PSCustomObject]@{Id=[string]$last.Id;Label=[string]$last.Label;Host=[string]$last.Host;OnlineSamples=[int](Get-HistoryNumberSum $rows 'OnlineSamples');TotalSamples=[int](Get-HistoryNumberSum $rows 'TotalSamples');LatencyMs=Get-HistoryWeightedAverage $rows @('LatencyMs');Hostname=[string]$last.Hostname;CpuPercent=Get-HistoryWeightedAverage $rows @('CpuPercent');CpuUserUsage=Merge-HistoryStoredUserUsage @($rows|ForEach-Object{Get-HistoryObjectValue $_ @('CpuUserUsage')}) 'Cpu';MemoryUsedMiB=Get-HistoryWeightedAverage $rows @('MemoryUsedMiB');MemoryTotalMiB=Get-HistoryWeightedAverage $rows @('MemoryTotalMiB');MemoryPercent=Get-HistoryWeightedAverage $rows @('MemoryPercent');MemoryUserUsage=Merge-HistoryStoredUserUsage @($rows|ForEach-Object{Get-HistoryObjectValue $_ @('MemoryUserUsage')}) 'Memory';LoadOne=Get-HistoryWeightedAverage $rows @('LoadOne');LoadFive=Get-HistoryWeightedAverage $rows @('LoadFive');LoadFifteen=Get-HistoryWeightedAverage $rows @('LoadFifteen');UptimeSeconds=Get-HistoryLastValue $rows @('UptimeSeconds');Gpus=@($gpus|Sort-Object Index)}
+    }
+    return [PSCustomObject]@{Timestamp=(ConvertTo-HistoryRecordTime $Records[0]).ToString('yyyy-MM-ddTHH:mm:ss');SampleCount=[int](Get-HistoryNumberSum $Records 'SampleCount');Servers=@($servers)}
 }
 
 function Save-HistoryMinuteRecord {
@@ -115,16 +276,11 @@ function Save-HistoryMinuteRecord {
     if (-not (Test-Path -LiteralPath $Recorder.Directory)) {
         [void](New-Item -ItemType Directory -Path $Recorder.Directory)
     }
-    $date = [datetime]::ParseExact([string]$Record.Timestamp, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
-    $path = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.json')
-    $records = @()
-    if (Test-Path -LiteralPath $path) {
-        $saved = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-        $records = @($saved.Records | Where-Object { $_.Timestamp -ne $Record.Timestamp })
-    }
-    $records = @($records + $Record | Sort-Object Timestamp)
-    [PSCustomObject]@{ Version=1; Date=$date.ToString('yyyy-MM-dd'); Records=$records } |
-        ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path -Encoding UTF8
+    $date = ConvertTo-HistoryRecordTime $Record
+    $path = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.v2.jsonl')
+    # JSONL is append-only: a later entry for the same minute supersedes or is merged with earlier entries at read time.
+    $line=[PSCustomObject]@{Version=2;Record=$Record} | ConvertTo-Json -Depth 16 -Compress
+    Add-Content -LiteralPath $path -Value $line -Encoding UTF8
 }
 
 function Flush-ServerPulseHistoryRecorder {
@@ -165,9 +321,10 @@ function Remove-ExpiredServerPulseHistory {
 
     if (-not (Test-Path -LiteralPath $Recorder.Directory)) { return }
     $cutoff = $Now.Date.AddDays(-$Recorder.RetentionDays + 1)
-    foreach ($file in (Get-ChildItem -LiteralPath $Recorder.Directory -File -Filter '*.json')) {
+    foreach ($file in (Get-ChildItem -LiteralPath $Recorder.Directory -File | Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}(?:\.v2\.jsonl|\.json)$' })) {
         $date = [datetime]::MinValue
-        if ([datetime]::TryParseExact($file.BaseName, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$date) -and $date -lt $cutoff) {
+        $dateText=$file.Name.Substring(0,10)
+        if ([datetime]::TryParseExact($dateText, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$date) -and $date -lt $cutoff) {
             Remove-Item -LiteralPath $file.FullName -Force
         }
     }
@@ -220,15 +377,33 @@ function Get-ServerPulseHistoryRecords {
     if ($End -lt $Start) { throw '结束时间不能早于开始时间' }
     $byMinute = @{}
     for ($date = $Start.Date; $date -le $End.Date; $date = $date.AddDays(1)) {
-        $path = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.json')
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        $saved = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach ($record in @($saved.Records)) { $byMinute[[string]$record.Timestamp] = $record }
+        $legacyPath = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.json')
+        if (Test-Path -LiteralPath $legacyPath) {
+            $saved = Get-Content -LiteralPath $legacyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($record in @($saved.Records)) {
+                $key=[string]$record.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($record)
+            }
+        }
+        $jsonlPath = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.v2.jsonl')
+        if (Test-Path -LiteralPath $jsonlPath) {
+            $lines=@(Get-Content -LiteralPath $jsonlPath -Encoding UTF8)
+            $lastNonBlank=-1;for($lineIndex=0;$lineIndex -lt $lines.Count;$lineIndex++){if(-not [string]::IsNullOrWhiteSpace($lines[$lineIndex])){$lastNonBlank=$lineIndex}}
+            for($lineIndex=0;$lineIndex -lt $lines.Count;$lineIndex++){
+                if([string]::IsNullOrWhiteSpace($lines[$lineIndex])){continue}
+                try{$entry=$lines[$lineIndex]|ConvertFrom-Json -ErrorAction Stop;$record=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry};if($null -eq $record.Timestamp){throw '缺少 Timestamp'};$key=[string]$record.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($record)}
+                catch{if($lineIndex -eq $lastNonBlank){Write-HistoryReadError $Recorder ("忽略损坏的 JSONL 末行：{0} 第 {1} 行：{2}" -f $jsonlPath,($lineIndex+1),$_.Exception.Message);continue};throw}
+            }
+        }
     }
     $current = Get-CurrentHistoryMinuteRecord $Recorder
-    if ($null -ne $current) { $byMinute[[string]$current.Timestamp] = $current }
-    return @($byMinute.Values | Where-Object {
-        $timestamp = [datetime]::ParseExact([string]$_.Timestamp, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+    if ($null -ne $current) {$key=[string]$current.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($current)}
+    $merged=[Collections.Generic.List[object]]::new()
+    foreach($minuteKey in @($byMinute.Keys)) {
+        $minuteRecords=[object[]]$byMinute[$minuteKey].ToArray()
+        $merged.Add((Merge-HistoryMinuteRecords -Records $minuteRecords))
+    }
+    return @($merged | Where-Object {
+        $timestamp = ConvertTo-HistoryRecordTime $_
         $timestamp -ge $Start -and $timestamp -le $End
     } | Sort-Object Timestamp)
 }
@@ -276,7 +451,11 @@ function Set-HistoryDateInputValidation {
 
 function ConvertTo-HistoryRecordTime {
     param([Parameter(Mandatory)]$Record)
-    return [datetime]::ParseExact([string]$Record.Timestamp, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+    $timestamp=Get-HistoryObjectValue $Record @('Timestamp')
+    if($timestamp -is [datetime]){return [datetime]$timestamp}
+    $result=[datetime]::MinValue
+    if([datetime]::TryParseExact(([string]$timestamp).Trim(),'yyyy-MM-ddTHH:mm:ss',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$result)){return $result}
+    throw "无效历史时间：$timestamp"
 }
 
 function Get-HistoryChartHoverSample {
@@ -320,13 +499,171 @@ function Get-HistoryChartHoverSample {
     return [PSCustomObject]@{Time=$nearestTime;X=$x;Values=@($values)}
 }
 
+function Get-HistoryUserColor {
+    param([Parameter(Mandatory)][string]$Name)
+    $palette=@('#F07178','#F4A261','#E9C46A','#88C0D0','#81A1C1','#B48EAD','#A3BE8C','#D08770','#5E81AC','#C678DD')
+    $hash=[uint64]0
+    foreach($byte in [Text.Encoding]::UTF8.GetBytes($Name.ToLowerInvariant())){$hash=(($hash*31)+$byte)%2147483647}
+    return $palette[[int]($hash % [uint64]$palette.Count)]
+}
+
+function ConvertTo-HistoryUserPoint {
+    param(
+        [Parameter(Mandatory)][datetime]$Time,
+        $Usage,
+        [ValidateSet('Cpu','Memory','GpuMemory')][string]$Kind,
+        [AllowNull()]$TotalMiB
+    )
+    $state=Get-HistoryStoredUsageState $Usage $Kind
+    if($state.Status -eq 'unavailable'){return [PSCustomObject]@{Time=$Time;Status='unavailable';Users=@();DetailNote=''}}
+    $users=@(foreach($user in $state.Users){
+        $identity=if($user.Uid){"uid:$($user.Uid)"}else{"name:$($user.Name)"}
+        $plot=if($Kind -eq 'Cpu'){[double]$user.Value}elseif($null -ne $TotalMiB -and [double]$TotalMiB -gt 0){[double]$user.Value*100/[double]$TotalMiB}else{$null}
+        [PSCustomObject]@{Identity=$identity;Uid=$user.Uid;Name=$user.Name;RawValue=[double]$user.Value;PlotValue=$plot;Color=(Get-HistoryUserColor $user.Name);IsSystem=$false}
+    })
+    if($state.System -ge 0){
+        $plot=if($Kind -eq 'Cpu'){$state.System}elseif($null -ne $TotalMiB -and [double]$TotalMiB -gt 0){$state.System*100/[double]$TotalMiB}else{$null}
+        $users+= ,[PSCustomObject]@{Identity='system';Uid='';Name='系统/未归属';RawValue=[double]$state.System;PlotValue=$plot;Color='#9AA39D';IsSystem=$true}
+    }
+    $detailNote=if($Kind -eq 'Cpu'){"归属 {0:0.##}% · 重叠 {1:0.##}% · 跳过 {2:0.##}" -f $state.Attributed,$state.Overlap,$state.Skipped}elseif($Kind -eq 'Memory'){"归属 {0} · 重叠 {1} · 跳过 {2:0.##}" -f (Format-Memory $state.Attributed),(Format-Memory $state.Overlap),$state.Skipped}else{"归属 {0} · 未映射进程 {1:0.##}" -f (Format-Memory $state.Attributed),$state.Skipped}
+    return [PSCustomObject]@{Time=$Time;Status=$state.Status;Kind=$Kind;Users=@($users);TotalMiB=$TotalMiB;DetailNote=$detailNote}
+}
+
+function Format-HistoryUserValue {
+    param($User,[string]$Kind)
+    if($Kind -eq 'Cpu'){return ('{0:0.0}%' -f [double]$User.RawValue)}
+    $percent=if($null -ne $User.PlotValue){' · {0:0.0}%' -f [double]$User.PlotValue}else{''}
+    return (('{0:0.0} GB' -f ([double]$User.RawValue/1024))+$percent)
+}
+
+function Get-HistoryChartUserPoint {
+    param($State,[datetime]$Time)
+    $matches=@($State.UserPoints|Where-Object{([datetime]$_.Time).Ticks -eq $Time.Ticks}|Select-Object -First 1)
+    if($matches.Count){return $matches[0]};return $null
+}
+
+function Get-HistoryNearestChartTime {
+    param($State,[double]$CursorX)
+    if(-not $State.Timeline.Count){return $null}
+    $target=$State.Start.AddSeconds(([Math]::Max(0,[Math]::Min($State.Canvas.Width,$CursorX))/$State.Canvas.Width)*$State.Duration)
+    $nearest=$null;$distance=[double]::PositiveInfinity
+    foreach($time in $State.Timeline){$candidate=[datetime]$time;$current=[Math]::Abs(($candidate-$target).TotalSeconds);if($current -lt $distance){$nearest=$candidate;$distance=$current}}
+    return $nearest
+}
+
+function Set-HistoryChartUnlocked {
+    param($State)
+    $State.IsLocked=$false;$State.LockedTime=$null;$State.Expanded=$false
+    $State.Guide.Visibility='Collapsed';$State.Popup.Visibility='Collapsed'
+    foreach($view in $State.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
+}
+
+function Update-HistoryChartUserSeries {
+    param($State)
+    foreach($shape in @($State.UserLineShapes)){[void]$State.Canvas.Children.Remove($shape)};$State.UserLineShapes.Clear();$State.UserLegend.Children.Clear()
+    $parent=@($State.Views|Where-Object{$_.Name -eq $State.UserParentSeries}|Select-Object -First 1)
+    if($parent.Count -and -not $parent[0].IsVisible){return}
+    foreach($identity in @($State.SelectedUsers)){
+        $known=$null
+        foreach($point in $State.UserPoints){$match=@($point.Users|Where-Object{$_.Identity -eq $identity}|Select-Object -First 1);if($match.Count){$known=$match[0];break}}
+        if($null -eq $known){continue}
+        $segments=[Collections.Generic.List[object]]::new();$current=[Windows.Media.PointCollection]::new()
+        foreach($point in $State.UserPoints){
+            if($point.Status -eq 'unavailable') { if($current.Count){$segments.Add($current);$current=[Windows.Media.PointCollection]::new()};continue }
+            $match=@($point.Users|Where-Object{$_.Identity -eq $identity}|Select-Object -First 1);$value=if($match.Count){$match[0].PlotValue}else{0.0}
+            if($null -eq $value){if($current.Count){$segments.Add($current);$current=[Windows.Media.PointCollection]::new()};continue}
+            $x=[Math]::Max(0,[Math]::Min($State.Canvas.Width,(([datetime]$point.Time-$State.Start).TotalSeconds/$State.Duration)*$State.Canvas.Width));$y=74-([Math]::Max(0,[Math]::Min(100,[double]$value))/100*70);$current.Add([Windows.Point]::new($x,$y))
+        }
+        if($current.Count){$segments.Add($current)}
+        foreach($segment in $segments){$line=[Windows.Shapes.Polyline]::new();$line.Points=$segment;$line.Stroke=New-HistoryBrush $known.Color;$line.StrokeThickness=1.3;$dashes=[Windows.Media.DoubleCollection]::new();$dashes.Add(3);$dashes.Add(2);$line.StrokeDashArray=$dashes;$line.IsHitTestVisible=$false;[Windows.Controls.Panel]::SetZIndex($line,10);[void]$State.Canvas.Children.Add($line);$State.UserLineShapes.Add($line)}
+        $tag=[Windows.Controls.Border]::new();$tag.Padding=[Windows.Thickness]::new(4,1,4,1);$tag.Margin=[Windows.Thickness]::new(0,2,4,0);$tag.BorderBrush=New-HistoryBrush $known.Color;$tag.BorderThickness=[Windows.Thickness]::new(1);$tag.CornerRadius=[Windows.CornerRadius]::new(3);$tag.Cursor='Hand';$tag.ToolTip='点击移除用户曲线';$tag.Tag=[PSCustomObject]@{State=$State;Identity=$identity}
+        $tag.Child=New-HistoryText ("● $($known.Name) ×") 7 $known.Color
+        $tag.Add_MouseLeftButtonDown({param($sender,$event);$tagState=$sender.Tag;$tagState.State.SelectedUsers.Remove([string]$tagState.Identity);$tagState.State.SelectionStore[$tagState.State.ChartKey]=@($tagState.State.SelectedUsers);Update-HistoryChartUserSeries $tagState.State;$event.Handled=$true})
+        [void]$State.UserLegend.Children.Add($tag)
+    }
+}
+
+function Toggle-HistoryChartUserSelection {
+    param($State,[string]$Identity)
+    if($State.SelectedUsers.Contains($Identity)){$State.SelectedUsers.Remove($Identity)}else{if($State.SelectedUsers.Count -ge 3){$State.SelectedUsers.RemoveAt(0)};$State.SelectedUsers.Add($Identity)}
+    $State.SelectionStore[$State.ChartKey]=@($State.SelectedUsers);Update-HistoryChartUserSeries $State
+}
+
+function New-HistoryPopupUserRow {
+    param($State,$User,[switch]$Other,[int]$OtherCount=0)
+    $border=[Windows.Controls.Border]::new();$border.Padding=[Windows.Thickness]::new(2,2,2,2);$border.Margin=[Windows.Thickness]::new(0,1,0,0);$border.Cursor='Hand';$border.Background=New-HistoryBrush '#01000000'
+    $row=[Windows.Controls.Grid]::new();$left=[Windows.Controls.ColumnDefinition]::new();$left.Width='*';[void]$row.ColumnDefinitions.Add($left);$right=[Windows.Controls.ColumnDefinition]::new();$right.Width='Auto';[void]$row.ColumnDefinitions.Add($right)
+    if($Other){$name=New-HistoryText $(if($State.Expanded){'收起用户列表'}else{"其他（$OtherCount 用户）"}) 8 '#99A39D';$value=New-HistoryText $(if($State.Expanded){'收起'}else{'展开'}) 8 '#99A39D';$border.Tag=[PSCustomObject]@{State=$State;Other=$true;User=$null}}
+    else{$name=New-HistoryText ("● $($User.Name)") 8 $User.Color;$value=New-HistoryText (Format-HistoryUserValue $User $State.UserKind) 8 '#EDF2EF';$border.Tag=[PSCustomObject]@{State=$State;Other=$false;User=$User}}
+    $value.HorizontalAlignment='Right';[Windows.Controls.Grid]::SetColumn($value,1);[void]$row.Children.Add($name);[void]$row.Children.Add($value);$border.Child=$row
+    $border.Add_MouseLeftButtonDown({param($sender,$event);$data=$sender.Tag;$data.State.IsLocked=$true;if($null -eq $data.State.LockedTime){$data.State.LockedTime=$data.State.HoveredTime};if($data.Other){$data.State.Expanded=-not $data.State.Expanded;Show-HistoryChartSample -State $data.State -Time $data.State.LockedTime}else{Toggle-HistoryChartUserSelection $data.State $data.User.Identity};$event.Handled=$true})
+    return $border
+}
+
+function Show-HistoryChartSample {
+    param($State,[datetime]$Time)
+    $visible=@($State.Views|Where-Object{$_.IsVisible});foreach($view in $State.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
+    $sample=&$State.Resolver -Series @($State.Views|ForEach-Object{$_.Series}) -Start $State.Start -End $State.End -CursorX ((($Time-$State.Start).TotalSeconds/$State.Duration)*$State.Canvas.Width) -Width $State.Canvas.Width -Height $State.Canvas.Height
+    if($null -eq $sample){return}
+    $State.Guide.X1=$sample.X;$State.Guide.X2=$sample.X
+    foreach($value in $sample.Values){$view=@($visible|Where-Object{$_.Name -eq $value.Name}|Select-Object -First 1);if(-not $view.Count){continue};$view=$view[0];[Windows.Controls.Canvas]::SetLeft($view.Marker,$sample.X-4.5);[Windows.Controls.Canvas]::SetTop($view.Marker,$value.Y-4.5);$view.Marker.Visibility='Visible';$view.PopupText.Text=("{0}  {1:0.##}{2}" -f $value.Name,$value.Value,$value.Suffix);$view.PopupRow.Visibility='Visible'}
+    $State.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm');$State.UserPanel.Children.Clear();$userPoint=Get-HistoryChartUserPoint $State $sample.Time
+    $parent=@($State.Views|Where-Object{$_.Name -eq $State.UserParentSeries}|Select-Object -First 1);$showUsers=($null -ne $userPoint -and (-not $parent.Count -or $parent[0].IsVisible))
+    if($showUsers){if($userPoint.Status -eq 'unavailable'){$text=New-HistoryText '该分钟尚未记录用户明细' 8 '#7C8780';[void]$State.UserPanel.Children.Add($text)}else{$normal=@($userPoint.Users|Where-Object{-not $_.IsSystem -and ($_.RawValue -gt 0 -or $State.SelectedUsers.Contains([string]$_.Identity))}|Sort-Object @{Expression='RawValue';Descending=$true},Name);$system=@($userPoint.Users|Where-Object{$_.IsSystem}|Select-Object -First 1);$take=if($State.Expanded){$normal.Count}else{[Math]::Min(8,$normal.Count)};for($index=0;$index -lt $take;$index++){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $normal[$index]))};if(-not $State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount ($normal.Count-8)))}elseif($State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount 0))};if($system.Count){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $system[0]))};if(-not [string]::IsNullOrWhiteSpace([string]$userPoint.DetailNote)){$noteText=if($userPoint.Status -eq 'partial'){"部分采集 · $($userPoint.DetailNote)"}else{$userPoint.DetailNote};$note=New-HistoryText $noteText 7 '#66716A';$note.Margin=[Windows.Thickness]::new(2,3,0,0);[void]$State.UserPanel.Children.Add($note)}}}
+    $rowCount=@($State.Views|Where-Object{$_.PopupRow.Visibility -eq 'Visible'}).Count+$State.UserPanel.Children.Count;$State.Popup.Height=25+(14*$rowCount);$popupLeft=if($sample.X -gt ($State.Canvas.Width/2)){$sample.X-$State.Popup.Width-7}else{$sample.X+7};[Windows.Controls.Canvas]::SetLeft($State.Popup,[Math]::Max(0,[Math]::Min($State.Canvas.Width-$State.Popup.Width,$popupLeft)));[Windows.Controls.Canvas]::SetTop($State.Popup,4);$State.Guide.Visibility='Visible';$State.Popup.Visibility='Visible'
+}
+
+function Register-HistoryChartInteractions {
+    param($Canvas,$Popup,$Card)
+    $Canvas.Add_MouseMove({
+        param($sender,$event)
+        $state=$sender.Tag;if($state.IsLocked){return};$visible=@($state.Views|Where-Object{$_.IsVisible});if(-not $visible.Count){Set-HistoryChartUnlocked $state;return}
+        $cursor=$event.GetPosition($sender);$time=Get-HistoryNearestChartTime $state $cursor.X
+        if($null -ne $time){$state.HoveredTime=$time;Show-HistoryChartSample $state $time}
+    })
+    $Canvas.Add_MouseLeave({param($sender,$event);$state=$sender.Tag;if(-not $state.IsLocked){Set-HistoryChartUnlocked $state}})
+    $Canvas.Add_MouseLeftButtonDown({
+        param($sender,$event)
+        $state=$sender.Tag;$visible=@($state.Views|Where-Object{$_.IsVisible});if(-not $visible.Count){Set-HistoryChartUnlocked $state;$event.Handled=$true;return}
+        $cursor=$event.GetPosition($sender);$time=Get-HistoryNearestChartTime $state $cursor.X
+        if($null -eq $time -or ($state.IsLocked -and $null -ne $state.LockedTime -and $state.LockedTime.Ticks -eq $time.Ticks)){Set-HistoryChartUnlocked $state}else{$state.IsLocked=$true;$state.LockedTime=$time;$state.HoveredTime=$time;$state.Expanded=$false;Show-HistoryChartSample $state $time;[void]$state.Card.Focus()};$event.Handled=$true
+    })
+    $Popup.Add_MouseMove({param($sender,$event);$event.Handled=$true})
+    $Popup.Add_MouseLeftButtonDown({param($sender,$event);$state=$sender.Tag;if($null -ne $state -and $null -ne $state.HoveredTime){$state.IsLocked=$true;$state.LockedTime=$state.HoveredTime};$event.Handled=$true})
+    $Card.Add_PreviewKeyDown({param($sender,$event);if($event.Key -eq 'Escape'){Set-HistoryChartUnlocked $sender.Tag;$event.Handled=$true}})
+    $Card.Add_MouseLeftButtonDown({param($sender,$event);if($sender.Tag.IsLocked){Set-HistoryChartUnlocked $sender.Tag;$event.Handled=$true}})
+}
+
+function Register-HistoryWindowChartEscape {
+    param($Window,$Panel)
+    $Window.Add_PreviewKeyDown({
+        param($sender,$event)
+        if($event.Key -ne 'Escape'){return}
+        $root=$sender.Resources['ServerPulse.HistoryPanel'];if($null -eq $root){return}
+        foreach($section in @($root.Children)){
+            if($section.Child -isnot [Windows.Controls.StackPanel]){continue}
+            foreach($child in @($section.Child.Children)){
+                if($child -isnot [Windows.Controls.WrapPanel]){continue}
+                foreach($card in @($child.Children)){if($null -ne $card.Tag -and (Get-HistoryObjectValue $card.Tag @('Kind')) -eq 'HistoryChart'){Set-HistoryChartUnlocked $card.Tag}}
+            }
+        }
+        $event.Handled=$true
+    })
+    $Window.Resources['ServerPulse.HistoryPanel']=$Panel
+}
+
 function New-HistoryChartCard {
     param(
         [Parameter(Mandatory)][string]$Title,
         [string]$Subtitle,
         [Parameter(Mandatory)][object[]]$Series,
         [Parameter(Mandatory)][datetime]$Start,
-        [Parameter(Mandatory)][datetime]$End
+        [Parameter(Mandatory)][datetime]$End,
+        [object[]]$UserPoints=@(),
+        [ValidateSet('','Cpu','Memory','GpuMemory')][string]$UserKind='',
+        [string]$UserParentSeries='',
+        [string]$ChartKey='',
+        $SelectionStore
     )
 
     $card = [Windows.Controls.Border]::new()
@@ -336,7 +673,7 @@ function New-HistoryChartCard {
     $card.Background = New-HistoryBrush '#1B201D'
     $card.BorderBrush = New-HistoryBrush '#303732'
     $card.BorderThickness = [Windows.Thickness]::new(1)
-    $card.CornerRadius = [Windows.CornerRadius]::new(7)
+    $card.CornerRadius = [Windows.CornerRadius]::new(7);$card.Focusable=$true
 
     $seriesViews=@($Series | ForEach-Object {
         [PSCustomObject]@{
@@ -379,7 +716,7 @@ function New-HistoryChartCard {
                 $sender.BorderBrush=if($view.IsVisible){$view.ActiveBorder}else{$view.InactiveBorder}
                 $sender.ToolTip=if($view.IsVisible){"点击隐藏 $($view.Name)"}else{"点击显示 $($view.Name)"}
                 $state=$sender.DataContext
-                if($null -ne $state){$state.Guide.Visibility='Collapsed';$state.Popup.Visibility='Collapsed';foreach($itemView in $state.Views){$itemView.Marker.Visibility='Collapsed';$itemView.PopupRow.Visibility='Collapsed'}}
+                if($null -ne $state){$state.Guide.Visibility='Collapsed';$state.Popup.Visibility='Collapsed';foreach($itemView in $state.Views){$itemView.Marker.Visibility='Collapsed';$itemView.PopupRow.Visibility='Collapsed'};Update-HistoryChartUserSeries $state}
                 $event.Handled=$true
             })
             [void]$togglePanel.Children.Add($toggle)
@@ -389,7 +726,9 @@ function New-HistoryChartCard {
         $latestParts=@($seriesViews | ForEach-Object { if($null -ne $_.Series.Latest){$suffix=if($_.Series.PSObject.Properties.Name -contains 'Suffix'){[string]$_.Series.Suffix}else{''};"{0} {1:0}{2}" -f $_.Name,[double]$_.Series.Latest,$suffix} })
         $latestBlock=New-HistoryText ($latestParts -join ' · ') 8 '#98A39C'; $latestBlock.HorizontalAlignment='Right'; [Windows.Controls.Grid]::SetColumn($latestBlock,1); [void]$header.Children.Add($latestBlock)
     }
-    [Windows.Controls.Grid]::SetRow($header,0); [void]$layout.Children.Add($header)
+    $headerStack=[Windows.Controls.StackPanel]::new();[void]$headerStack.Children.Add($header)
+    $userLegend=[Windows.Controls.WrapPanel]::new();$userLegend.Margin=[Windows.Thickness]::new(0,1,0,0);[void]$headerStack.Children.Add($userLegend)
+    [Windows.Controls.Grid]::SetRow($headerStack,0); [void]$layout.Children.Add($headerStack)
 
     $canvas = [Windows.Controls.Canvas]::new(); $canvas.Width = 242; $canvas.Height = 76; $canvas.Margin = [Windows.Thickness]::new(0,7,0,5)
     $canvas.Background=New-HistoryBrush '#00131714'; $canvas.Cursor='Cross'; $canvas.ClipToBounds=$false
@@ -419,7 +758,7 @@ function New-HistoryChartCard {
         $marker=[Windows.Shapes.Ellipse]::new(); $marker.Width=9; $marker.Height=9; $marker.Fill=New-HistoryBrush '#131714'; $marker.Stroke=New-HistoryBrush ([string]$view.Series.Color); $marker.StrokeThickness=2; $marker.Visibility='Collapsed'; $marker.IsHitTestVisible=$false
         [Windows.Controls.Panel]::SetZIndex($marker,22); [void]$canvas.Children.Add($marker); $view.Marker=$marker; $hoverMarkers += [PSCustomObject]@{Name=$view.Name;Shape=$marker}
     }
-    $hoverPopup=[Windows.Controls.Border]::new(); $hoverPopup.Width=154; $hoverPopup.Height=67; $hoverPopup.Padding=[Windows.Thickness]::new(7,4,7,4); $hoverPopup.Background=New-HistoryBrush '#F20D110F'; $hoverPopup.BorderBrush=New-HistoryBrush '#455047'; $hoverPopup.BorderThickness=[Windows.Thickness]::new(1); $hoverPopup.CornerRadius=[Windows.CornerRadius]::new(5); $hoverPopup.Visibility='Collapsed'; $hoverPopup.IsHitTestVisible=$false
+    $hoverPopup=[Windows.Controls.Border]::new(); $hoverPopup.Width=190; $hoverPopup.Height=67; $hoverPopup.Padding=[Windows.Thickness]::new(7,4,7,4); $hoverPopup.Background=New-HistoryBrush '#F20D110F'; $hoverPopup.BorderBrush=New-HistoryBrush '#455047'; $hoverPopup.BorderThickness=[Windows.Thickness]::new(1); $hoverPopup.CornerRadius=[Windows.CornerRadius]::new(5); $hoverPopup.Visibility='Collapsed'; $hoverPopup.IsHitTestVisible=$true
     $hoverPopup.Effect=[Windows.Media.Effects.DropShadowEffect]@{Color=[Windows.Media.Colors]::Black;BlurRadius=8;ShadowDepth=2;Opacity=0.45}
     $hoverStack=[Windows.Controls.StackPanel]::new(); $hoverTime=New-HistoryText '' 7 '#98A39C'; [void]$hoverStack.Children.Add($hoverTime)
     foreach($view in $seriesViews){
@@ -429,28 +768,18 @@ function New-HistoryChartCard {
         [void]$popupRow.Children.Add($popupDot); [void]$popupRow.Children.Add($popupText); [void]$hoverStack.Children.Add($popupRow)
         $view.PopupRow=$popupRow; $view.PopupDot=$popupDot; $view.PopupText=$popupText
     }
+    $userPanel=[Windows.Controls.StackPanel]::new();$userPanel.Margin=[Windows.Thickness]::new(0,2,0,0);[void]$hoverStack.Children.Add($userPanel)
     $hoverPopup.Child=$hoverStack; [Windows.Controls.Panel]::SetZIndex($hoverPopup,24); [void]$canvas.Children.Add($hoverPopup)
-    $hoverState=[PSCustomObject]@{Kind='HistoryChart';Canvas=$canvas;Guide=$hoverGuide;Markers=@($hoverMarkers);Popup=$hoverPopup;TimeBlock=$hoverTime;Views=@($seriesViews);Start=$Start;End=$End;Resolver=${function:Get-HistoryChartHoverSample}}
+    if($null -eq $SelectionStore){$SelectionStore=@{}};if(-not $SelectionStore.ContainsKey($ChartKey)){$SelectionStore[$ChartKey]=@()}
+    $selected=[Collections.Generic.List[string]]::new();foreach($identity in @($SelectionStore[$ChartKey])){if($selected.Count -lt 3){$selected.Add([string]$identity)}}
+    $lineShapes=[Collections.Generic.List[object]]::new()
+    $timeline=@($UserPoints|ForEach-Object{[datetime]$_.Time}|Sort-Object -Unique);if(-not $timeline.Count){$timeline=@($Series|ForEach-Object{@($_.Points)}|ForEach-Object{[datetime]$_.Time}|Sort-Object -Unique)}
+    $hoverState=[PSCustomObject]@{Kind='HistoryChart';Card=$card;ChartKey=$ChartKey;SelectionStore=$SelectionStore;Canvas=$canvas;Guide=$hoverGuide;Markers=@($hoverMarkers);Popup=$hoverPopup;TimeBlock=$hoverTime;Views=@($seriesViews);Start=$Start;End=$End;Duration=$duration;Timeline=@($timeline);Resolver=${function:Get-HistoryChartHoverSample};UserPoints=@($UserPoints);UserKind=$UserKind;UserParentSeries=$UserParentSeries;UserPanel=$userPanel;UserLegend=$userLegend;SelectedUsers=$selected;UserLineShapes=$lineShapes;HoveredTime=$null;LockedTime=$null;IsLocked=$false;Expanded=$false}
     foreach($view in $seriesViews){if($null -ne $view.Toggle){$view.Toggle.DataContext=$hoverState}}
     $canvas.Tag=$hoverState; $card.Tag=$hoverState
-    $canvas.Add_MouseMove({
-        param($sender,$event)
-        $state=$sender.Tag; $visibleViews=@($state.Views | Where-Object { $_.IsVisible })
-        foreach($view in $state.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
-        if($visibleViews.Count -eq 0){$state.Guide.Visibility='Collapsed';$state.Popup.Visibility='Collapsed';return}
-        $cursor=$event.GetPosition($sender); $sample=& $state.Resolver -Series @($visibleViews | ForEach-Object { $_.Series }) -Start $state.Start -End $state.End -CursorX $cursor.X -Width $sender.Width -Height $sender.Height
-        if ($null -eq $sample) { return }
-        $state.Guide.X1=$sample.X; $state.Guide.X2=$sample.X
-        foreach ($value in $sample.Values) {
-            $view=@($visibleViews | Where-Object { $_.Name -eq $value.Name } | Select-Object -First 1); if($view.Count -eq 0){continue}; $view=$view[0]
-            [Windows.Controls.Canvas]::SetLeft($view.Marker,$sample.X-4.5); [Windows.Controls.Canvas]::SetTop($view.Marker,$value.Y-4.5); $view.Marker.Visibility='Visible'
-            $view.PopupText.Text=("{0}  {1:0.##}{2}" -f $value.Name,$value.Value,$value.Suffix); $view.PopupRow.Visibility='Visible'
-        }
-        $state.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm'); $state.Popup.Height=25+(14*$sample.Values.Count)
-        $popupWidth=$state.Popup.Width; $popupLeft=if($sample.X -gt ($sender.Width/2)){$sample.X-$popupWidth-7}else{$sample.X+7}; [Windows.Controls.Canvas]::SetLeft($state.Popup,[Math]::Max(0,[Math]::Min($sender.Width-$popupWidth,$popupLeft))); [Windows.Controls.Canvas]::SetTop($state.Popup,4)
-        $state.Guide.Visibility='Visible'; $state.Popup.Visibility='Visible'
-    })
-    $canvas.Add_MouseLeave({param($sender,$event);$state=$sender.Tag;$state.Guide.Visibility='Collapsed';foreach($view in $state.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'};$state.Popup.Visibility='Collapsed'})
+    $hoverPopup.Tag=$hoverState
+    Register-HistoryChartInteractions $canvas $hoverPopup $card
+    Update-HistoryChartUserSeries $hoverState
     [Windows.Controls.Grid]::SetRow($canvas,1); [void]$layout.Children.Add($canvas)
 
     $footer = [Windows.Controls.Grid]::new(); $subtitleBlock = New-HistoryText $Subtitle 7 '#66716A'; $subtitleBlock.TextTrimming = 'CharacterEllipsis'; $endBlock = New-HistoryText ($End.ToString('MM-dd HH:mm')) 7 '#505A54'; $endBlock.HorizontalAlignment = 'Right'
@@ -471,7 +800,8 @@ function Add-HistoryServerSection {
         [Parameter(Mandatory)][object[]]$Records,
         [Parameter(Mandatory)][string]$ServerId,
         [Parameter(Mandatory)][datetime]$Start,
-        [Parameter(Mandatory)][datetime]$End
+        [Parameter(Mandatory)][datetime]$End,
+        $SelectionStore
     )
 
     $serverRecords = foreach ($record in $Records) {
@@ -502,10 +832,12 @@ function Add-HistoryServerSection {
 
     $cpuPoints = @($serverRecords | ForEach-Object { [PSCustomObject]@{Time=$_.Time;Value=$_.Server.CpuPercent} })
     $memoryPoints = @($serverRecords | ForEach-Object { [PSCustomObject]@{Time=$_.Time;Value=$_.Server.MemoryPercent} })
+    $cpuUserPoints=@($serverRecords|ForEach-Object{ConvertTo-HistoryUserPoint -Time $_.Time -Usage (Get-HistoryObjectValue $_.Server @('CpuUserUsage')) -Kind 'Cpu' -TotalMiB $null})
+    $memoryUserPoints=@($serverRecords|ForEach-Object{ConvertTo-HistoryUserPoint -Time $_.Time -Usage (Get-HistoryObjectValue $_.Server @('MemoryUserUsage')) -Kind 'Memory' -TotalMiB (Get-HistoryObjectValue $_.Server @('MemoryTotalMiB'))})
     $cpuSeries = @([PSCustomObject]@{Name='CPU';Suffix='%';Color='#A7D948';Points=$cpuPoints;Latest=$latest.CpuPercent})
     $memorySeries = @([PSCustomObject]@{Name='MEM';Suffix='%';Color='#A7D948';Points=$memoryPoints;Latest=$latest.MemoryPercent})
-    [void]$wrap.Children.Add((New-HistoryChartCard -Title 'CPU' -Subtitle ("LOAD 1/5/15 {0:0.00}/{1:0.00}/{2:0.00} · SSH {3:0} ms" -f $latest.LoadOne,$latest.LoadFive,$latest.LoadFifteen,$latest.LatencyMs) -Series $cpuSeries -Start $Start -End $End))
-    [void]$wrap.Children.Add((New-HistoryChartCard -Title 'MEM' -Subtitle ("{0:0.0}/{1:0.0} GB · UPTIME {2:0.0} d" -f ([double]$latest.MemoryUsedMiB/1024),([double]$latest.MemoryTotalMiB/1024),([double]$latest.UptimeSeconds/86400)) -Series $memorySeries -Start $Start -End $End))
+    [void]$wrap.Children.Add((New-HistoryChartCard -Title 'CPU' -Subtitle ("LOAD 1/5/15 {0:0.00}/{1:0.00}/{2:0.00} · SSH {3:0} ms" -f $latest.LoadOne,$latest.LoadFive,$latest.LoadFifteen,$latest.LatencyMs) -Series $cpuSeries -Start $Start -End $End -UserPoints $cpuUserPoints -UserKind Cpu -UserParentSeries CPU -ChartKey "$ServerId/cpu" -SelectionStore $SelectionStore))
+    [void]$wrap.Children.Add((New-HistoryChartCard -Title 'MEM' -Subtitle ("{0:0.0}/{1:0.0} GB · UPTIME {2:0.0} d" -f ([double]$latest.MemoryUsedMiB/1024),([double]$latest.MemoryTotalMiB/1024),([double]$latest.UptimeSeconds/86400)) -Series $memorySeries -Start $Start -End $End -UserPoints $memoryUserPoints -UserKind Memory -UserParentSeries MEM -ChartKey "$ServerId/memory" -SelectionStore $SelectionStore))
 
     $gpuIndexes = @($serverRecords | ForEach-Object { @($_.Server.Gpus) } | ForEach-Object { [int]$_.Index } | Sort-Object -Unique)
     foreach ($gpuIndex in $gpuIndexes) {
@@ -522,13 +854,14 @@ function Add-HistoryServerSection {
         })
         $tempPoints = @($gpuRows | ForEach-Object { [PSCustomObject]@{Time=$_.Time;Value=$_.Gpu.TemperatureC} })
         $vramLatest = if ($gpuLatest.MemoryTotalMiB -and [double]$gpuLatest.MemoryTotalMiB -gt 0) { [double]$gpuLatest.MemoryUsedMiB * 100 / [double]$gpuLatest.MemoryTotalMiB } else { $null }
+        $vramUserPoints=@($gpuRows|ForEach-Object{ConvertTo-HistoryUserPoint -Time $_.Time -Usage (Get-HistoryObjectValue $_.Gpu @('UserMemory')) -Kind 'GpuMemory' -TotalMiB (Get-HistoryObjectValue $_.Gpu @('MemoryTotalMiB'))})
         $series = @(
             [PSCustomObject]@{Name='GPU';Suffix='%';Color='#A7D948';Points=$utilPoints;Latest=$gpuLatest.Utilization},
             [PSCustomObject]@{Name='VRAM';Suffix='%';Color='#79C8D8';Points=$vramPoints;Latest=$vramLatest},
             [PSCustomObject]@{Name='TEMP';Suffix='°C';Color='#E4B64B';Points=$tempPoints;Latest=$gpuLatest.TemperatureC}
         )
         $subtitle = "显存 {0:0.0}/{1:0.0} GB · 功耗 {2:0}/{3:0} W · 风扇 {4:0}%" -f ([double]$gpuLatest.MemoryUsedMiB/1024),([double]$gpuLatest.MemoryTotalMiB/1024),$gpuLatest.PowerDrawW,$gpuLatest.PowerLimitW,$gpuLatest.FanPercent
-        [void]$wrap.Children.Add((New-HistoryChartCard -Title ("GPU {0}" -f $gpuIndex) -Subtitle $subtitle -Series $series -Start $Start -End $End))
+        [void]$wrap.Children.Add((New-HistoryChartCard -Title ("GPU {0}" -f $gpuIndex) -Subtitle $subtitle -Series $series -Start $Start -End $End -UserPoints $vramUserPoints -UserKind GpuMemory -UserParentSeries VRAM -ChartKey "$ServerId/gpu/$gpuIndex/vram" -SelectionStore $SelectionStore))
     }
     [void]$stack.Children.Add($wrap); $surface.Child=$stack; [void]$Panel.Children.Add($surface)
 }
@@ -695,6 +1028,7 @@ function Show-ServerPulseHistoryWindow {
     $start = $end.AddHours(-1)
     Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start
     Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $end
+    $historySelectionStore=@{}
 
     $renderCore = {
         $startResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
@@ -713,7 +1047,7 @@ function Show-ServerPulseHistoryWindow {
             [void]$historyUi.HistoryPanel.Children.Add($empty)
         } else {
             $serverIds = @($records | ForEach-Object { @($_.Servers) } | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
-            foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $historyUi.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd }
+            foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $historyUi.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd -SelectionStore $historySelectionStore }
         }
         $minutes = [Math]::Max(0,[int][Math]::Round(($rangeEnd-$rangeStart).TotalMinutes))
         $historyUi.HistoryRangeStatus.Text="$($records.Count) 个分钟点 · $minutes 分钟"; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
@@ -734,6 +1068,7 @@ function Show-ServerPulseHistoryWindow {
     }.GetNewClosure()
     [void](Register-HistoryWindowDragArea -DragArea $historyUi.HistoryDragArea)
     Register-HistoryWindowCloseButton -Button $historyUi.HistoryCloseButton
+    Register-HistoryWindowChartEscape -Window $historyWindow -Panel $historyUi.HistoryPanel
     $historyUi.HistoryQueryButton.Add_Click($render)
     $historyUi.HistoryHourButton.Add_Click({ $now=[DateTime]::Now;$now=[datetime]::new($now.Year,$now.Month,$now.Day,$now.Hour,$now.Minute,0);Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $now.AddHours(-1);Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $now;&$render }.GetNewClosure())
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
