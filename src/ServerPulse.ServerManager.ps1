@@ -45,7 +45,7 @@ function Set-ServerManagerRowStatus {
     $State.Status=$Status
     $State.StatusText.Text=switch($Status){
         'online'{'已验证'} 'passwordless'{'免密已验证'} 'authentication_required'{'需要密码'} 'authentication_failed'{'认证已暂停'}
-        'host_key_unknown'{'等待确认指纹'} 'host_key_changed'{'主机指纹已变化'} 'connection'{'连接暂不可用'} default{'尚未验证'}
+        'host_key_unknown'{'等待确认指纹'} 'host_key_changed'{'主机指纹已变化'} 'connection'{'连接暂不可用'} 'error'{'检测失败'} default{'尚未验证'}
     }
     $State.StatusText.Foreground=New-ServerManagerBrush $(switch($Status){'online'{'#A7D948'}'passwordless'{'#A7D948'}'connection'{'#E4B64B'}default{'#FF7B72'}})
     $State.StatusText.ToolTip=$Detail
@@ -69,7 +69,7 @@ function Complete-ServerPulseAuthenticationResult {
     param($Context,$RowState,$Result,[string]$Password)
     if($Result.Status -eq 'host_key_unknown'){
         if(Confirm-ServerPulseHostKey -Owner $Context.Window -RowState $RowState -TimeoutMs $Context.TimeoutMs){
-            $retry=Invoke-ServerPulseAuthenticationBatch -Requests @([PSCustomObject]@{Id=$RowState.Server.Id;Server=$RowState.Server;Password=$Password}) -ModulePath $Context.ModulePath -AskPassPath $Context.AskPassPath -TimeoutMs $Context.TimeoutMs
+            $retry=@(Invoke-ServerPulseAuthenticationBatch -Requests @([PSCustomObject]@{Id=$RowState.Server.Id;Server=$RowState.Server;Password=$Password}) -ModulePath $Context.ModulePath -AskPassPath $Context.AskPassPath -TimeoutMs $Context.TimeoutMs)
             if($retry.Count -gt 0){$Result=$retry[0]}
         }
     }
@@ -112,10 +112,10 @@ function Invoke-ServerManagerRowTest {
     $password=Get-ServerPulseAuthenticationPassword $RowState $context.SessionSecrets
     $RowState.TestButton.IsEnabled=$false;Set-ServerManagerRowStatus $RowState testing
     try{
-        $results=Invoke-ServerPulseAuthenticationBatch -Requests @([PSCustomObject]@{Id=$RowState.Server.Id;Server=$RowState.Server;Password=$password}) -ModulePath $context.ModulePath -AskPassPath $context.AskPassPath -TimeoutMs $context.TimeoutMs
+        $results=@(Invoke-ServerPulseAuthenticationBatch -Requests @([PSCustomObject]@{Id=$RowState.Server.Id;Server=$RowState.Server;Password=$password}) -ModulePath $context.ModulePath -AskPassPath $context.AskPassPath -TimeoutMs $context.TimeoutMs)
         if($results.Count -eq 0){throw 'SSH 验证未返回结果'}
         Complete-ServerPulseAuthenticationResult $context $RowState $results[0] $password
-    }catch{Set-ServerManagerRowStatus $RowState connection $_.Exception.Message}
+    }catch{Set-ServerManagerRowStatus $RowState error $_.Exception.Message}
     finally{$RowState.TestButton.IsEnabled=$true}
 }
 

@@ -407,6 +407,18 @@ Assert-Equal $managerRow.Monitor.IsChecked $true '服务器管理窗口显示监
 Assert-Equal $managerRow.Passwordless.IsHitTestVisible $false '免密复选框只读并由检测结果控制'
 Assert-Equal ([string]$managerRow.Passwordless.Parent.Children[1].ToolTip -match '终端 ssh 不会自动读取') $true '免密感叹号悬停解释凭据边界'
 Assert-Equal $managerRow.SaveCredential.IsChecked $false '存入 Windows 凭据管理器默认不勾选'
+$originalAuthenticationBatch=${function:Invoke-ServerPulseAuthenticationBatch}
+try {
+    Set-Item -LiteralPath function:Invoke-ServerPulseAuthenticationBatch -Value { [PSCustomObject]@{Id='manager-test';Passed=$true;Status='online';AuthMode='passwordless';Error=$null} }
+    Invoke-ServerManagerRowTest $managerRow
+    Assert-Equal $managerRow.Status 'passwordless' '单服务器重新检测接受标量认证结果'
+    Set-Item -LiteralPath function:Invoke-ServerPulseAuthenticationBatch -Value { throw 'mock internal detection error' }
+    Invoke-ServerManagerRowTest $managerRow
+    Assert-Equal $managerRow.Status 'error' '重新检测内部异常不伪装成连接失败'
+    Assert-Equal $managerRow.StatusText.Text '检测失败' '重新检测内部异常使用明确状态文案'
+} finally {
+    Set-Item -LiteralPath function:Invoke-ServerPulseAuthenticationBatch -Value $originalAuthenticationBatch
+}
 Set-ServerManagerRowStatus $managerRow authentication_required
 Assert-Equal $managerRow.PasswordPanel.Visibility 'Visible' '无可用认证时在服务器行展开密码输入'
 $managerRow.PasswordBox.Password='visible-on-hold'
