@@ -14,6 +14,22 @@ Server Pulse 是一个面向 Windows 的原生桌面浮窗，用来实时查看 
 - 使用暗色、亮色或跟随系统主题；界面支持中文、English 和跟随系统语言。
 - 打开“记录”窗口查询分钟级曲线，查看 CPU、MEM、GPU、显存和温度历史。
 
+## 界面预览
+
+以下截图来自 `demo/`，其中主机地址和用户名已做脱敏处理：
+
+| 暗色主界面 | 亮色主界面 |
+| --- | --- |
+| ![暗色主界面](demo/dark_main_ui.png) | ![亮色主界面](demo/light_main_ui.png) |
+
+| SSH 服务器管理 | 添加 SSH 服务器 |
+| --- | --- |
+| ![SSH 服务器管理](demo/manage_servers.png) | ![添加 SSH 服务器](demo/add_server.png) |
+
+| 历史记录 | 历史详情与用户曲线 |
+| --- | --- |
+| ![历史记录](demo/usage_history.png) | ![历史详情与用户曲线](demo/usage_history_details.png) |
+
 ## 快速开始
 
 ### 环境要求
