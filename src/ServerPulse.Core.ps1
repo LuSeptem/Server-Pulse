@@ -46,6 +46,23 @@ function Format-MemoryUsage {
     return ('{0:0}% · {1:0}/{2:0} MB' -f [double]$Percent, [double]$UsedMiB, [double]$TotalMiB)
 }
 
+function Format-ServerPulseGpuModel {
+    param([AllowNull()][string]$Name)
+
+    $model = if ($null -eq $Name) { '' } else { $Name.Trim() }
+    if ([string]::IsNullOrWhiteSpace($model)) { return '' }
+    $model = [Text.RegularExpressions.Regex]::Replace($model, '\s+', ' ')
+    return [Text.RegularExpressions.Regex]::Replace($model, '(?i)^NVIDIA\s+GeForce\s+', 'NVIDIA ')
+}
+
+function Format-ServerPulseGpuTitle {
+    param([int]$Index,[AllowNull()][string]$Name)
+
+    $model = Format-ServerPulseGpuModel $Name
+    if ([string]::IsNullOrWhiteSpace($model)) { return "GPU $Index" }
+    return "GPU $Index · $model"
+}
+
 function Split-MetricCsvLine {
     param([Parameter(Mandatory)][string]$Line)
 

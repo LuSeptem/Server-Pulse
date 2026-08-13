@@ -1034,13 +1034,14 @@ function New-GpuCardControl {
     param($Card, $Gpu)
 
     $index = [int]$Gpu.Index
+    $gpuTitle = Format-ServerPulseGpuTitle -Index $index -Name ([string]$Gpu.Name)
     $chip = [Windows.Controls.Border]::new()
     $chip.Width = 164; $chip.Background = New-AlphaBrush '#222724' $script:backgroundOpacity
     $chip.CornerRadius = [Windows.CornerRadius]::new(6); $chip.Margin = [Windows.Thickness]::new(0,0,7,7); $chip.Padding = [Windows.Thickness]::new(9,7,9,8)
     $gpuPanel = [Windows.Controls.StackPanel]::new()
     $gpuHeader = [Windows.Controls.Grid]::new(); [void]$gpuHeader.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
     $gpuHeaderRight = [Windows.Controls.ColumnDefinition]::new(); $gpuHeaderRight.Width = 'Auto'; [void]$gpuHeader.ColumnDefinitions.Add($gpuHeaderRight)
-    $gpuLabel = New-Text ("GPU {0}" -f $index) 10 '#DCE3DE'; $gpuLabel.FontWeight = 'SemiBold'
+    $gpuLabel = New-Text $gpuTitle 9 '#DCE3DE'; $gpuLabel.FontWeight = 'SemiBold'; $gpuLabel.TextTrimming = 'CharacterEllipsis'; $gpuLabel.ToolTip = $gpuTitle
     $gpuTemp = New-Text '—°C' 9 '#8A958E'; $gpuTemp.HorizontalAlignment = 'Right'; [Windows.Controls.Grid]::SetColumn($gpuTemp,1)
     [void]$gpuHeader.Children.Add($gpuLabel); [void]$gpuHeader.Children.Add($gpuTemp)
 
@@ -1054,7 +1055,7 @@ function New-GpuCardControl {
     $vramBar = [Windows.Controls.ProgressBar]::new(); $vramBar.Minimum=0; $vramBar.Maximum=100; $vramBar.Height=3; $vramBar.Value=0
     $vramBar.Background=New-Brush '#343B36'; $vramBar.Foreground=New-Brush '#79C8D8'
     [void]$vramPanel.Children.Add($vramText); [void]$vramPanel.Children.Add($vramBar); $vramEntry.Child=$vramPanel
-    [void](Register-UserUsageTarget -Target $vramEntry -Key ("{0}:gpu:{1}:vram" -f $Card.ServerId,$index) -Kind vram -Title ("{0} · GPU {1} VRAM" -f $Card.Label,$index) -ValueElement $vramText -DefaultForeground '#B5BDB8' -Manager $script:userUsagePopupManager)
+    [void](Register-UserUsageTarget -Target $vramEntry -Key ("{0}:gpu:{1}:vram" -f $Card.ServerId,$index) -Kind vram -Title ("{0} · {1} VRAM" -f $Card.Label,$gpuTitle) -ValueElement $vramText -DefaultForeground '#B5BDB8' -Manager $script:userUsagePopupManager)
 
     [void]$gpuPanel.Children.Add($gpuHeader); [void]$gpuPanel.Children.Add($loadValue); [void]$gpuPanel.Children.Add($loadBar); [void]$gpuPanel.Children.Add($vramEntry)
     $chip.Child = $gpuPanel
@@ -1069,7 +1070,9 @@ function Update-GpuCardControl {
     param($Control, $Gpu, $Card)
 
     $Control.Chip.Visibility = 'Visible'
-    $Control.Label.Text = "GPU $([int]$Gpu.Index)"
+    $gpuTitle = Format-ServerPulseGpuTitle -Index ([int]$Gpu.Index) -Name ([string]$Gpu.Name)
+    $Control.Label.Text = $gpuTitle
+    $Control.Label.ToolTip = $gpuTitle
     $temperature = ConvertTo-UserUsageNumber $Gpu.TemperatureC
     $Control.Temperature.Text = if ($null -eq $temperature) { '—°C' } else { '{0:0}°C' -f $temperature }
     $Control.LoadValue.Text = Format-Percent $Gpu.Utilization
@@ -1083,7 +1086,7 @@ function Update-GpuCardControl {
     $Control.VramText.Text = Get-ServerPulseText 'main.gpuMemory' @((Format-Memory $usedMiB),(Format-Memory $totalMiB))
     $Control.VramBar.Value = [Math]::Max(0,[Math]::Min(100,$vramPercent))
     $userMemory = Get-UserUsageProperty $Gpu @('UserMemory') $null
-    Update-UserUsageTarget -Target $Control.VramEntry -Usage $userMemory -TotalMiB $(if ($null -eq $totalMiB) { 0.0 } else { $totalMiB }) -Title ("{0} · GPU {1} VRAM" -f $Card.Label,[int]$Gpu.Index)
+    Update-UserUsageTarget -Target $Control.VramEntry -Usage $userMemory -TotalMiB $(if ($null -eq $totalMiB) { 0.0 } else { $totalMiB }) -Title ("{0} · {1} VRAM" -f $Card.Label,$gpuTitle)
 }
 
 function Hide-InactiveGpuCardControls {

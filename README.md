@@ -29,6 +29,7 @@ Server Pulse 是一个原生 Windows WPF 监控浮窗，直接通过本机 `ssh.
 - 历史点位的 CPU、MEM 和 VRAM 用户明细支持悬停预览和单击锁定。点击用户行可为当前图表切换用户曲线，每张图最多 3 条；同一用户名在整个历史窗口中保持同色，用户线为细虚线，标题下的彩色标签可移除。关闭 VRAM 总量开关时，VRAM 用户明细和曲线同步隐藏，但保留选择。
 - CPU 与系统内存以紧凑辅助指标显示，并紧贴服务器名称与主机信息，减少纵向留白；MEM 同时显示占用百分比和已用/总内存（例如 `73% · 92.2/125.5 GB`）。
 - GPU 是主要信息区：逐卡大号显示利用率，并显示显存已用/总量、独立显存进度条和温度；服务器标题处汇总总显存。
+- 主浮窗和历史记录中的每张 GPU 标题都会显示型号，例如 `GPU 0 · NVIDIA RTX 3090`；采集到的 `NVIDIA GeForce RTX 3090` 会自动简化为 `NVIDIA RTX 3090`，旧历史或缺失型号时安全回退为 GPU 编号。
 - 单台服务器连接失败不会影响另一台，错误会显示在对应节点卡片中。
 - 主题画刷按源颜色、透明度和主题语义缓存复用；刷新、历史重绘和亮暗切换不会为每一轮采样永久累积 WPF 画刷对象。长期运行若更新到旧版本，需重启一次程序释放已经累积的对象。
 
@@ -165,7 +166,7 @@ ServerPulse.exe（固定 AppUserModelID + 进程内 WPF）
 - `Start Server Pulse.vbs`：兼容启动器，优先使用 EXE。
 - `src/Collect-Metrics.ps1`：长期 Worker 与一次性诊断模式。Worker 只建立一次 Runspace Pool，并协调每台服务器各自的长期 SSH 会话，不再使用会反复创建 PowerShell 进程的 `Start-Job`。
 - `src/ServerPulse.Persistent.ps1`：长期 SSH 会话、远端采样分帧、断线退避、随机抖动与熔断状态机。
-- `src/ServerPulse.Core.ps1`：配置校验、CSV/分用户采集协议与指标解析。
+- `src/ServerPulse.Core.ps1`：配置校验、CSV/分用户采集协议、指标解析与 GPU 型号标题格式化。
 - `src/ServerPulse.Ssh.ps1`：SSH 目标解析、用户服务器存储、Windows 凭据、主机指纹与安全 ASKPASS 通道。
 - `src/ServerPulse.ServerManager.ps1`：服务器发现、选择、认证、密码和凭据管理窗口。
 - `src/ServerPulse.History.ps1`：分钟聚合、JSONL 追加与旧格式兼容读取、时间范围查询和原生历史曲线窗口。

@@ -82,6 +82,9 @@ Assert-Equal $metrics.ProtocolVersion 1 '旧协议输出识别为 v1'
 Assert-Equal $metrics.Cpu.UserUsage.Status 'unavailable' 'v1 CPU 用户归属不可用'
 Assert-Equal $metrics.Memory.UserUsage.Status 'unavailable' 'v1 内存用户归属不可用'
 Assert-Equal $metrics.Gpus[0].UserMemory.Status 'unavailable' 'v1 GPU 用户归属不可用'
+Assert-Equal (Format-ServerPulseGpuModel 'NVIDIA GeForce RTX 3090') 'NVIDIA RTX 3090' 'GPU 型号去除冗余 GeForce 前缀'
+Assert-Equal (Format-ServerPulseGpuTitle -Index 0 -Name 'NVIDIA GeForce RTX 3090') 'GPU 0 · NVIDIA RTX 3090' 'GPU 标题包含型号'
+Assert-Equal (Format-ServerPulseGpuTitle -Index 1 -Name '') 'GPU 1' '缺少 GPU 型号时安全回退标题'
 
 $v2Sample = @"
 PROTOCOL_VERSION=2
@@ -391,6 +394,7 @@ Assert-Equal ([bool]($mainScript -match "ThemeMode = 'dark'")) $true '全新和�
 Assert-Equal ([bool]($mainScript -match 'ThemeMode=\$script:themeMode')) $true '用户主题选择随设置持久化'
 Assert-Equal ([bool]($mainScript -match 'Get-ServerPulseSystemTheme|Resolve-ServerPulseTheme')) $true '跟随系统模式定时解析 Windows 应用主题'
 Assert-Equal ([bool]($mainScript -match 'x:Name="LanguageButton"')) $true '主窗口右上角提供语言切换按钮'
+Assert-Equal ([bool]($mainScript -match 'Format-ServerPulseGpuTitle')) $true '主界面 GPU 标题显示型号'
 Assert-Equal ([bool]($mainScript -match "@\('zh','中文'\),@\('en','English'\),@\('system','跟随系统'\)")) $true '语言菜单包含中文、英文和跟随系统三种模式'
 Assert-Equal ([bool]($mainScript -match "LanguageMode = 'zh'")) $true '全新配置默认使用中文'
 Assert-Equal ([bool]($mainScript -match 'LanguageMode=\$script:languageMode')) $true '用户语言选择随设置持久化'
@@ -436,6 +440,7 @@ $vramFormatPattern = '''\{0:0\.0\} GB · \{1\}'''
 Assert-Equal ([bool]($mainScript -match $vramFormatPattern)) $true '实时显存用户值同时显示 GB 与百分比'
 $historyScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($historyScript -match 'New-ServerPulseThemeBrush')) $true '历史记录窗口复用共享主题色'
+Assert-Equal ([bool]($historyScript -match 'Format-ServerPulseGpuTitle')) $true '历史 GPU 图表标题显示型号'
 Assert-Equal ([bool]($historyScript -match 'Update-HistoryWindowLanguage')) $true '历史记录窗口支持语言刷新'
 Assert-Equal ([bool]($historyScript -match 'HistoryCloseButton\.Add_Click\(\{\s*\$historyWindow\.Close')) $false '历史关闭回调不得依赖动态窗口变量'
 Assert-Equal ([bool]($historyScript -match '\[Windows\.Window\]::GetWindow\(\$sender\)')) $true '历史关闭回调从按钮解析所属窗口'

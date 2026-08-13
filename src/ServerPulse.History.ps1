@@ -910,7 +910,7 @@ function Add-HistoryServerSection {
             [PSCustomObject]@{Name='TEMP';Suffix='°C';Color='#E4B64B';Points=$tempPoints;Latest=$gpuLatest.TemperatureC}
         )
         $subtitle = Get-ServerPulseText 'history.gpuSubtitle' @(([double]$gpuLatest.MemoryUsedMiB/1024),([double]$gpuLatest.MemoryTotalMiB/1024),$gpuLatest.PowerDrawW,$gpuLatest.PowerLimitW,$gpuLatest.FanPercent)
-        [void]$wrap.Children.Add((New-HistoryChartCard -Title ("GPU {0}" -f $gpuIndex) -Subtitle $subtitle -Series $series -Start $Start -End $End -UserPoints $vramUserPoints -UserKind GpuMemory -UserParentSeries VRAM -ChartKey "$ServerId/gpu/$gpuIndex/vram" -SelectionStore $SelectionStore))
+        [void]$wrap.Children.Add((New-HistoryChartCard -Title (Format-ServerPulseGpuTitle -Index $gpuIndex -Name ([string](Get-HistoryObjectValue $gpuLatest @('Name')))) -Subtitle $subtitle -Series $series -Start $Start -End $End -UserPoints $vramUserPoints -UserKind GpuMemory -UserParentSeries VRAM -ChartKey "$ServerId/gpu/$gpuIndex/vram" -SelectionStore $SelectionStore))
     }
     [void]$stack.Children.Add($wrap); $surface.Child=$stack; [void]$Panel.Children.Add($surface)
 }
