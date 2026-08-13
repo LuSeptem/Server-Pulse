@@ -1,5 +1,56 @@
 ﻿function New-ServerManagerBrush([string]$Color) { return New-ServerPulseThemeBrush $Color }
 
+function New-ServerManagerButtonStyle {
+    param([switch]$Accent)
+
+    $style = [Windows.Style]::new([Windows.Controls.Button])
+    $background = if ($Accent) { '#A7D948' } else { '#252C27' }
+    $foreground = if ($Accent) { '#101411' } else { '#D9E0DB' }
+    $border = if ($Accent) { '#91C235' } else { '#3A443D' }
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BackgroundProperty, (New-ServerManagerBrush $background)))
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::ForegroundProperty, (New-ServerManagerBrush $foreground)))
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BorderBrushProperty, (New-ServerManagerBrush $border)))
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BorderThicknessProperty, [Windows.Thickness]::new(1)))
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::OpacityProperty, 1.0))
+    $disabled = [Windows.Trigger]::new()
+    $disabled.Property = [Windows.Controls.Control]::IsEnabledProperty
+    $disabled.Value = $false
+    [void]$disabled.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BackgroundProperty, (New-ServerManagerBrush '#303732')))
+    [void]$disabled.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::ForegroundProperty, (New-ServerManagerBrush '#59635D')))
+    [void]$disabled.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BorderBrushProperty, (New-ServerManagerBrush '#78827C')))
+    [void]$disabled.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::OpacityProperty, 0.9))
+    [void]$style.Triggers.Add($disabled)
+    return $style
+}
+
+function New-ServerManagerCheckBoxStyle {
+    $style = [Windows.Style]::new([Windows.Controls.CheckBox])
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BackgroundProperty, (New-ServerManagerBrush '#202622')))
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::ForegroundProperty, (New-ServerManagerBrush '#D9E0DB')))
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BorderBrushProperty, (New-ServerManagerBrush '#69736D')))
+    [void]$style.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BorderThicknessProperty, [Windows.Thickness]::new(1)))
+    $checked = [Windows.Trigger]::new()
+    $checked.Property = [Windows.Controls.Primitives.ToggleButton]::IsCheckedProperty
+    $checked.Value = $true
+    [void]$checked.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BackgroundProperty, (New-ServerManagerBrush '#A7D948')))
+    [void]$checked.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::BorderBrushProperty, (New-ServerManagerBrush '#91C235')))
+    [void]$checked.Setters.Add([Windows.Setter]::new([Windows.Controls.Control]::ForegroundProperty, (New-ServerManagerBrush '#101411')))
+    [void]$style.Triggers.Add($checked)
+    return $style
+}
+
+function Set-ServerManagerButtonVisual {
+    param([Windows.Controls.Button]$Button, [switch]$Accent)
+    if ($null -eq $Button) { return }
+    $Button.Style = New-ServerManagerButtonStyle -Accent:$Accent
+}
+
+function Set-ServerManagerCheckBoxVisual {
+    param([Windows.Controls.CheckBox]$CheckBox)
+    if ($null -eq $CheckBox) { return }
+    $CheckBox.Style = New-ServerManagerCheckBoxStyle
+}
+
 function Copy-ServerPulseManagedServer {
     param($Server)
     return New-ServerPulseManagedServer -Id ([string]$Server.Id) -Label ([string]$Server.Label) -Source ([string]$Server.Source) -SshTarget ([string]$Server.SshTarget) -HostName ([string]$Server.HostName) -Port ([int]$Server.Port) -User ([string]$Server.User) -Monitored ([bool]$Server.Monitored)
@@ -197,28 +248,28 @@ function New-ServerManagerRow {
     $surface=[Windows.Controls.Border]::new();$surface.Background=New-ServerManagerBrush '#151A17';$surface.BorderBrush=New-ServerManagerBrush '#303731';$surface.BorderThickness=1;$surface.CornerRadius=7;$surface.Padding=10;$surface.Margin='0,0,0,8'
     $stack=[Windows.Controls.StackPanel]::new();$surface.Child=$stack
     $header=[Windows.Controls.Grid]::new();[void]$header.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new());$auto=[Windows.Controls.ColumnDefinition]::new();$auto.Width='Auto';[void]$header.ColumnDefinitions.Add($auto)
-    $monitor=[Windows.Controls.CheckBox]::new();$monitor.Content=$Server.Label;$monitor.IsChecked=[bool]$Server.Monitored;$monitor.Foreground=New-ServerManagerBrush '#EDF2EE';$monitor.FontSize=13;$monitor.FontWeight='SemiBold'
+    $monitor=[Windows.Controls.CheckBox]::new();$monitor.Content=$Server.Label;$monitor.IsChecked=[bool]$Server.Monitored;$monitor.Foreground=New-ServerManagerBrush '#EDF2EE';$monitor.FontSize=13;$monitor.FontWeight='SemiBold';Set-ServerManagerCheckBoxVisual $monitor
     $status=[Windows.Controls.TextBlock]::new();$status.Text=Get-ServerPulseText 'manager.notVerified';$status.Foreground=New-ServerManagerBrush '#7A857E';$status.FontSize=9;$status.VerticalAlignment='Center';[Windows.Controls.Grid]::SetColumn($status,1)
     [void]$header.Children.Add($monitor);[void]$header.Children.Add($status);[void]$stack.Children.Add($header)
     $meta=[Windows.Controls.TextBlock]::new();$meta.Text=("{0}  ·  {1}@{2}:{3}" -f $Server.SshTarget,$Server.User,$Server.HostName,$Server.Port);$meta.Foreground=New-ServerManagerBrush '#78827C';$meta.FontSize=9;$meta.Margin='22,4,0,6';[void]$stack.Children.Add($meta)
     $tools=[Windows.Controls.StackPanel]::new();$tools.Orientation='Horizontal';$tools.Margin='22,0,0,4'
-    $passwordless=[Windows.Controls.CheckBox]::new();$passwordless.Content=Get-ServerPulseText 'manager.passwordless';$passwordless.IsHitTestVisible=$false;$passwordless.Focusable=$false;$passwordless.Foreground=New-ServerManagerBrush '#AAB3AD';$passwordless.FontSize=9;$passwordless.Margin='0,0,4,0'
+    $passwordless=[Windows.Controls.CheckBox]::new();$passwordless.Content=Get-ServerPulseText 'manager.passwordless';$passwordless.IsHitTestVisible=$false;$passwordless.Focusable=$false;$passwordless.Foreground=New-ServerManagerBrush '#AAB3AD';$passwordless.FontSize=9;$passwordless.Margin='0,0,4,0';Set-ServerManagerCheckBoxVisual $passwordless
     $info=[Windows.Controls.Border]::new();$info.Width=16;$info.Height=16;$info.CornerRadius=8;$info.Background=New-ServerManagerBrush '#29312B';$info.Margin='0,0,12,0';$info.Cursor='Help';$mark=[Windows.Controls.TextBlock]::new();$mark.Text='!';$mark.Foreground=New-ServerManagerBrush '#E4B64B';$mark.HorizontalAlignment='Center';$mark.VerticalAlignment='Center';$mark.FontWeight='Bold';$info.Child=$mark
     $info.ToolTip=Get-ServerPulseText 'manager.passwordlessTip'
     $credential=[Windows.Controls.TextBlock]::new();$credential.Text=Get-ServerPulseCredentialState $Server $Context.SessionSecrets;$credential.Foreground=New-ServerManagerBrush '#87928B';$credential.FontSize=9;$credential.VerticalAlignment='Center'
-    $updateCredential=[Windows.Controls.Button]::new();$updateCredential.Content=Get-ServerPulseText 'manager.updatePassword';$updateCredential.Margin='7,0,0,0';$updateCredential.Padding='7,2'
-    $deleteCredential=[Windows.Controls.Button]::new();$deleteCredential.Content=Get-ServerPulseText 'manager.deleteCredential';$deleteCredential.Margin='5,0,0,0';$deleteCredential.Padding='7,2';$deleteCredential.Visibility=if($credential.Text-eq(Get-ServerPulseText 'manager.saved')){'Visible'}else{'Collapsed'}
-    $test=[Windows.Controls.Button]::new();$test.Content=Get-ServerPulseText 'manager.recheck';$test.Margin='12,0,0,0';$test.Padding='8,2';$test.Foreground=New-ServerManagerBrush '#D9E0DB';$test.Background=New-ServerManagerBrush '#252C27';$test.BorderBrush=New-ServerManagerBrush '#3A443D'
-    $edit=[Windows.Controls.Button]::new();$edit.Content=Get-ServerPulseText 'manager.edit';$edit.Margin='6,0,0,0';$edit.Padding='8,2';$edit.Visibility=if($Server.Source -eq 'sshConfig'){'Collapsed'}else{'Visible'}
-    $delete=[Windows.Controls.Button]::new();$delete.Content=Get-ServerPulseText 'manager.delete';$delete.Margin='6,0,0,0';$delete.Padding='8,2';$delete.Visibility=if($Server.Source -eq 'sshConfig'){'Collapsed'}else{'Visible'}
+    $updateCredential=[Windows.Controls.Button]::new();$updateCredential.Content=Get-ServerPulseText 'manager.updatePassword';$updateCredential.Margin='7,0,0,0';$updateCredential.Padding='7,2';Set-ServerManagerButtonVisual $updateCredential
+    $deleteCredential=[Windows.Controls.Button]::new();$deleteCredential.Content=Get-ServerPulseText 'manager.deleteCredential';$deleteCredential.Margin='5,0,0,0';$deleteCredential.Padding='7,2';$deleteCredential.Visibility=if($credential.Text-eq(Get-ServerPulseText 'manager.saved')){'Visible'}else{'Collapsed'};Set-ServerManagerButtonVisual $deleteCredential
+    $test=[Windows.Controls.Button]::new();$test.Content=Get-ServerPulseText 'manager.recheck';$test.Margin='12,0,0,0';$test.Padding='8,2';Set-ServerManagerButtonVisual $test
+    $edit=[Windows.Controls.Button]::new();$edit.Content=Get-ServerPulseText 'manager.edit';$edit.Margin='6,0,0,0';$edit.Padding='8,2';$edit.Visibility=if($Server.Source -eq 'sshConfig'){'Collapsed'}else{'Visible'};Set-ServerManagerButtonVisual $edit
+    $delete=[Windows.Controls.Button]::new();$delete.Content=Get-ServerPulseText 'manager.delete';$delete.Margin='6,0,0,0';$delete.Padding='8,2';$delete.Visibility=if($Server.Source -eq 'sshConfig'){'Collapsed'}else{'Visible'};Set-ServerManagerButtonVisual $delete
     foreach($control in @($passwordless,$info,$credential,$updateCredential,$deleteCredential,$test,$edit,$delete)){[void]$tools.Children.Add($control)};[void]$stack.Children.Add($tools)
     $passwordPanel=[Windows.Controls.StackPanel]::new();$passwordPanel.Margin='22,5,0,2';$passwordPanel.Visibility='Collapsed'
     $passwordLine=[Windows.Controls.Grid]::new();[void]$passwordLine.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new());$eyeColumn=[Windows.Controls.ColumnDefinition]::new();$eyeColumn.Width='Auto';[void]$passwordLine.ColumnDefinitions.Add($eyeColumn)
     $password=[Windows.Controls.PasswordBox]::new();$password.Height=26;$password.Padding='6,3';$password.Background=New-ServerManagerBrush '#202622';$password.Foreground=New-ServerManagerBrush '#E7ECE8';$password.BorderBrush=New-ServerManagerBrush '#3A443D'
     $reveal=[Windows.Controls.TextBox]::new();$reveal.Height=26;$reveal.Padding='6,3';$reveal.IsReadOnly=$true;$reveal.Visibility='Collapsed';$reveal.Background=$password.Background;$reveal.Foreground=$password.Foreground
-    $eye=[Windows.Controls.Button]::new();$eye.Content=Get-ServerPulseText 'manager.reveal';$eye.Margin='6,0,0,0';$eye.Padding='7,2';[Windows.Controls.Grid]::SetColumn($eye,1)
+    $eye=[Windows.Controls.Button]::new();$eye.Content=Get-ServerPulseText 'manager.reveal';$eye.Margin='6,0,0,0';$eye.Padding='7,2';Set-ServerManagerButtonVisual $eye;[Windows.Controls.Grid]::SetColumn($eye,1)
     [void]$passwordLine.Children.Add($password);[void]$passwordLine.Children.Add($reveal);[void]$passwordLine.Children.Add($eye);[void]$passwordPanel.Children.Add($passwordLine)
-    $save=[Windows.Controls.CheckBox]::new();$save.Content=Get-ServerPulseText 'manager.saveCredential';$save.IsChecked=$false;$save.Foreground=New-ServerManagerBrush '#AAB3AD';$save.FontSize=9;$save.Margin='0,6,0,0';[void]$passwordPanel.Children.Add($save);[void]$stack.Children.Add($passwordPanel)
+    $save=[Windows.Controls.CheckBox]::new();$save.Content=Get-ServerPulseText 'manager.saveCredential';$save.IsChecked=$false;$save.Foreground=New-ServerManagerBrush '#AAB3AD';$save.FontSize=9;$save.Margin='0,6,0,0';Set-ServerManagerCheckBoxVisual $save;[void]$passwordPanel.Children.Add($save);[void]$stack.Children.Add($passwordPanel)
     $state=[PSCustomObject]@{Context=$Context;Server=$Server;Surface=$surface;Monitor=$monitor;Meta=$meta;StatusText=$status;Passwordless=$passwordless;CredentialText=$credential;UpdateCredentialButton=$updateCredential;DeleteCredentialButton=$deleteCredential;TestButton=$test;EditButton=$edit;DeleteButton=$delete;PasswordPanel=$passwordPanel;PasswordBox=$password;Reveal=$reveal;Eye=$eye;SaveCredential=$save;Status='unknown';AuthMode='auto'}
     Register-ServerManagerRowEvents $state
     $remembered=Get-ServerManagerRememberedValidation $Context $Server
@@ -281,8 +332,8 @@ function Show-ServerPulseManualServerDialog {
     $panel=[Windows.Controls.StackPanel]::new();$panel.Margin=18;$dialog.Content=$panel
     $initial=@{Label=if($editing){[string]$Server.Label}else{''};Host=if($editing){[string]$Server.HostName}else{''};Port=if($editing){[string]$Server.Port}else{'22'};User=if($editing){[string]$Server.User}else{''}}
     $inputs=@{};foreach($field in @(@('Label',(Get-ServerPulseText 'manager.displayName')),@('Host',(Get-ServerPulseText 'manager.host')),@('Port',(Get-ServerPulseText 'manager.port')),@('User',(Get-ServerPulseText 'manager.user')))){$label=[Windows.Controls.TextBlock]::new();$label.Text=$field[1];$label.Margin='0,4,0,3';[void]$panel.Children.Add($label);$box=[Windows.Controls.TextBox]::new();$box.Height=28;$box.Padding='6,3';$box.Text=$initial[$field[0]];[void]$panel.Children.Add($box);$inputs[$field[0]]=$box}
-    $inherit=[Windows.Controls.CheckBox]::new();$inherit.Content=Get-ServerPulseText 'manager.inherit';$inherit.IsChecked=$true;$inherit.Visibility=if($editing){'Visible'}else{'Collapsed'};$inherit.Margin='0,9,0,0';$inherit.ToolTip=Get-ServerPulseText 'manager.inheritTip';[void]$panel.Children.Add($inherit)
-    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,14,0,0';$ok=[Windows.Controls.Button]::new();$ok.Content=if($editing){Get-ServerPulseText 'manager.save'}else{Get-ServerPulseText 'manager.add'};$ok.Padding='14,4';$cancel=[Windows.Controls.Button]::new();$cancel.Content=Get-ServerPulseText 'manager.cancel';$cancel.Padding='14,4';$cancel.Margin='8,0,0,0';[void]$buttons.Children.Add($ok);[void]$buttons.Children.Add($cancel);[void]$panel.Children.Add($buttons)
+    $inherit=[Windows.Controls.CheckBox]::new();$inherit.Content=Get-ServerPulseText 'manager.inherit';$inherit.IsChecked=$true;$inherit.Visibility=if($editing){'Visible'}else{'Collapsed'};$inherit.Margin='0,9,0,0';$inherit.ToolTip=Get-ServerPulseText 'manager.inheritTip';Set-ServerManagerCheckBoxVisual $inherit;[void]$panel.Children.Add($inherit)
+    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,14,0,0';$ok=[Windows.Controls.Button]::new();$ok.Content=if($editing){Get-ServerPulseText 'manager.save'}else{Get-ServerPulseText 'manager.add'};$ok.Padding='14,4';Set-ServerManagerButtonVisual $ok -Accent;$cancel=[Windows.Controls.Button]::new();$cancel.Content=Get-ServerPulseText 'manager.cancel';$cancel.Padding='14,4';$cancel.Margin='8,0,0,0';Set-ServerManagerButtonVisual $cancel;[void]$buttons.Children.Add($ok);[void]$buttons.Children.Add($cancel);[void]$panel.Children.Add($buttons)
     $dialog.Tag=[PSCustomObject]@{Inputs=$inputs;Original=$Server;Inherit=$inherit;Result=$null};$ok.Tag=$dialog;$ok.Add_Click({param($sender,$eventArgs);$w=$sender.Tag;try{$i=$w.Tag.Inputs;$port=0;if(-not[int]::TryParse($i.Port.Text,[ref]$port)){throw (Get-ServerPulseText 'manager.invalidPort')};$original=$w.Tag.Original;$server=New-ServerPulseManagedServer -Id $(if($null-ne$original){[string]$original.Id}else{$null}) -Label $i.Label.Text.Trim() -Source manual -SshTarget $i.Host.Text.Trim() -HostName $i.Host.Text.Trim() -Port $port -User $i.User.Text.Trim() -Monitored $(if($null-ne$original){[bool]$original.Monitored}else{$true});if(-not$server.Label){throw (Get-ServerPulseText 'manager.emptyLabel')};$w.Tag.Result=[PSCustomObject]@{Server=$server;InheritHistory=[bool]$w.Tag.Inherit.IsChecked};$w.DialogResult=$true}catch{[Windows.MessageBox]::Show($w,$_.Exception.Message,(Get-ServerPulseText 'manager.inputError'),'OK','Error')|Out-Null}});$cancel.Tag=$dialog;$cancel.Add_Click({param($sender,$eventArgs);$sender.Tag.DialogResult=$false})
     Update-ServerPulseThemeVisualTree $dialog
     [void]$dialog.ShowDialog();return $dialog.Tag.Result
@@ -294,7 +345,10 @@ function Show-ServerPulseServerManager {
     $topmostBinding=[Windows.Data.Binding]::new('Topmost');$topmostBinding.Source=$Owner;$topmostBinding.Mode='OneWay';[void]$window.SetBinding([Windows.Window]::TopmostProperty,$topmostBinding)
     $root=[Windows.Controls.DockPanel]::new();$root.Margin=16;$window.Content=$root
     $footer=[Windows.Controls.StackPanel]::new();$footer.Orientation='Horizontal';$footer.HorizontalAlignment='Right';$footer.Margin='0,12,0,0';[Windows.Controls.DockPanel]::SetDock($footer,'Bottom');[void]$root.Children.Add($footer)
-    $add=[Windows.Controls.Button]::new();$add.Content=Get-ServerPulseText 'manager.add';$add.Padding='12,5';$apply=[Windows.Controls.Button]::new();$apply.Content=Get-ServerPulseText 'manager.apply';$apply.Padding='14,5';$apply.Margin='8,0,0,0';$cancel=[Windows.Controls.Button]::new();$cancel.Content=Get-ServerPulseText 'manager.cancel';$cancel.Padding='14,5';$cancel.Margin='8,0,0,0';foreach($b in @($add,$apply,$cancel)){[void]$footer.Children.Add($b)}
+    $add=[Windows.Controls.Button]::new();$add.Content=Get-ServerPulseText 'manager.add';$add.Padding='12,5';Set-ServerManagerButtonVisual $add
+    $apply=[Windows.Controls.Button]::new();$apply.Content=Get-ServerPulseText 'manager.apply';$apply.Padding='14,5';$apply.Margin='8,0,0,0';Set-ServerManagerButtonVisual $apply -Accent
+    $cancel=[Windows.Controls.Button]::new();$cancel.Content=Get-ServerPulseText 'manager.cancel';$cancel.Padding='14,5';$cancel.Margin='8,0,0,0';Set-ServerManagerButtonVisual $cancel
+    foreach($b in @($add,$apply,$cancel)){[void]$footer.Children.Add($b)}
     $introPanel=[Windows.Controls.StackPanel]::new();$introPanel.Margin='0,0,0,12';[Windows.Controls.DockPanel]::SetDock($introPanel,'Top');[void]$root.Children.Add($introPanel)
     $intro=[Windows.Controls.TextBlock]::new();$intro.Text=Get-ServerPulseText 'manager.intro';$intro.TextWrapping='Wrap';$intro.Foreground=New-ServerManagerBrush '#9DA7A0';[void]$introPanel.Children.Add($intro)
     $discoveryStatus=[Windows.Controls.TextBlock]::new();$discoveryStatus.Text=Get-ServerPulseText 'manager.waitingDiscovery';$discoveryStatus.Foreground=New-ServerManagerBrush '#657069';$discoveryStatus.FontSize=9;$discoveryStatus.Margin='0,5,0,0';[void]$introPanel.Children.Add($discoveryStatus)

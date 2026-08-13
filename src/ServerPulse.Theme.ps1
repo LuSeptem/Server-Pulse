@@ -184,6 +184,10 @@ function Update-ServerPulseThemeVisualTree {
         $updated = Set-ServerPulseBrushTheme $property.Value
         if (-not [object]::ReferenceEquals($updated,$property.Value) -and $property.IsSettable) { $property.Value = $updated }
     }
+    $styleProperty = $Root.PSObject.Properties['Style']
+    if ($null -ne $styleProperty -and $styleProperty.Value -is [Windows.Style]) {
+        Update-ServerPulseThemeResources $styleProperty.Value
+    }
     $resourcesProperty = $Root.PSObject.Properties['Resources']
     if ($null -ne $resourcesProperty -and $null -ne $resourcesProperty.Value) {
         foreach ($entry in @($resourcesProperty.Value.Values)) { Update-ServerPulseThemeResources $entry }
