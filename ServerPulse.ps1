@@ -99,6 +99,12 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
           <TextBlock x:Name="FleetState" Text="  连接中" Foreground="#78827C" FontSize="10" VerticalAlignment="Center"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="LanguageButton" Style="{StaticResource QuietButton}" ToolTip="界面语言" MinWidth="48" Background="#202521">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <Viewbox Width="12" Height="12" Margin="0,0,4,0"><Canvas Width="16" Height="16"><Ellipse Width="12" Height="12" Canvas.Left="2" Canvas.Top="2" Fill="Transparent" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" StrokeThickness="1.5"/><Path Data="M3 5h10 M3 8h10 M3 11h7" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" StrokeThickness="1.4" StrokeStartLineCap="Round"/></Canvas></Viewbox>
+              <TextBlock x:Name="LanguageButtonText" Text="中" FontSize="9" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
           <Button x:Name="ThemeButton" Style="{StaticResource QuietButton}" ToolTip="界面主题" MinWidth="48" Background="#202521">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <Viewbox Width="12" Height="12" Margin="0,0,4,0"><Canvas Width="16" Height="16"><Ellipse Width="12" Height="12" Canvas.Left="2" Canvas.Top="2" Fill="Transparent" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" StrokeThickness="1.5"/><Path Data="M8 2 A6 6 0 0 0 8 14 Z" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"/></Canvas></Viewbox>
@@ -134,18 +140,18 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
               <Button x:Name="ServerButton" Style="{StaticResource ManageButton}" ToolTip="选择监视 SSH 服务器" Margin="8,0,0,0">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                   <Viewbox Width="14" Height="14" Margin="0,0,5,0"><Canvas Width="16" Height="16"><Path Data="M2 2.5h12v4H2z M2 9.5h12v4H2z" Fill="Transparent" Stroke="#A7D948" StrokeThickness="1.4" StrokeLineJoin="Round"/><Path Data="M4.2 4.5h.1 M4.2 11.5h.1" Stroke="#A7D948" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
-                  <TextBlock Text="管理" VerticalAlignment="Center"/>
+                   <TextBlock x:Name="ManageButtonText" Text="管理" VerticalAlignment="Center"/>
                 </StackPanel>
               </Button>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <Button x:Name="HistoryButton" Content="记录" Style="{StaticResource HistoryAccentButton}" Margin="0,0,8,0" ToolTip="查看占用记录"/>
-              <TextBlock Text="刷新" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="0,0,4,0"/>
+               <TextBlock x:Name="RefreshLabel" Text="刷新" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="0,0,4,0"/>
               <TextBox x:Name="RefreshIntervalBox" Width="32" Height="20" MaxLength="3" Text="5" TextAlignment="Center"
                        VerticalContentAlignment="Center" Padding="2,0" FontSize="9" Foreground="#C5CDC8"
                        Background="#1A1F1C" BorderBrush="#343B36" BorderThickness="1" CaretBrush="#A7D948"
                        SelectionBrush="#A7D948" ToolTip="刷新间隔：1–300 秒，回车生效"/>
-              <TextBlock Text="s" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="3,0,10,0"/>
+               <TextBlock x:Name="SecondsLabel" Text="s" Foreground="#68736C" FontSize="8" VerticalAlignment="Center" Margin="3,0,10,0"/>
               <TextBlock x:Name="UpdatedText" Text="--:--:--" Foreground="#5F6963" FontSize="9" VerticalAlignment="Center"/>
             </StackPanel>
           </Grid>
@@ -156,7 +162,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
       </Grid>
 
       <Grid Grid.Row="2" Margin="14,0,8,0">
-        <TextBlock Text="拖动右下角调节尺寸" Foreground="#56605A" FontSize="8" VerticalAlignment="Center"/>
+         <TextBlock x:Name="ResizeHint" Text="拖动右下角调节尺寸" Foreground="#56605A" FontSize="8" VerticalAlignment="Center"/>
         <ResizeGrip HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="14" Height="14" Foreground="#69736D"/>
       </Grid>
     </Grid>
@@ -166,13 +172,13 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $reader = [Xml.XmlNodeReader]::new($xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$names = 'WindowSurface','DragArea','FleetDot','FleetState','ThemeButton','ThemeButtonText','OpacitySlider','EdgeButton','PinButton','ServerButton','MinimizeButton','CloseButton','SummaryText','HistoryButton','RefreshIntervalBox','UpdatedText','ServerPanel'
+$names = 'WindowSurface','DragArea','FleetDot','FleetState','LanguageButton','LanguageButtonText','ThemeButton','ThemeButtonText','OpacitySlider','EdgeButton','PinButton','ServerButton','ManageButtonText','MinimizeButton','CloseButton','SummaryText','HistoryButton','RefreshLabel','RefreshIntervalBox','SecondsLabel','UpdatedText','ResizeHint','ServerPanel'
 $ui = @{}
 foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
 $settingsDirectory = if($SmokeTest){Join-Path $scriptRoot 'tests\artifacts\localappdata-smoke\ServerPulse'}else{Join-Path $env:LOCALAPPDATA 'ServerPulse'}
 $settingsPath = Join-Path $settingsDirectory 'settings.json'
-$settings = [PSCustomObject]@{ Version = 3; ThemeMode = 'dark'; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
+$settings = [PSCustomObject]@{ Version = 4; ThemeMode = 'dark'; LanguageMode = 'zh'; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
 if (Test-Path -LiteralPath $settingsPath) {
     try {
         $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -237,7 +243,8 @@ function Show-ServerPulseErrorDialog {
     $dialog.FindName('DialogTitle').Text=$Title
     $dialog.FindName('DialogMessage').Text=$Message
     $dialog.FindName('DialogDetail').Text=$Detail
-    $dialog.FindName('DialogLogPath').Text=if([string]::IsNullOrWhiteSpace($LogPath)){''}else{"详细日志：$LogPath"}
+    $dialog.FindName('DialogLogPath').Text=if([string]::IsNullOrWhiteSpace($LogPath)){''}else{Get-ServerPulseText 'main.logDetail' @($LogPath)}
+    $dialog.FindName('DialogCloseButton').Content=Get-ServerPulseText 'main.dialogOk'
     $dialog.FindName('DialogCloseButton').Add_Click({param($sender,$event);$target=[Windows.Window]::GetWindow($sender);if($null-ne$target){$target.Close()}})
     Update-ServerPulseThemeVisualTree $dialog
     if($SmokeTest){
@@ -255,11 +262,11 @@ $window.Dispatcher.Add_UnhandledException({
             $script:dispatcherProbeHandled=$true
         } else {
             $logPath=Write-ServerPulseErrorLog -Exception $eventArgs.Exception -Context 'DispatcherUnhandledException'
-            $ui.SummaryText.Text='界面操作发生异常，软件已保持运行'
-            $ui.SummaryText.ToolTip="错误详情已写入 $logPath"
+            $ui.SummaryText.Text=Get-ServerPulseText 'main.uiError'
+            $ui.SummaryText.ToolTip=Get-ServerPulseText 'main.logTooltip' @($logPath)
         }
     } catch {
-        $ui.SummaryText.Text='界面操作发生异常，软件已保持运行'
+        $ui.SummaryText.Text=Get-ServerPulseText 'main.uiError'
     }
     $eventArgs.Handled=$true
 })
@@ -273,6 +280,7 @@ $ui.EdgeButton.Tag = if ([bool]$settings.AutoHide) { 'active' } else { $null }
 $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null }
 
 . (Join-Path $scriptRoot 'src\ServerPulse.Theme.ps1')
+. (Join-Path $scriptRoot 'src\ServerPulse.Localization.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.Core.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.History.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.Ssh.ps1')
@@ -295,6 +303,7 @@ $script:historyRecorder = New-ServerPulseHistoryRecorder -Directory $historyDire
 if (-not $SmokeTest) { try { Remove-ExpiredServerPulseHistory $script:historyRecorder } catch { } }
 $script:cards = @{}
 $script:collectionProcess = $null
+$script:lastSnapshot = $null
 $script:collectionBusy = $false
 $script:stdoutTask = $null
 $script:stderrTask = $null
@@ -344,6 +353,8 @@ function New-Text([string]$Text, [double]$Size, [string]$Color) {
 
 $script:themeMode = Normalize-ServerPulseThemeMode ([string]$settings.ThemeMode)
 $script:resolvedTheme = Set-ServerPulseThemeState -Mode $script:themeMode -ResolvedTheme (Resolve-ServerPulseTheme $script:themeMode)
+$script:languageMode = Normalize-ServerPulseLanguageMode ([string]$settings.LanguageMode)
+$script:resolvedLanguage = Set-ServerPulseLanguageState -Mode $script:languageMode -ResolvedLanguage (Resolve-ServerPulseLanguage $script:languageMode)
 Update-ServerPulseThemeVisualTree $window
 $script:themeChoiceRows = [Collections.ArrayList]::new()
 $script:themePopup = [Windows.Controls.Primitives.Popup]::new()
@@ -365,17 +376,84 @@ $themePopupSurface.Child = $themePopupPanel
 $script:themePopup.Child = $themePopupSurface
 
 function Update-ServerPulseThemeSelector {
-    $labels = @{ light='亮'; dark='暗'; system='跟随系统' }
-    $buttonLabels = @{ light='亮'; dark='暗'; system='系统' }
-    $ui.ThemeButtonText.Text = [string]$buttonLabels[$script:themeMode]
-    $ui.ThemeButton.ToolTip = "界面主题：$($labels[$script:themeMode])"
+    $ui.ThemeButtonText.Text = Get-ServerPulseText ("theme.button.{0}" -f $script:themeMode)
+    $ui.ThemeButton.ToolTip = Get-ServerPulseText 'theme.tooltip' @((Get-ServerPulseText ("theme.{0}" -f $script:themeMode)))
     foreach ($row in @($script:themeChoiceRows)) {
         $active = [string]$row.Mode -eq $script:themeMode
+        $row.Label.Text = Get-ServerPulseText ("theme.{0}" -f $row.Mode)
         $row.Surface.Background = if ($active) { New-Brush '#A7D948' } else { [Windows.Media.Brushes]::Transparent }
         $row.Label.Foreground = if ($active) { New-Brush '#0B0E0C' } else { New-Brush '#D7DDD9' }
         $row.Mark.Foreground = if ($active) { New-Brush '#0B0E0C' } else { New-Brush '#657069' }
         $row.Mark.Text = if ($active) { '●' } else { '' }
     }
+}
+
+function Update-ServerPulseLanguageSelector {
+    $ui.LanguageButtonText.Text = Get-ServerPulseText ("language.button.{0}" -f $script:languageMode)
+    $ui.LanguageButton.ToolTip = Get-ServerPulseText 'language.tooltip' @((Get-ServerPulseText ("language.{0}" -f $script:languageMode)))
+    foreach ($row in @($script:languageChoiceRows)) {
+        $active = [string]$row.Mode -eq $script:languageMode
+        $row.Label.Text = Get-ServerPulseText ("language.{0}" -f $row.Mode)
+        $row.Surface.Background = if ($active) { New-Brush '#A7D948' } else { [Windows.Media.Brushes]::Transparent }
+        $row.Label.Foreground = if ($active) { New-Brush '#0B0E0C' } else { New-Brush '#D7DDD9' }
+        $row.Mark.Foreground = if ($active) { New-Brush '#0B0E0C' } else { New-Brush '#657069' }
+        $row.Mark.Text = if ($active) { '●' } else { '' }
+    }
+}
+
+function Update-ServerPulseMainLanguage {
+    $ui.FleetState.Text = "  $(Get-ServerPulseText 'main.connecting')"
+    if ($null -eq $script:lastSnapshot) { $ui.SummaryText.Text = Get-ServerPulseText 'main.waiting' }
+    $ui.ManageButtonText.Text = Get-ServerPulseText 'main.manage'
+    $ui.HistoryButton.Content = Get-ServerPulseText 'main.history'
+    $ui.HistoryButton.ToolTip = Get-ServerPulseText 'history.title'
+    $ui.RefreshLabel.Text = Get-ServerPulseText 'main.refresh'
+    $ui.SecondsLabel.Text = Get-ServerPulseText 'main.seconds'
+    $ui.ResizeHint.Text = Get-ServerPulseText 'main.resize'
+    $ui.OpacitySlider.ToolTip = Get-ServerPulseText 'main.opacity'
+    $ui.RefreshIntervalBox.ToolTip = Get-ServerPulseText 'main.refreshTip'
+    $ui.EdgeButton.ToolTip = Get-ServerPulseText 'main.edge'
+    $ui.PinButton.ToolTip = Get-ServerPulseText 'main.pin'
+    $ui.ServerButton.ToolTip = Get-ServerPulseText 'main.serverButton'
+    $ui.MinimizeButton.ToolTip = Get-ServerPulseText 'main.tray.hide'
+    $ui.CloseButton.ToolTip = Get-ServerPulseText 'main.tray.exit'
+    if ((Get-Variable -Name trayIcon -Scope Script -ErrorAction SilentlyContinue) -and $null -ne $script:trayIcon) { $script:trayIcon.Text = Get-ServerPulseText 'main.trayTitle' }
+    if ((Get-Variable -Name trayMenu -Scope Script -ErrorAction SilentlyContinue) -and $null -ne $script:trayMenu) {
+        $trayShowItem.Text = Get-ServerPulseText 'main.tray.show'; $trayHideItem.Text = Get-ServerPulseText 'main.tray.hide'; $trayServersItem.Text = Get-ServerPulseText 'main.tray.ssh'; $trayExitItem.Text = Get-ServerPulseText 'main.tray.exit'
+    }
+    Update-ServerPulseThemeSelector
+    Update-ServerPulseLanguageSelector
+    if ($null -ne $script:userUsagePopupManager) { Update-UserUsagePopupContent $script:userUsagePopupManager }
+    $managerWindowVisible = $false
+    if ($null -ne $script:sshManagerWindow) { try { $managerWindowVisible = [bool]$script:sshManagerWindow.IsVisible } catch { $managerWindowVisible = $false } }
+    if (Get-Command Update-ServerManagerLanguage -ErrorAction SilentlyContinue -and $managerWindowVisible) {
+        Update-ServerManagerLanguage -Window $script:sshManagerWindow
+    }
+    if (Get-Command Update-HistoryWindowLanguage -ErrorAction SilentlyContinue) {
+        foreach ($owned in @($window.OwnedWindows)) {
+            if ($null -ne $owned -and $null -ne $owned.Tag -and $owned.Tag.PSObject.Properties.Name -contains 'Ui') { Update-HistoryWindowLanguage -Window $owned }
+        }
+    }
+    if ($null -ne $script:lastSnapshot) {
+        foreach ($server in @($script:lastSnapshot.Servers)) {
+            if ($null -ne $script:cards -and $script:cards.ContainsKey([string]$server.Id)) { Update-ServerCard $server }
+        }
+        $snapshotServers = @($script:lastSnapshot.Servers)
+        $onlineCount = @($snapshotServers | Where-Object { $_.Status -eq 'online' }).Count
+        $selectedCount = @($script:serverStore.Servers | Where-Object { $_.Monitored }).Count
+        $gpuCount = ($snapshotServers | Where-Object { $_.Status -eq 'online' } | ForEach-Object { @($_.Metrics.Gpus).Count } | Measure-Object -Sum).Sum
+        if ($null -eq $gpuCount) { $gpuCount = 0 }
+        $ui.SummaryText.Text = Get-ServerPulseText 'main.summaryCount' @($onlineCount,$selectedCount,$gpuCount)
+        $ui.FleetState.Text = if ($selectedCount -gt 0 -and $onlineCount -eq $selectedCount) { Get-ServerPulseText 'main.fleetAllOnline' } else { Get-ServerPulseText 'main.fleetCount' @($onlineCount,$selectedCount) }
+    }
+}
+
+function Set-ServerPulseLanguageMode {
+    param([string]$Mode, [switch]$Persist)
+    $script:languageMode = Normalize-ServerPulseLanguageMode $Mode
+    $script:resolvedLanguage = Set-ServerPulseLanguageState -Mode $script:languageMode -ResolvedLanguage (Resolve-ServerPulseLanguage $script:languageMode)
+    Update-ServerPulseMainLanguage
+    if ($Persist -and -not $SmokeTest) { Save-Settings }
 }
 
 function Set-ServerPulseThemeMode {
@@ -387,6 +465,8 @@ function Set-ServerPulseThemeMode {
         if ($null -ne $ownedWindow) { Update-ServerPulseThemeVisualTree $ownedWindow }
     }
     if ($null -ne $script:themePopup.Child) { Update-ServerPulseThemeVisualTree $script:themePopup.Child }
+    $languagePopupValue = Get-Variable -Name languagePopup -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -ne $languagePopupValue -and $null -ne $languagePopupValue.Child) { Update-ServerPulseThemeVisualTree $languagePopupValue.Child }
     if ((Get-Variable -Name userUsagePopupManager -Scope Script -ErrorAction SilentlyContinue) -and $null -ne $script:userUsagePopupManager -and $null -ne $script:userUsagePopupManager.Surface) {
         Update-ServerPulseThemeVisualTree $script:userUsagePopupManager.Surface
     }
@@ -426,6 +506,36 @@ foreach ($choice in @(@('light','亮'),@('dark','暗'),@('system','跟随系统'
     [void]$themePopupPanel.Children.Add($surface)
 }
 Update-ServerPulseThemeSelector
+$script:languageChoiceRows = [Collections.ArrayList]::new()
+$script:languagePopup = [Windows.Controls.Primitives.Popup]::new()
+$script:languagePopup.PlacementTarget = $ui.LanguageButton
+$script:languagePopup.Placement = 'Bottom'
+$script:languagePopup.HorizontalOffset = -78
+$script:languagePopup.VerticalOffset = 4
+$script:languagePopup.StaysOpen = $false
+$script:languagePopup.AllowsTransparency = $true
+$languagePopupSurface = [Windows.Controls.Border]::new()
+$languagePopupSurface.Width = 132
+$languagePopupSurface.Padding = [Windows.Thickness]::new(5)
+$languagePopupSurface.CornerRadius = [Windows.CornerRadius]::new(8)
+$languagePopupSurface.Background = New-AlphaBrush '#111512' 0.98
+$languagePopupSurface.BorderBrush = New-Brush '#343A36'
+$languagePopupSurface.BorderThickness = [Windows.Thickness]::new(1)
+$languagePopupPanel = [Windows.Controls.StackPanel]::new()
+$languagePopupSurface.Child = $languagePopupPanel
+$script:languagePopup.Child = $languagePopupSurface
+foreach ($choice in @(@('zh','中文'),@('en','English'),@('system','跟随系统'))) {
+    $surface = [Windows.Controls.Border]::new(); $surface.Height = 30; $surface.Padding = [Windows.Thickness]::new(9,0,8,0); $surface.CornerRadius = [Windows.CornerRadius]::new(5); $surface.Cursor = [Windows.Input.Cursors]::Hand
+    $grid = [Windows.Controls.Grid]::new(); [void]$grid.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new()); $markColumn = [Windows.Controls.ColumnDefinition]::new(); $markColumn.Width = 14; [void]$grid.ColumnDefinitions.Add($markColumn)
+    $label = New-Text (Get-ServerPulseText ("language.{0}" -f $choice[0])) 10 '#D7DDD9'; $mark = New-Text '' 7 '#657069'; $mark.HorizontalAlignment = 'Right'; [Windows.Controls.Grid]::SetColumn($mark,1)
+    [void]$grid.Children.Add($label); [void]$grid.Children.Add($mark); $surface.Child = $grid
+    $row = [PSCustomObject]@{ Mode=$choice[0]; Surface=$surface; Label=$label; Mark=$mark }; $surface.Tag = $row
+    $surface.Add_MouseEnter({ param($sender,$eventArgs); if ([string]$sender.Tag.Mode -ne $script:languageMode) { $sender.Background = New-Brush '#252A27' } })
+    $surface.Add_MouseLeave({ Update-ServerPulseLanguageSelector })
+    $surface.Add_MouseLeftButtonUp({ param($sender,$eventArgs); Set-ServerPulseLanguageMode -Mode ([string]$sender.Tag.Mode) -Persist; $script:languagePopup.IsOpen = $false; $eventArgs.Handled = $true })
+    [void]$script:languageChoiceRows.Add($row); [void]$languagePopupPanel.Children.Add($surface)
+}
+Update-ServerPulseLanguageSelector
 
 function New-MetricCell([string]$Label) {
     $panel = [Windows.Controls.StackPanel]::new()
@@ -482,7 +592,7 @@ function Get-UserUsageRows {
         $uid = Get-UserUsageProperty $user @('Uid','UID','UserId') $null
         $name = [string](Get-UserUsageProperty $user @('Name','UserName','Username','DisplayName') '')
         if ([string]::IsNullOrWhiteSpace($name)) {
-            $name = if ($null -ne $uid) { "UID $uid" } else { '未知用户' }
+            $name = if ($null -ne $uid) { "UID $uid" } else { Get-ServerPulseText 'main.unknownUser' }
         }
 
         if ($TargetState.Kind -eq 'cpu') {
@@ -532,7 +642,7 @@ function Get-SystemUserUsageRow {
         }
     }
     if ($status -eq 'unavailable') { $value = $null; $percent = $null }
-    return [PSCustomObject]@{ Name='系统/未归属'; Value=$value; Percent=$percent }
+    return [PSCustomObject]@{ Name=(Get-ServerPulseText 'main.userSystem'); Value=$value; Percent=$percent }
 }
 
 function New-UserUsagePopupRow {
@@ -570,16 +680,16 @@ function Update-UserUsagePopupContent {
 
     $state = $Manager.CurrentTarget
     if ($null -eq $state) { return }
-    $Manager.Header.Text = "$($state.Title) · 用户占用"
-    $Manager.Mode.Text = if ($Manager.IsPinned) { '● 已固定' } else { '悬停预览' }
+    $Manager.Header.Text = "$($state.Title) · $(Get-ServerPulseText 'main.userHeader')"
+    $Manager.Mode.Text = if ($Manager.IsPinned) { "● $(Get-ServerPulseText 'main.userPinned')" } else { Get-ServerPulseText 'main.userPreview' }
     $Manager.Mode.Foreground = New-Brush $(if ($Manager.IsPinned) { '#A7D948' } else { '#6F7A73' })
     $Manager.Rows.Children.Clear()
 
     $status = Get-UserUsageStatus $state.Usage
     $Manager.Status.Text = switch ($status) {
-        'ok' { '归属数据完整' }
-        'partial' { '部分归属 · 未读取项计入未归属' }
-        default { '用户归属不可用' }
+        'ok' { Get-ServerPulseText 'main.userComplete' }
+        'partial' { Get-ServerPulseText 'main.userPartialStatus' }
+        default { Get-ServerPulseText 'main.userUnavailable' }
     }
     $Manager.Status.Foreground = New-Brush $(if ($status -eq 'ok') { '#6F7A73' } elseif ($status -eq 'partial') { '#E4B64B' } else { '#FF7B72' })
 
@@ -589,13 +699,13 @@ function Update-UserUsagePopupContent {
         [void]$Manager.Rows.Children.Add((New-UserUsagePopupRow -Name $row.Name -Value (Format-UserUsageValue $state.Kind $row.Value $row.Percent)))
     }
     if ($rows.Count -eq 0 -and $status -ne 'unavailable') {
-        $empty = New-Text '暂无可归属的活跃用户' 10 '#68736C'; $empty.Margin = [Windows.Thickness]::new(0,2,0,7)
+        $empty = New-Text (Get-ServerPulseText 'main.userNoUsers') 10 '#68736C'; $empty.Margin = [Windows.Thickness]::new(0,2,0,7)
         [void]$Manager.Rows.Children.Add($empty)
     }
 
     if ($rows.Count -gt 8) {
         $toggle = [Windows.Controls.Button]::new()
-        $toggle.Content = if ($state.Expanded) { '收起' } else { "其他（$($rows.Count - 8) 用户）" }
+        $toggle.Content = if ($state.Expanded) { Get-ServerPulseText 'main.userCollapse' } else { Get-ServerPulseText 'main.userOther' @($rows.Count - 8) }
         $toggle.Height = 25; $toggle.Margin = [Windows.Thickness]::new(0,1,0,7); $toggle.Cursor = 'Hand'
         $toggle.Foreground = New-Brush '#A7D948'; $toggle.Background = New-Brush '#202521'; $toggle.BorderBrush = New-Brush '#353C37'; $toggle.BorderThickness = [Windows.Thickness]::new(1)
         Register-UserUsageExpandButton -Button $toggle -Manager $Manager
@@ -610,12 +720,12 @@ function Update-UserUsagePopupContent {
     if ($state.Kind -eq 'memory') {
         $overlap = ConvertTo-UserUsageNumber (Get-UserUsageProperty $state.Usage @('RssOverlapMiB','OverlapMiB') $null)
         $Manager.Footer.Text = if ($null -ne $overlap -and $overlap -gt 0) {
-            'RSS 估算 · 共享页可能重复（约 {0:0.0} GB）' -f ($overlap / 1024.0)
-        } else { 'RSS 快速估算 · 共享页可能重复计入' }
+            Get-ServerPulseText 'main.userMemoryFoot' @($overlap / 1024.0)
+        } else { Get-ServerPulseText 'main.userMemoryFootShort' }
     } elseif ($state.Kind -eq 'vram') {
-        $Manager.Footer.Text = '逐卡显存 · 驱动与未映射占用归入未归属'
+        $Manager.Footer.Text = Get-ServerPulseText 'main.userVramFoot'
     } else {
-        $Manager.Footer.Text = 'CPU 按整台服务器 0–100% 归一化'
+        $Manager.Footer.Text = Get-ServerPulseText 'main.userCpuFoot'
     }
 }
 
@@ -720,7 +830,7 @@ function Register-UserUsageTarget {
     }
     $Target.Tag = $state
     $Target.Cursor = 'Hand'
-    $Target.ToolTip = '悬停查看用户占用，单击固定'
+    $Target.ToolTip = Get-ServerPulseText 'main.tooltipUser'
     $Manager.Targets[$Key] = $Target
     $Target.Add_MouseEnter({ param($sender,$eventArgs); Invoke-UserUsageTargetMouseEnter $sender.Tag })
     $Target.Add_MouseLeave({ param($sender,$eventArgs); Invoke-UserUsageTargetMouseLeave $sender.Tag })
@@ -742,9 +852,9 @@ function Update-UserUsageTarget {
     if (-not [string]::IsNullOrWhiteSpace($Title)) { $state.Title = $Title }
     $status = Get-UserUsageStatus $Usage
     $Target.ToolTip = switch ($status) {
-        'ok' { '悬停查看用户占用，单击固定' }
-        'partial' { '用户归属不完整；悬停查看，单击固定' }
-        default { '当前无法读取用户归属' }
+        'ok' { Get-ServerPulseText 'main.tooltipUser' }
+        'partial' { Get-ServerPulseText 'main.tooltipUserPartial' }
+        default { Get-ServerPulseText 'main.tooltipUserUnavailable' }
     }
     if ($null -ne $state.Manager.CurrentTarget -and $state.Manager.CurrentTarget.Key -eq $state.Key -and $state.Manager.Popup.IsOpen) {
         Update-UserUsagePopupContent $state.Manager
@@ -771,10 +881,10 @@ function New-UserUsagePopupManager {
     $headerGrid = [Windows.Controls.Grid]::new()
     [void]$headerGrid.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
     $modeColumn = [Windows.Controls.ColumnDefinition]::new(); $modeColumn.Width='Auto'; [void]$headerGrid.ColumnDefinitions.Add($modeColumn)
-    $header = New-Text '用户占用' 11 '#F0F3F1'; $header.FontWeight='SemiBold'
-    $mode = New-Text '悬停预览' 8 '#6F7A73'; $mode.HorizontalAlignment='Right'; [Windows.Controls.Grid]::SetColumn($mode,1)
+    $header = New-Text (Get-ServerPulseText 'main.userHeader') 11 '#F0F3F1'; $header.FontWeight='SemiBold'
+    $mode = New-Text (Get-ServerPulseText 'main.userPreview') 8 '#6F7A73'; $mode.HorizontalAlignment='Right'; [Windows.Controls.Grid]::SetColumn($mode,1)
     [void]$headerGrid.Children.Add($header); [void]$headerGrid.Children.Add($mode)
-    $status = New-Text '用户归属不可用' 8 '#6F7A73'; $status.Margin=[Windows.Thickness]::new(0,3,0,8)
+    $status = New-Text (Get-ServerPulseText 'main.userUnavailable') 8 '#6F7A73'; $status.Margin=[Windows.Thickness]::new(0,3,0,8)
     $scroll = [Windows.Controls.ScrollViewer]::new(); $scroll.MaxHeight=315; $scroll.VerticalScrollBarVisibility='Auto'; $scroll.HorizontalScrollBarVisibility='Disabled'
     $rows = [Windows.Controls.StackPanel]::new(); $scroll.Content=$rows
     $footer = New-Text '' 8 '#59635D'; $footer.Margin=[Windows.Thickness]::new(0,7,0,0); $footer.TextWrapping='Wrap'
@@ -847,7 +957,7 @@ function Add-ServerCard($server) {
     [void]$header.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
     $rightColumn = [Windows.Controls.ColumnDefinition]::new(); $rightColumn.Width = 'Auto'; [void]$header.ColumnDefinitions.Add($rightColumn)
     $title = New-Text ([string]$server.label) 14 '#F0F3F1'; $title.FontWeight = 'SemiBold'
-    $state = New-Text '连接中' 9 '#7B857F'; $state.HorizontalAlignment = 'Right'
+    $state = New-Text (Get-ServerPulseText 'main.connecting') 9 '#7B857F'; $state.HorizontalAlignment = 'Right'
     [Windows.Controls.Grid]::SetColumn($state, 1)
     [void]$header.Children.Add($title); [void]$header.Children.Add($state)
     [Windows.Controls.Grid]::SetRow($header, 0); [void]$layout.Children.Add($header)
@@ -864,7 +974,7 @@ function Add-ServerCard($server) {
     [Windows.Controls.Grid]::SetRow($metricsGrid, 2); [void]$layout.Children.Add($metricsGrid)
 
     $details = [Windows.Controls.StackPanel]::new(); $details.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
-    $gpuSummary = New-Text 'GPU · 等待数据' 11 '#DCE3DE'; $gpuSummary.FontWeight = 'SemiBold'
+    $gpuSummary = New-Text (Get-ServerPulseText 'main.gpuWaiting') 11 '#DCE3DE'; $gpuSummary.FontWeight = 'SemiBold'
     $gpuWrap = [Windows.Controls.WrapPanel]::new(); $gpuWrap.Margin = [Windows.Thickness]::new(0, 7, 0, 0)
     $error = New-Text '' 8 '#FF7B72'; $error.TextWrapping = 'Wrap'; $error.Margin = [Windows.Thickness]::new(0, 7, 0, 0); $error.Visibility = 'Collapsed'
     [void]$details.Children.Add($gpuSummary); [void]$details.Children.Add($gpuWrap); [void]$details.Children.Add($error)
@@ -887,7 +997,7 @@ function Sync-ServerPulseCards {
         $script:cards[$id].Label=[string]$server.Label
     }
     foreach($entry in @($script:cards.GetEnumerator())){if(-not$active.ContainsKey([string]$entry.Key)){$entry.Value.Surface.Visibility='Collapsed'}}
-    if($active.Count -eq 0){$ui.SummaryText.Text='尚未选择监视服务器';$ui.FleetState.Text='  未监视';$ui.FleetDot.Fill=New-Brush '#657069'}
+    if($active.Count -eq 0){$ui.SummaryText.Text=Get-ServerPulseText 'main.noneSelected';$ui.FleetState.Text="  $(Get-ServerPulseText 'main.unmonitored')";$ui.FleetDot.Fill=New-Brush '#657069'}
 }
 
 Sync-ServerPulseCards
@@ -937,7 +1047,7 @@ function New-GpuCardControl {
 
     $vramEntry = [Windows.Controls.Border]::new(); $vramEntry.Background=[Windows.Media.Brushes]::Transparent; $vramEntry.Padding=[Windows.Thickness]::new(0,4,0,0)
     $vramPanel = [Windows.Controls.StackPanel]::new()
-    $vramText = New-Text '显存  —' 9 '#B5BDB8'; $vramText.Margin = [Windows.Thickness]::new(0,0,0,3)
+    $vramText = New-Text (Get-ServerPulseText 'main.gpuMemory' @('—','—')) 9 '#B5BDB8'; $vramText.Margin = [Windows.Thickness]::new(0,0,0,3)
     $vramBar = [Windows.Controls.ProgressBar]::new(); $vramBar.Minimum=0; $vramBar.Maximum=100; $vramBar.Height=3; $vramBar.Value=0
     $vramBar.Background=New-Brush '#343B36'; $vramBar.Foreground=New-Brush '#79C8D8'
     [void]$vramPanel.Children.Add($vramText); [void]$vramPanel.Children.Add($vramBar); $vramEntry.Child=$vramPanel
@@ -967,7 +1077,7 @@ function Update-GpuCardControl {
     $usedMiB = ConvertTo-UserUsageNumber $Gpu.MemoryUsedMiB
     $totalMiB = ConvertTo-UserUsageNumber $Gpu.MemoryTotalMiB
     $vramPercent = if ($null -ne $usedMiB -and $null -ne $totalMiB -and $totalMiB -gt 0) { $usedMiB * 100.0 / $totalMiB } else { 0.0 }
-    $Control.VramText.Text = "显存  $((Format-Memory $usedMiB)) / $((Format-Memory $totalMiB))"
+    $Control.VramText.Text = Get-ServerPulseText 'main.gpuMemory' @((Format-Memory $usedMiB),(Format-Memory $totalMiB))
     $Control.VramBar.Value = [Math]::Max(0,[Math]::Min(100,$vramPercent))
     $userMemory = Get-UserUsageProperty $Gpu @('UserMemory') $null
     Update-UserUsageTarget -Target $Control.VramEntry -Usage $userMemory -TotalMiB $(if ($null -eq $totalMiB) { 0.0 } else { $totalMiB }) -Title ("{0} · GPU {1} VRAM" -f $Card.Label,[int]$Gpu.Index)
@@ -996,26 +1106,26 @@ function Update-ServerCard($server) {
     if($server.PSObject.Properties.Name-contains'RetryAt'-and-not[string]::IsNullOrWhiteSpace([string]$server.RetryAt)){try{$retryAt=[datetime]::Parse([string]$server.RetryAt).ToUniversalTime()}catch{}}
     $retrySeconds=if($null-ne$retryAt){[Math]::Max(0,[int][Math]::Ceiling(($retryAt-[datetime]::UtcNow).TotalSeconds))}else{0}
     $card.State.Text = switch([string]$server.Status){
-        'online'{'● 在线'} 'authentication_required'{'● 待认证'} 'authentication_failed'{'● 认证暂停'}
-        'host_key_unknown'{'● 待确认指纹'} 'host_key_changed'{'● 指纹异常'} 'connecting'{'● 连接中'}
-        'retry_wait'{"● $retrySeconds 秒后重试"} 'circuit_open'{'● 重试已暂停'} default{'● 离线'}
+        'online'{Get-ServerPulseText 'main.status.online'} 'authentication_required'{Get-ServerPulseText 'main.status.authRequired'} 'authentication_failed'{Get-ServerPulseText 'main.status.authFailed'}
+        'host_key_unknown'{Get-ServerPulseText 'main.status.fingerprintWait'} 'host_key_changed'{Get-ServerPulseText 'main.status.fingerprintChanged'} 'connecting'{Get-ServerPulseText 'main.status.connecting'}
+        'retry_wait'{Get-ServerPulseText 'main.retryState' @($retrySeconds)} 'circuit_open'{Get-ServerPulseText 'main.retryPaused'} default{Get-ServerPulseText 'main.status.offline'}
     }
     $card.State.Foreground = New-Brush $(if ($online) { '#A7D948' } elseif($server.Status-in@('connection','connecting','retry_wait')){ '#E4B64B' } else { '#FF6B6B' })
     $card.Error.Visibility = if ($online) { 'Collapsed' } else { 'Visible' }
-    $retryTimeText=if($null-ne$retryAt){$retryAt.ToLocalTime().ToString('HH:mm:ss')}else{'稍后'}
-    $card.Error.Text = if($online){''}elseif($server.Status-eq'retry_wait'){"$([string]$server.Error)`n下次自动重试：$retryTimeText（连续失败 $([int]$server.ConsecutiveFailures) 次）"}elseif($server.Status-eq'circuit_open'){"$([string]$server.Error)`n已停止自动连接；请打开「管理」并点击「重新检测」。"}else{[string]$server.Error}
+    $retryTimeText=if($null-ne$retryAt){$retryAt.ToLocalTime().ToString('HH:mm:ss')}else{Get-ServerPulseText 'main.later'}
+    $card.Error.Text = if($online){''}elseif($server.Status-eq'retry_wait'){Get-ServerPulseText 'main.retryError' @([string]$server.Error,$retryTimeText,[int]$server.ConsecutiveFailures)}elseif($server.Status-eq'circuit_open'){Get-ServerPulseText 'main.circuitError' @([string]$server.Error)}else{[string]$server.Error}
     if (-not $online -or $null -eq $server.Metrics) {
-        $card.Meta.Text = "SSH  $($server.Host)"
+        $card.Meta.Text = Get-ServerPulseText 'main.host' @($server.Host)
         Set-Metric $card.Cpu $null; Set-Metric $card.Memory $null
         Update-UserUsageTarget -Target $card.Cpu.Panel -Usage $null -TotalMiB 0
         Update-UserUsageTarget -Target $card.Memory.Panel -Usage $null -TotalMiB 0
-        $card.GpuSummary.Text = 'GPU · 暂无指标'
+        $card.GpuSummary.Text = Get-ServerPulseText 'main.gpuNoMetrics'
         Hide-InactiveGpuCardControls -Card $card -ActiveIndexes @{}
         return
     }
 
     $metrics = $server.Metrics
-    $card.Meta.Text = "{0}   ·   {1} ms   ·   LOAD {2:0.00}" -f $metrics.Hostname, $server.LatencyMs, [double]$metrics.Load.One
+    $card.Meta.Text = Get-ServerPulseText 'main.sshMeta' @($metrics.Hostname,$server.LatencyMs,[double]$metrics.Load.One)
     Set-Metric $card.Cpu $metrics.Cpu.Utilization
     Set-Metric $card.Memory $metrics.Memory.Percent
     $card.Memory.Value.Text = Format-MemoryUsage $metrics.Memory.Percent $metrics.Memory.UsedMiB $metrics.Memory.TotalMiB
@@ -1024,7 +1134,7 @@ function Update-ServerCard($server) {
     $gpus = @($metrics.Gpus)
     $used = ($gpus | Where-Object { $null -ne $_.MemoryUsedMiB } | Measure-Object MemoryUsedMiB -Sum).Sum
     $total = ($gpus | Where-Object { $null -ne $_.MemoryTotalMiB } | Measure-Object MemoryTotalMiB -Sum).Sum
-    $card.GpuSummary.Text = "GPU  {0} 块   ·   总显存 {1} / {2}" -f $gpus.Count, (Format-Memory $used), (Format-Memory $total)
+    $card.GpuSummary.Text = Get-ServerPulseText 'main.gpuSummary' @($gpus.Count,(Format-Memory $used),(Format-Memory $total))
     $activeIndexes = @{}
     foreach ($gpu in @($gpus | Sort-Object { [int]$_.Index })) {
         $indexKey = [string][int]$gpu.Index
@@ -1037,12 +1147,14 @@ function Update-ServerCard($server) {
     Hide-InactiveGpuCardControls -Card $card -ActiveIndexes $activeIndexes
 }
 
+Update-ServerPulseMainLanguage
+
 function Save-Settings {
     if (-not (Test-Path -LiteralPath $settingsDirectory)) { [void](New-Item -ItemType Directory -Path $settingsDirectory) }
     $left = if ($script:hiddenAtEdge) { $script:shownLeft } else { $window.Left }
     $top = if ($script:hiddenAtEdge) { $script:shownTop } else { $window.Top }
     [PSCustomObject]@{
-        Version=3; ThemeMode=$script:themeMode; Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
+        Version=4; ThemeMode=$script:themeMode; LanguageMode=$script:languageMode; Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
         RefreshIntervalSeconds=$script:refreshIntervalSeconds
         Width=$window.Width; Height=$window.Height; Left=$left; Top=$top
     } | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8
@@ -1156,9 +1268,14 @@ $cursorTimer.Add_Tick({
 $themeFollowTimer = [Windows.Threading.DispatcherTimer]::new()
 $themeFollowTimer.Interval = [TimeSpan]::FromSeconds(2)
 $themeFollowTimer.Add_Tick({
-    if ($script:themeMode -ne 'system') { return }
-    $resolved = Resolve-ServerPulseTheme 'system'
-    if ($resolved -ne $script:resolvedTheme) { Set-ServerPulseThemeMode -Mode 'system' }
+    if ($script:themeMode -eq 'system') {
+        $resolved = Resolve-ServerPulseTheme 'system'
+        if ($resolved -ne $script:resolvedTheme) { Set-ServerPulseThemeMode -Mode 'system' }
+    }
+    if ($script:languageMode -eq 'system') {
+        $resolvedLanguage = Resolve-ServerPulseLanguage 'system'
+        if ($resolvedLanguage -ne $script:resolvedLanguage) { Set-ServerPulseLanguageMode -Mode 'system' }
+    }
 })
 
 function Get-ServerPulseAuthState {
@@ -1232,17 +1349,17 @@ function Hide-ServerPulseToTray {
 }
 
 $script:trayMenu = [Windows.Forms.ContextMenuStrip]::new()
-$trayShowItem = $script:trayMenu.Items.Add('显示窗口')
-$trayHideItem = $script:trayMenu.Items.Add('隐藏窗口')
-$trayServersItem = $script:trayMenu.Items.Add('SSH 服务器...')
+$trayShowItem = $script:trayMenu.Items.Add((Get-ServerPulseText 'main.tray.show'))
+$trayHideItem = $script:trayMenu.Items.Add((Get-ServerPulseText 'main.tray.hide'))
+$trayServersItem = $script:trayMenu.Items.Add((Get-ServerPulseText 'main.tray.ssh'))
 [void]$script:trayMenu.Items.Add([Windows.Forms.ToolStripSeparator]::new())
-$trayExitItem = $script:trayMenu.Items.Add('退出')
+$trayExitItem = $script:trayMenu.Items.Add((Get-ServerPulseText 'main.tray.exit'))
 $trayShowItem.Add_Click({ Show-ServerPulseFromTray })
 $trayHideItem.Add_Click({ Hide-ServerPulseToTray })
 $trayServersItem.Add_Click({ Show-ServerPulseFromTray; Show-ServerPulseSshManager })
 $trayExitItem.Add_Click({ $window.Close() })
 $script:trayIcon = [Windows.Forms.NotifyIcon]::new()
-$script:trayIcon.Text = 'Server Pulse - SSH 资源监控'
+$script:trayIcon.Text = Get-ServerPulseText 'main.trayTitle'
 $script:trayOwnedIcon = $null
 $trayIconPath = Join-Path $scriptRoot 'assets\server-pulse.ico'
 try {
@@ -1295,18 +1412,26 @@ function Complete-SmokeTest {
         $ui.ThemeButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
         if(-not$script:themePopup.IsOpen-or$script:themeChoiceRows.Count-ne3){throw '主题切换菜单按钮事件失败'}
         $script:themePopup.IsOpen=$false
+        $ui.LanguageButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        if(-not$script:languagePopup.IsOpen-or$script:languageChoiceRows.Count-ne3){throw '语言切换菜单按钮事件失败'}
+        $script:languagePopup.IsOpen=$false
+        $originalLanguageMode=$script:languageMode
+        Set-ServerPulseLanguageMode -Mode en
+        if($script:resolvedLanguage-ne'en'-or$ui.ManageButtonText.Text-ne'Manage'-or$ui.LanguageButtonText.Text-ne'EN'){throw '主窗口英文语言切换失败'}
         $originalThemeMode=$script:themeMode
         Set-ServerPulseThemeMode -Mode light
         $window.UpdateLayout()
-        if($script:resolvedTheme-ne'light'-or$ui.ThemeButtonText.Text-ne'亮'-or$ui.WindowSurface.Background.Color.R-lt220){throw '主窗口亮色主题切换失败'}
+        if($script:resolvedTheme-ne'light'-or$ui.ThemeButtonText.Text-ne(Get-ServerPulseText 'theme.button.light')-or$ui.WindowSurface.Background.Color.R-lt220){throw '主窗口亮色主题切换失败'}
         Save-NativeScreenshot 'native-window-light.png'
         $managerSmoke=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {} -SmokeTest
         $managerSmoke.Window.Show();$managerSmoke.Window.UpdateLayout()
         if($managerSmoke.Context.Rows.Count-lt1-or$null-eq$managerSmoke.Context.Rows[0].Passwordless-or$null-eq$managerSmoke.Context.Rows[0].PasswordBox){throw 'SSH 服务器管理窗口验证失败'}
+        if($managerSmoke.Window.Title-ne'Server Pulse · SSH servers'){throw 'SSH 管理窗口英文语言切换失败'}
         if($managerSmoke.Window.Background.Color.R-lt220){throw 'SSH 管理窗口未继承亮色主题'}
         $managerSmoke.Window.Close()
+        Set-ServerPulseLanguageMode -Mode $originalLanguageMode
         Set-ServerPulseThemeMode -Mode dark
-        if($script:resolvedTheme-ne'dark'-or$ui.ThemeButtonText.Text-ne'暗'-or$ui.WindowSurface.Background.Color.R-gt80){throw '主窗口暗色主题还原失败'}
+        if($script:resolvedTheme-ne'dark'-or$ui.ThemeButtonText.Text-ne(Get-ServerPulseText 'theme.button.dark')-or$ui.WindowSurface.Background.Color.R-gt80){throw '主窗口暗色主题还原失败'}
         Set-ServerPulseThemeMode -Mode $originalThemeMode
         Save-NativeScreenshot
         $originalOpacity = $script:backgroundOpacity; Set-BackgroundOpacity 0.55
@@ -1419,7 +1544,7 @@ function Start-Collection {
     }
     if($runtimeServers.Count -eq 0){
         $selected=@($script:serverStore.Servers|Where-Object{$_.Monitored}).Count
-        $ui.SummaryText.Text=if($selected -eq 0){'尚未选择监视服务器'}else{'所选服务器正在等待认证'}
+        $ui.SummaryText.Text=if($selected -eq 0){Get-ServerPulseText 'main.noneSelected'}else{Get-ServerPulseText 'main.authWaiting'}
         $ui.UpdatedText.Text=[DateTime]::Now.ToString('HH:mm:ss')
         $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
         return
@@ -1432,7 +1557,7 @@ function Start-Collection {
         $script:collectionProcess.StandardInput.WriteLine($runtimePayload);$script:collectionProcess.StandardInput.Flush();foreach($serverId in $forcedReconnects){[void]$script:forceReconnectServers.Remove([string]$serverId)}
         $script:stdoutTask=$script:collectionProcess.StandardOutput.ReadLineAsync();$script:collectionBusy=$true
     }catch{
-        $ui.SummaryText.Text="采集器启动失败：$($_.Exception.Message)";Stop-CollectionWorker
+        $ui.SummaryText.Text=Get-ServerPulseText 'main.collectorStartError' @($_.Exception.Message);Stop-CollectionWorker
         $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
     }finally{
         $runtimePayload=$null;foreach($item in $runtimeServers){$item.Password=$null}
@@ -1444,7 +1569,7 @@ $pollTimer.Add_Tick({
     if ($script:collectionProcess -and $script:collectionProcess.HasExited) {
         $stderr=if($script:stderrTask -and $script:stderrTask.IsCompleted){$script:stderrTask.Result.Trim()}else{''}
         $script:collectionProcess.Dispose();$script:collectionProcess=$null;$script:collectionBusy=$false;$script:stdoutTask=$null
-        $ui.SummaryText.Text=if($stderr){"采集器错误：$stderr"}else{'采集器意外退出，正在重启'}
+        $ui.SummaryText.Text=if($stderr){Get-ServerPulseText 'main.collectorError' @($stderr)}else{Get-ServerPulseText 'main.collectorRestart'}
         $script:nextCollection=[DateTime]::UtcNow.AddSeconds($script:refreshIntervalSeconds)
     }
     if($script:collectionBusy -and $script:stdoutTask -and $script:stdoutTask.IsCompleted){
@@ -1453,8 +1578,9 @@ $pollTimer.Add_Tick({
             try {
                 $snapshot = $stdout | ConvertFrom-Json
                 if($snapshot.PSObject.Properties.Name -contains 'WorkerError' -and $snapshot.WorkerError){throw [string]$snapshot.WorkerError}
-                try { Add-ServerPulseHistorySnapshot -Recorder $script:historyRecorder -Snapshot $snapshot } catch { $ui.HistoryButton.ToolTip = "历史记录失败：$($_.Exception.Message)" }
-                $servers = @($snapshot.Servers)
+                 try { Add-ServerPulseHistorySnapshot -Recorder $script:historyRecorder -Snapshot $snapshot } catch { $ui.HistoryButton.ToolTip = Get-ServerPulseText 'main.historyWriteError' @($_.Exception.Message) }
+                 $script:lastSnapshot = $snapshot
+                 $servers = @($snapshot.Servers)
                 $shouldPromptAuth=$false
                 foreach ($server in $servers) {
                     $authState=Get-ServerPulseAuthState ([string]$server.Id)
@@ -1464,7 +1590,7 @@ $pollTimer.Add_Tick({
                         $authState.Paused=$true
                         $shouldPromptAuth=$true
                         if(-not$authState.Notified -and -not$SmokeTest){
-                            $script:trayIcon.BalloonTipTitle='Server Pulse 需要处理 SSH 认证'
+                             $script:trayIcon.BalloonTipTitle=Get-ServerPulseText 'main.authNotificationTitle'
                             $script:trayIcon.BalloonTipText="$($server.Label)：$($server.Error)"
                             $script:trayIcon.ShowBalloonTip(6000);$authState.Notified=$true
                         }
@@ -1476,9 +1602,9 @@ $pollTimer.Add_Tick({
                 $selectedCount=@($script:serverStore.Servers|Where-Object{$_.Monitored}).Count
                 $gpuCount = ($servers | Where-Object { $_.Status -eq 'online' } | ForEach-Object { @($_.Metrics.Gpus).Count } | Measure-Object -Sum).Sum
                 if ($null -eq $gpuCount) { $gpuCount = 0 }
-                $ui.SummaryText.Text = "$online / $selectedCount 在线   ·   $gpuCount GPU"
+                $ui.SummaryText.Text = Get-ServerPulseText 'main.summaryCount' @($online,$selectedCount,$gpuCount)
                 $ui.UpdatedText.Text = [DateTime]::Now.ToString('HH:mm:ss')
-                $ui.FleetState.Text = if ($selectedCount -gt 0 -and $online -eq $selectedCount) { '  全部在线' } else { "  $online / $selectedCount 在线" }
+                $ui.FleetState.Text = if ($selectedCount -gt 0 -and $online -eq $selectedCount) { Get-ServerPulseText 'main.fleetAllOnline' } else { Get-ServerPulseText 'main.fleetCount' @($online,$selectedCount) }
                 $ui.FleetDot.Fill = New-Brush $(if ($selectedCount -gt 0 -and $online -eq $selectedCount) { '#A7D948' } elseif ($online -gt 0) { '#E4B64B' } else { '#FF6B6B' })
                 $connectionPending=@($servers|Where-Object{$_.Status-in@('connecting','retry_wait')}).Count-gt0
                 if ($SmokeTest -and -not $script:smokeFinished) {
@@ -1487,8 +1613,8 @@ $pollTimer.Add_Tick({
                         [Windows.Threading.DispatcherPriority]::Background
                     )
                 }
-            } catch { $ui.SummaryText.Text = "采集结果错误：$($_.Exception.Message)" }
-        } else { $ui.SummaryText.Text='采集器未返回数据' }
+            } catch { $ui.SummaryText.Text = Get-ServerPulseText 'main.collectorError' @($_.Exception.Message) }
+        } else { $ui.SummaryText.Text=Get-ServerPulseText 'main.noData' }
         $script:nextCollection = [DateTime]::UtcNow.AddSeconds($(if($connectionPending){1}else{$script:refreshIntervalSeconds}))
     }
     if (-not $script:collectionBusy -and [DateTime]::UtcNow -ge $script:nextCollection) { Start-Collection }
@@ -1527,6 +1653,7 @@ $window.Add_LocationChanged({
     }
 })
 $window.Add_MouseLeave({ if ($script:dockSide -and -not $script:hiddenAtEdge -and $ui.EdgeButton.Tag -eq 'active' -and -not $script:userUsagePopupManager.Popup.IsOpen) { $hideTimer.Start() } })
+$ui.LanguageButton.Add_Click({ $script:languagePopup.IsOpen = -not $script:languagePopup.IsOpen })
 $ui.ThemeButton.Add_Click({ $script:themePopup.IsOpen = -not $script:themePopup.IsOpen })
 $ui.OpacitySlider.Add_ValueChanged({ Set-BackgroundOpacity ($ui.OpacitySlider.Value / 100) })
 $ui.RefreshIntervalBox.Add_PreviewTextInput({ param($sender,$event); if ($event.Text -notmatch '^\d+$') { $event.Handled = $true } })
@@ -1546,9 +1673,9 @@ $ui.HistoryButton.Add_Click({
         $logPath=$null
         try{$logPath=Write-ServerPulseErrorLog -Exception $historyException -Context 'Open history window'}catch{}
         try{
-            Show-ServerPulseErrorDialog -Owner $window -Title '历史记录错误' -Message '无法打开占用记录，主监控仍会继续运行。' -Detail $historyException.Message -LogPath $logPath
+            Show-ServerPulseErrorDialog -Owner $window -Title (Get-ServerPulseText 'main.historyErrorTitle') -Message (Get-ServerPulseText 'main.historyErrorMessage') -Detail $historyException.Message -LogPath $logPath
         }catch{
-            [void][Windows.MessageBox]::Show($window,("无法打开占用记录。`n`n{0}" -f $historyException.Message),'Server Pulse · 历史记录错误','OK','Error')
+            [void][Windows.MessageBox]::Show($window,("$(Get-ServerPulseText 'main.historyErrorFallback')`n`n{0}" -f $historyException.Message),("Server Pulse · $(Get-ServerPulseText 'main.historyErrorTitle')"),'OK','Error')
         }
     }
 })

@@ -523,9 +523,9 @@ function ConvertTo-HistoryUserPoint {
     })
     if($state.System -ge 0){
         $plot=if($Kind -eq 'Cpu'){$state.System}elseif($null -ne $TotalMiB -and [double]$TotalMiB -gt 0){$state.System*100/[double]$TotalMiB}else{$null}
-        $users+= ,[PSCustomObject]@{Identity='system';Uid='';Name='系统/未归属';RawValue=[double]$state.System;PlotValue=$plot;Color='#9AA39D';IsSystem=$true}
+        $users+= ,[PSCustomObject]@{Identity='system';Uid='';Name=(Get-ServerPulseText 'main.userSystem');RawValue=[double]$state.System;PlotValue=$plot;Color='#9AA39D';IsSystem=$true}
     }
-    $detailNote=if($Kind -eq 'Cpu'){"归属 {0:0.##}% · 重叠 {1:0.##}% · 跳过 {2:0.##}" -f $state.Attributed,$state.Overlap,$state.Skipped}elseif($Kind -eq 'Memory'){"归属 {0} · 重叠 {1} · 跳过 {2:0.##}" -f (Format-Memory $state.Attributed),(Format-Memory $state.Overlap),$state.Skipped}else{"归属 {0} · 未映射进程 {1:0.##}" -f (Format-Memory $state.Attributed),$state.Skipped}
+    $detailNote=if($Kind -eq 'Cpu'){Get-ServerPulseText 'history.detailCpu' @($state.Attributed,$state.Overlap,$state.Skipped)}elseif($Kind -eq 'Memory'){Get-ServerPulseText 'history.detailMemory' @((Format-Memory $state.Attributed),(Format-Memory $state.Overlap),$state.Skipped)}else{Get-ServerPulseText 'history.detailGpu' @((Format-Memory $state.Attributed),$state.Skipped)}
     return [PSCustomObject]@{Time=$Time;Status=$state.Status;Kind=$Kind;Users=@($users);TotalMiB=$TotalMiB;DetailNote=$detailNote}
 }
 
@@ -557,6 +557,24 @@ function Set-HistoryChartUnlocked {
     $State.Guide.Visibility='Collapsed';$State.Popup.Visibility='Collapsed';$State.Popup.IsHitTestVisible=$false
     [Windows.Controls.Panel]::SetZIndex($State.Card,0)
     foreach($view in $State.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
+}
+
+function Update-HistoryWindowLanguage {
+    param([Windows.Window]$Window)
+    if ($null -eq $Window) { return }
+    $Window.Title = Get-ServerPulseText 'history.title'
+    $translations = @{
+        '占用记录'=(Get-ServerPulseText 'history.title'); '开始'=(Get-ServerPulseText 'history.start'); '结束'=(Get-ServerPulseText 'history.end'); '年'=(Get-ServerPulseText 'history.year'); '月'=(Get-ServerPulseText 'history.month'); '日'=(Get-ServerPulseText 'history.day'); '时'=(Get-ServerPulseText 'history.hour'); '分'=(Get-ServerPulseText 'history.minute'); '查询'=(Get-ServerPulseText 'history.query'); '最近 1 小时'=(Get-ServerPulseText 'history.recentHour'); '默认显示最近一小时 · 分钟平均值'=(Get-ServerPulseText 'history.footer');
+        'Start'=(Get-ServerPulseText 'history.start'); 'End'=(Get-ServerPulseText 'history.end'); 'Query'=(Get-ServerPulseText 'history.query'); 'Last 1 hour'=(Get-ServerPulseText 'history.recentHour'); 'Last hour by default · minute averages'=(Get-ServerPulseText 'history.footer'); 'Y'=(Get-ServerPulseText 'history.year'); 'M'=(Get-ServerPulseText 'history.month'); 'D'=(Get-ServerPulseText 'history.day'); 'h'=(Get-ServerPulseText 'history.hour'); 'min'=(Get-ServerPulseText 'history.minute')
+    }
+    $pending = [Collections.Stack]::new(); $pending.Push($Window)
+    while ($pending.Count -gt 0) {
+        $node = $pending.Pop()
+        if ($node -is [Windows.Controls.TextBlock] -and $translations.ContainsKey([string]$node.Text)) { $node.Text = $translations[[string]$node.Text] }
+        if ($node -is [Windows.Controls.Button] -and $node.Content -is [string] -and $translations.ContainsKey([string]$node.Content)) { $node.Content = $translations[[string]$node.Content] }
+        if ($node -is [Windows.DependencyObject]) { foreach ($child in [Windows.LogicalTreeHelper]::GetChildren($node)) { if ($child -is [Windows.DependencyObject]) { $pending.Push($child) } } }
+    }
+    if ($null -ne $Window.Tag -and $Window.Tag.PSObject.Properties.Name -contains 'Renderer') { try { [void](& $Window.Tag.Renderer -State $Window.Tag) } catch { } }
 }
 
 function Get-HistoryChartPointSegments {
@@ -605,7 +623,7 @@ function Update-HistoryChartUserSeries {
         }
         if($current.Count){$segments.Add($current)}
         foreach($segment in $segments){$line=[Windows.Shapes.Polyline]::new();$line.Points=$segment;$line.Stroke=New-HistoryBrush $known.Color;$line.StrokeThickness=1.3;$dashes=[Windows.Media.DoubleCollection]::new();$dashes.Add(3);$dashes.Add(2);$line.StrokeDashArray=$dashes;$line.IsHitTestVisible=$false;[Windows.Controls.Panel]::SetZIndex($line,10);[void]$State.Canvas.Children.Add($line);$State.UserLineShapes.Add($line)}
-        $tag=[Windows.Controls.Border]::new();$tag.Padding=[Windows.Thickness]::new(4,1,4,1);$tag.Margin=[Windows.Thickness]::new(0,2,4,0);$tag.BorderBrush=New-HistoryBrush $known.Color;$tag.BorderThickness=[Windows.Thickness]::new(1);$tag.CornerRadius=[Windows.CornerRadius]::new(3);$tag.Cursor='Hand';$tag.ToolTip='点击移除用户曲线';$tag.Tag=[PSCustomObject]@{State=$State;Identity=$identity}
+    $tag=[Windows.Controls.Border]::new();$tag.Padding=[Windows.Thickness]::new(4,1,4,1);$tag.Margin=[Windows.Thickness]::new(0,2,4,0);$tag.BorderBrush=New-HistoryBrush $known.Color;$tag.BorderThickness=[Windows.Thickness]::new(1);$tag.CornerRadius=[Windows.CornerRadius]::new(3);$tag.Cursor='Hand';$tag.ToolTip=Get-ServerPulseText 'history.userRemove';$tag.Tag=[PSCustomObject]@{State=$State;Identity=$identity}
         $tag.Child=New-HistoryText ("● $($known.Name) ×") 7 $known.Color
         $tag.Add_MouseLeftButtonDown({param($sender,$event);$tagState=$sender.Tag;$tagState.State.SelectedUsers.Remove([string]$tagState.Identity);$tagState.State.SelectionStore[$tagState.State.ChartKey]=@($tagState.State.SelectedUsers);Update-HistoryChartUserSeries $tagState.State;$event.Handled=$true})
         [void]$State.UserLegend.Children.Add($tag)
@@ -622,7 +640,7 @@ function New-HistoryPopupUserRow {
     param($State,$User,[switch]$Other,[int]$OtherCount=0)
     $border=[Windows.Controls.Border]::new();$border.Padding=[Windows.Thickness]::new(2,2,2,2);$border.Margin=[Windows.Thickness]::new(0,1,0,0);$border.Cursor='Hand';$border.Background=New-HistoryBrush '#01000000'
     $row=[Windows.Controls.Grid]::new();$left=[Windows.Controls.ColumnDefinition]::new();$left.Width='*';[void]$row.ColumnDefinitions.Add($left);$right=[Windows.Controls.ColumnDefinition]::new();$right.Width='Auto';[void]$row.ColumnDefinitions.Add($right)
-    if($Other){$name=New-HistoryText $(if($State.Expanded){'收起用户列表'}else{"其他（$OtherCount 用户）"}) 8 '#99A39D';$value=New-HistoryText $(if($State.Expanded){'收起'}else{'展开'}) 8 '#99A39D';$border.Tag=[PSCustomObject]@{State=$State;Other=$true;User=$null}}
+    if($Other){$name=New-HistoryText $(if($State.Expanded){Get-ServerPulseText 'main.userCollapse'}else{Get-ServerPulseText 'main.userOther' @($OtherCount)}) 8 '#99A39D';$value=New-HistoryText $(if($State.Expanded){Get-ServerPulseText 'main.userCollapse'}else{Get-ServerPulseText 'main.userExpand'}) 8 '#99A39D';$border.Tag=[PSCustomObject]@{State=$State;Other=$true;User=$null}}
     else{$name=New-HistoryText ("● $($User.Name)") 8 $User.Color;$value=New-HistoryText (Format-HistoryUserValue $User $State.UserKind) 8 '#EDF2EF';$border.Tag=[PSCustomObject]@{State=$State;Other=$false;User=$User}}
     $value.HorizontalAlignment='Right';[Windows.Controls.Grid]::SetColumn($value,1);[void]$row.Children.Add($name);[void]$row.Children.Add($value);$border.Child=$row
     $border.Add_MouseLeftButtonDown({param($sender,$event);$data=$sender.Tag;$data.State.IsLocked=$true;if($null -eq $data.State.LockedTime){$data.State.LockedTime=$data.State.HoveredTime};if($data.Other){$data.State.Expanded=-not $data.State.Expanded;Show-HistoryChartSample -State $data.State -Time $data.State.LockedTime}else{Toggle-HistoryChartUserSelection $data.State $data.User.Identity};$event.Handled=$true})
@@ -638,7 +656,7 @@ function Show-HistoryChartSample {
     foreach($value in $sample.Values){$view=@($visible|Where-Object{$_.Name -eq $value.Name}|Select-Object -First 1);if(-not $view.Count){continue};$view=$view[0];[Windows.Controls.Canvas]::SetLeft($view.Marker,$sample.X-4.5);[Windows.Controls.Canvas]::SetTop($view.Marker,$value.Y-4.5);$view.Marker.Visibility='Visible';$view.PopupText.Text=("{0}  {1:0.##}{2}" -f $value.Name,$value.Value,$value.Suffix);$view.PopupRow.Visibility='Visible'}
     $State.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm');$State.UserPanel.Children.Clear();$userPoint=Get-HistoryChartUserPoint $State $sample.Time
     $parent=@($State.Views|Where-Object{$_.Name -eq $State.UserParentSeries}|Select-Object -First 1);$showUsers=($null -ne $userPoint -and (-not $parent.Count -or $parent[0].IsVisible))
-    if($showUsers){if($userPoint.Status -eq 'unavailable'){$text=New-HistoryText '该分钟尚未记录用户明细' 8 '#7C8780';[void]$State.UserPanel.Children.Add($text)}else{$normal=@($userPoint.Users|Where-Object{-not $_.IsSystem -and ($_.RawValue -gt 0 -or $State.SelectedUsers.Contains([string]$_.Identity))}|Sort-Object @{Expression='RawValue';Descending=$true},Name);$system=@($userPoint.Users|Where-Object{$_.IsSystem}|Select-Object -First 1);$take=if($State.Expanded){$normal.Count}else{[Math]::Min(8,$normal.Count)};for($index=0;$index -lt $take;$index++){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $normal[$index]))};if(-not $State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount ($normal.Count-8)))}elseif($State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount 0))};if($system.Count){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $system[0]))};if(-not [string]::IsNullOrWhiteSpace([string]$userPoint.DetailNote)){$noteText=if($userPoint.Status -eq 'partial'){"部分采集 · $($userPoint.DetailNote)"}else{$userPoint.DetailNote};$note=New-HistoryText $noteText 7 '#66716A';$note.Margin=[Windows.Thickness]::new(2,3,0,0);[void]$State.UserPanel.Children.Add($note)}}}
+ if($showUsers){if($userPoint.Status -eq 'unavailable'){$text=New-HistoryText (Get-ServerPulseText 'history.noUsers') 8 '#7C8780';[void]$State.UserPanel.Children.Add($text)}else{$normal=@($userPoint.Users|Where-Object{-not $_.IsSystem -and ($_.RawValue -gt 0 -or $State.SelectedUsers.Contains([string]$_.Identity))}|Sort-Object @{Expression='RawValue';Descending=$true},Name);$system=@($userPoint.Users|Where-Object{$_.IsSystem}|Select-Object -First 1);$take=if($State.Expanded){$normal.Count}else{[Math]::Min(8,$normal.Count)};for($index=0;$index -lt $take;$index++){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $normal[$index]))};if(-not $State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount ($normal.Count-8)))}elseif($State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount 0))};if($system.Count){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $system[0]))};if(-not [string]::IsNullOrWhiteSpace([string]$userPoint.DetailNote)){$noteText=if($userPoint.Status -eq 'partial'){Get-ServerPulseText 'history.partial' @($userPoint.DetailNote)}else{$userPoint.DetailNote};$note=New-HistoryText $noteText 7 '#66716A';$note.Margin=[Windows.Thickness]::new(2,3,0,0);[void]$State.UserPanel.Children.Add($note)}}}
     $rowCount=@($State.Views|Where-Object{$_.PopupRow.Visibility -eq 'Visible'}).Count+$State.UserPanel.Children.Count;$State.Popup.Height=25+(14*$rowCount);$popupLeft=if($sample.X -gt ($State.Canvas.Width/2)){$sample.X-$State.Popup.Width-7}else{$sample.X+7};[Windows.Controls.Canvas]::SetLeft($State.Popup,$popupLeft);[Windows.Controls.Canvas]::SetTop($State.Popup,4);$State.Popup.IsHitTestVisible=[bool]$State.IsLocked;[Windows.Controls.Panel]::SetZIndex($State.Card,100);$State.Guide.Visibility='Visible';$State.Popup.Visibility='Visible'
 }
 
@@ -733,7 +751,7 @@ function New-HistoryChartCard {
             $toggle=[Windows.Controls.Border]::new(); $toggle.Tag=$view; $toggle.Padding=[Windows.Thickness]::new(4,2,4,2); $toggle.Margin=[Windows.Thickness]::new(2,0,0,0); $toggle.CornerRadius=[Windows.CornerRadius]::new(3)
             $toggleText=New-HistoryText $latestText 7 ([string]$view.Series.Color); $toggleText.FontWeight='SemiBold'; $toggleText.IsHitTestVisible=$false; $toggle.Child=$toggleText
             $toggle.Background=$view.ActiveBackground; $toggle.BorderBrush=$view.ActiveBorder; $toggle.BorderThickness=[Windows.Thickness]::new(1); $toggle.Cursor='Hand'
-            $toggle.ToolTip="点击隐藏 $($view.Name)"
+            $toggle.ToolTip=Get-ServerPulseText 'history.hideSeries' @($view.Name)
             $view.Toggle=$toggle; $view.ToggleText=$toggleText
             $toggle.Add_MouseLeftButtonDown({
                 param($sender,$event)
@@ -743,7 +761,7 @@ function New-HistoryChartCard {
                 $sender.Background=if($view.IsVisible){$view.ActiveBackground}else{$view.InactiveBackground}
                 $view.ToggleText.Foreground=if($view.IsVisible){$view.ActiveForeground}else{$view.InactiveForeground}
                 $sender.BorderBrush=if($view.IsVisible){$view.ActiveBorder}else{$view.InactiveBorder}
-                $sender.ToolTip=if($view.IsVisible){"点击隐藏 $($view.Name)"}else{"点击显示 $($view.Name)"}
+                $sender.ToolTip=if($view.IsVisible){Get-ServerPulseText 'history.hideSeries' @($view.Name)}else{Get-ServerPulseText 'history.showSeries' @($view.Name)}
                 $state=$sender.DataContext
                 if($null -ne $state){Set-HistoryChartUnlocked $state;Update-HistoryChartUserSeries $state}
                 $event.Handled=$true
@@ -854,10 +872,10 @@ function Add-HistoryServerSection {
     $name = New-HistoryText ([string]$latest.Label) 14 '#EDF1EF'; $name.FontWeight='SemiBold'
     $onlineCount = ($serverRecords | ForEach-Object { [int]$_.Server.OnlineSamples } | Measure-Object -Sum).Sum
     $sampleCount = ($serverRecords | ForEach-Object { [int]$_.Server.TotalSamples } | Measure-Object -Sum).Sum
-    $meta = New-HistoryText ("{0} · 在线样本 {1}/{2}" -f $latest.Host,$onlineCount,$sampleCount) 8 '#78837C'; $meta.HorizontalAlignment='Right'; [Windows.Controls.Grid]::SetColumn($meta,1)
+    $meta = New-HistoryText (Get-ServerPulseText 'history.meta' @($latest.Host,$onlineCount,$sampleCount)) 8 '#78837C'; $meta.HorizontalAlignment='Right'; [Windows.Controls.Grid]::SetColumn($meta,1)
     [void]$header.Children.Add($name); [void]$header.Children.Add($meta); [void]$stack.Children.Add($header)
 
-    $legend = New-HistoryText '绿 利用率 / CPU / MEM   ·   蓝 显存   ·   橙 温度' 8 '#6E7972'
+    $legend = New-HistoryText (Get-ServerPulseText 'history.legend') 8 '#6E7972'
     $legend.Margin=[Windows.Thickness]::new(0,3,0,8); [void]$stack.Children.Add($legend)
     $wrap = [Windows.Controls.WrapPanel]::new()
 
@@ -891,7 +909,7 @@ function Add-HistoryServerSection {
             [PSCustomObject]@{Name='VRAM';Suffix='%';Color='#79C8D8';Points=$vramPoints;Latest=$vramLatest},
             [PSCustomObject]@{Name='TEMP';Suffix='°C';Color='#E4B64B';Points=$tempPoints;Latest=$gpuLatest.TemperatureC}
         )
-        $subtitle = "显存 {0:0.0}/{1:0.0} GB · 功耗 {2:0}/{3:0} W · 风扇 {4:0}%" -f ([double]$gpuLatest.MemoryUsedMiB/1024),([double]$gpuLatest.MemoryTotalMiB/1024),$gpuLatest.PowerDrawW,$gpuLatest.PowerLimitW,$gpuLatest.FanPercent
+        $subtitle = Get-ServerPulseText 'history.gpuSubtitle' @(([double]$gpuLatest.MemoryUsedMiB/1024),([double]$gpuLatest.MemoryTotalMiB/1024),$gpuLatest.PowerDrawW,$gpuLatest.PowerLimitW,$gpuLatest.FanPercent)
         [void]$wrap.Children.Add((New-HistoryChartCard -Title ("GPU {0}" -f $gpuIndex) -Subtitle $subtitle -Series $series -Start $Start -End $End -UserPoints $vramUserPoints -UserKind GpuMemory -UserParentSeries VRAM -ChartKey "$ServerId/gpu/$gpuIndex/vram" -SelectionStore $SelectionStore))
     }
     [void]$stack.Children.Add($wrap); $surface.Child=$stack; [void]$Panel.Children.Add($surface)
@@ -963,28 +981,28 @@ function Invoke-ServerPulseHistoryRender {
         $startResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
         $endResult = Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryEnd'
         if ($null -eq $startResult.Value -or $null -eq $endResult.Value) {
-            $historyUi.HistoryRangeStatus.Text='请修正红色时间字段'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
+            $historyUi.HistoryRangeStatus.Text=Get-ServerPulseText 'history.range.invalid'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
             $State.LastError = $null
             return $false
         }
         $rangeStart = $startResult.Value; $rangeEnd = $endResult.Value
         if ($rangeEnd -lt $rangeStart) {
-            $historyUi.HistoryRangeStatus.Text='结束时间不能早于开始时间'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'
+            $historyUi.HistoryRangeStatus.Text=Get-ServerPulseText 'history.range.reversed'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF7B72'
             $State.LastError = $null
             return $false
         }
         $records = @(Get-ServerPulseHistoryRecords -Recorder $State.Recorder -Start $rangeStart -End $rangeEnd)
         $historyUi.HistoryPanel.Children.Clear()
         if ($records.Count -eq 0) {
-            $empty = New-HistoryText '所选时间段暂无记录' 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
+            $empty = New-HistoryText (Get-ServerPulseText 'history.noRecords') 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
             [void]$historyUi.HistoryPanel.Children.Add($empty)
         } else {
             $serverIds = @($records | ForEach-Object { @($_.Servers) } | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
             foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $historyUi.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd -SelectionStore $State.SelectionStore }
         }
         $minutes = [Math]::Max(0,[int][Math]::Round(($rangeEnd-$rangeStart).TotalMinutes))
-        $historyUi.HistoryRangeStatus.Text="$($records.Count) 个分钟点 · $minutes 分钟"; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
-        $historyUi.HistoryFooterText.Text='本地按分钟平均保存 CPU、MEM、LOAD、GPU、显存、温度、功耗与风扇'
+        $historyUi.HistoryRangeStatus.Text=Get-ServerPulseText 'history.range.count' @($records.Count,$minutes); $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
+        $historyUi.HistoryFooterText.Text=Get-ServerPulseText 'history.footerFull'
         $State.LastError = $null
         return $true
     } catch {
@@ -992,11 +1010,11 @@ function Invoke-ServerPulseHistoryRender {
         $message=[string]$_.Exception.Message
         if ($message.Length -gt 140) { $message=$message.Substring(0,137) + '...' }
         $historyUi.HistoryPanel.Children.Clear()
-        $errorText=New-HistoryText ("无法读取占用记录`n{0}" -f $message) 12 '#FF8A80'
+        $errorText=New-HistoryText (Get-ServerPulseText 'history.readError' @($message)) 12 '#FF8A80'
         $errorText.TextAlignment='Center'; $errorText.TextWrapping='Wrap'; $errorText.HorizontalAlignment='Center'; $errorText.Margin=[Windows.Thickness]::new(18,90,18,0)
         [void]$historyUi.HistoryPanel.Children.Add($errorText)
-        $historyUi.HistoryRangeStatus.Text='查询失败'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
-        $historyUi.HistoryFooterText.Text='请检查本地历史记录文件后重试'
+        $historyUi.HistoryRangeStatus.Text=Get-ServerPulseText 'history.error'; $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#FF5E5E'
+        $historyUi.HistoryFooterText.Text=Get-ServerPulseText 'history.errorHint'
         return $false
     }
 }
@@ -1099,7 +1117,7 @@ function Show-ServerPulseHistoryWindow {
     $historyUi = @{}; foreach ($name in $names) { $historyUi[$name] = $historyWindow.FindName($name) }
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
         $historyUi["${prefix}YearBox"].ToolTip='2000–9999'; $historyUi["${prefix}MonthBox"].ToolTip='1–12'
-        $historyUi["${prefix}DayBox"].ToolTip='按年、月校验实际天数'; $historyUi["${prefix}HourBox"].ToolTip='0–23'; $historyUi["${prefix}MinuteBox"].ToolTip='0–59'
+        $historyUi["${prefix}DayBox"].ToolTip=Get-ServerPulseText 'history.dateDayTip'; $historyUi["${prefix}HourBox"].ToolTip='0–23'; $historyUi["${prefix}MinuteBox"].ToolTip='0–59'
     }
 
     $end = [DateTime]::Now; $end = [datetime]::new($end.Year,$end.Month,$end.Day,$end.Hour,$end.Minute,0)
@@ -1116,6 +1134,7 @@ function Show-ServerPulseHistoryWindow {
         Validator=${function:Set-HistoryDateInputValidation}
         LastError=$null
     }
+    $historyWindow.Tag=$historyState
     [void](Register-HistoryWindowDragArea -DragArea $historyUi.HistoryDragArea)
     Register-HistoryWindowCloseButton -Button $historyUi.HistoryCloseButton
     Register-HistoryWindowChartEscape -Window $historyWindow -Panel $historyUi.HistoryPanel
@@ -1148,6 +1167,7 @@ function Show-ServerPulseHistoryWindow {
             })
         }
     }
+    Update-HistoryWindowLanguage -Window $historyWindow
     [void](Invoke-ServerPulseHistoryRender -State $historyState)
     if ($SmokeTest) {
         $historyWindow.Show(); $historyWindow.UpdateLayout()

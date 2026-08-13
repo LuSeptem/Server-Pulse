@@ -10,6 +10,7 @@ Server Pulse 是一个原生 Windows WPF 监控浮窗，直接通过本机 `ssh.
 
 - 原生无边框桌面浮窗，默认尺寸约为 420 × 560。
 - 顶栏右上角提供主题切换菜单，可选择“亮”“暗”或“跟随系统”；默认暗色。“跟随系统”读取 Windows 的应用主题并在运行期间自动同步，主浮窗、用户弹层、历史记录和 SSH 管理窗口共用同一套配色。
+- 顶栏右上角同时提供语言切换菜单，可选择“中文”“English”或“跟随系统”；当前版本默认中文。语言选择会立即刷新主窗口、托盘菜单、用户明细、历史记录和 SSH 服务器管理窗口，并随设置保存。
 - 主窗口不占用 Windows 任务栏，程序常驻系统托盘；左键单击托盘图标可恢复窗口，右键菜单可显示、隐藏或退出。
 - 可在独立“SSH 服务器”窗口选择需要监视的节点，候选项来自默认配置、当前用户 `~/.ssh/config` 的具体 Host 和手动新增项；允许暂时不监视任何服务器。
 - 认证优先使用 SSH 密钥或 `ssh-agent` 的免密登录，也支持普通账户密码。密码可仅保留到本次退出，或由用户明确保存到 Windows 自带的凭据管理器。
@@ -80,6 +81,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-ServerPu
 - **查看更多 GPU**：窗口较小时，在节点区域使用鼠标滚轮纵向滚动；滚动条保持隐藏以减少视觉干扰。
 - **背景透明度**：拖动顶栏滑块，范围为 40%–100%；文字和指标不会随之变淡。
 - **界面主题**：点击顶栏右上角的半明半暗圆形按钮，从弹出的菜单选择“亮”“暗”或“跟随系统”。亮色使用暖白表面、深色正文以及为浅背景校准过的状态色；切换会立即作用于已经打开的历史记录、SSH 管理窗口和用户明细弹层。“跟随系统”每 2 秒检查一次 Windows 应用主题，仅在系统设置改变时重绘界面。
+- **界面语言**：点击顶栏右上角的语言按钮，从菜单选择“中文”“English”或“跟随系统”。首次运行和无效配置均回退为中文；“跟随系统”按 Windows 当前用户界面语言选择中文或英文，并在运行期间定期同步。切换不会改变服务器配置、凭据或历史数据。
 - **刷新间隔**：在状态栏的“刷新”输入框中填写 `1`–`300` 秒，按 Enter 或移开焦点后生效；无效输入会恢复当前值。
 - **实时用户明细**：将鼠标移到 CPU、MEM 或单卡“显存”数值/进度条上可临时查看用户占用；单击固定，再次单击同一指标、点击窗口空白处或按 `Esc` 关闭。点击另一指标会直接替换固定内容。普通零占用用户默认隐藏；采集权限不足时面板会显示“数据不完整”或“不可用”，而不是显示为零。
 - **SSH 服务器**：点击在线统计右侧带服务器图标的“管理”按钮，或托盘右键菜单中的“SSH 服务器...”打开管理窗口。该窗口是跟随主窗口置顶的单实例非模态窗口，不单独占用任务栏，也不会禁用主监控界面；再次点击“管理”会激活已有窗口。SSH 配置别名在后台发现，不会冻结窗口；手动点击和后台认证提醒共用排队门闩，不会连续弹出两个管理窗口。勾选需要监视的服务器后点击“验证并应用”；已验证节点立即运行，缺少认证的节点暂停，不影响其他节点。“重新检测”除执行一次连接验证外，还会通知长期 Worker 立即解除该服务器的网络退避或熔断。取消监视会关闭对应长期 SSH 会话、停止新采集并清除未保存的会话密码，但保留服务器设置、Windows 凭据和旧历史。
@@ -98,6 +100,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-ServerPu
 %LOCALAPPDATA%\ServerPulse\settings.json
 ```
 
+其中 `ThemeMode` 保存主题模式（`dark`、`light` 或 `system`），`LanguageMode` 保存语言模式（`zh`、`en` 或 `system`）；缺失或无效的 `LanguageMode` 会按中文版启动。
+
 运行时服务器列表保存在 `%LOCALAPPDATA%\ServerPulse\servers.json`，仓库中的 `config\servers.json` 只作为首次运行种子。两个文件都不包含密码。Windows 持久凭据以 Generic Credential 保存，并绑定到规范化的 `用户名@主机:端口`；相同登录身份的多个 SSH 别名可复用同一条凭据。
 
 首次连接未知服务器时，软件会显示主机密钥算法和 SHA256 指纹，只有确认后才写入当前用户的 `known_hosts`。已知服务器的指纹发生变化时会严格阻断，并同时显示旧、新指纹和人工处理命令，绝不会自动覆盖。
@@ -108,7 +112,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-ServerPu
 
 删除该文件即可恢复默认暗色主题、尺寸、位置、背景透明度和刷新间隔。
 
-主题设置加入后设置格式升级为版本 3；旧版设置会直接沿用已有尺寸、位置、透明度等字段，并补上默认暗色主题。应用内拖拽的版本 2 迁移规则保持不变：更早的异常半屏尺寸会恢复为 420 × 560，此后的手动缩放和位置继续正常保存。
+主题和语言设置加入后设置格式升级为版本 4；旧版设置会直接沿用已有尺寸、位置、透明度等字段，并补上默认暗色主题和中文语言。应用内拖拽的版本 2 迁移规则保持不变：更早的异常半屏尺寸会恢复为 420 × 560，此后的手动缩放和位置继续正常保存。
 
 新历史记录以一行一个分钟记录的紧凑 JSONL 追加到 `%LOCALAPPDATA%\ServerPulse\history\yyyy-MM-dd.v2.jsonl`，默认保留 30 天。旧版 `yyyy-MM-dd.json` 会继续读取，不迁移也不删除；同一天两种格式可以混合查询。软件重启造成同一分钟出现多行时，会按各资源的有效样本数加权合并；文件末尾若有崩溃留下的不完整行，只忽略该行并记录错误，不影响此前记录。删除 `history` 目录只会清空历史，不影响窗口设置。
 
@@ -156,6 +160,7 @@ ServerPulse.exe（固定 AppUserModelID + 进程内 WPF）
 - `scripts/Build-ServerPulseHost.ps1`：使用 Windows 自带的 .NET Framework 编译器和 `assets/server-pulse.ico` 可重复构建 EXE。
 - `ServerPulse.ps1`：WPF 界面、窗口设置、尺寸/背景透明度控制、逐卡 GPU/显存视图、贴边隐藏和刷新调度；启动一次长期采集器，并通过标准输入/输出逐行交换 JSON 请求与快照。
 - `src/ServerPulse.Theme.ps1`：共享的亮/暗语义色映射、Windows 系统主题检测、现有 WPF 视觉树重绘和动态控件画刷注册。
+- `src/ServerPulse.Localization.ps1`：中文、英文和跟随系统语言资源、模式规范化、系统语言解析及运行时文案格式化。
 - `Start Server Pulse.vbs`：兼容启动器，优先使用 EXE。
 - `src/Collect-Metrics.ps1`：长期 Worker 与一次性诊断模式。Worker 只建立一次 Runspace Pool，并协调每台服务器各自的长期 SSH 会话，不再使用会反复创建 PowerShell 进程的 `Start-Job`。
 - `src/ServerPulse.Persistent.ps1`：长期 SSH 会话、远端采样分帧、断线退避、随机抖动与熔断状态机。
@@ -183,7 +188,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ServerPulse.Test
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1 -SmokeTest
 ```
 
-冒烟模式会实际运行一次 SSH 采集，验证 EXE 宿主、WPF 主窗口与历史窗口、亮/暗主题往返、SSH 管理窗口主题继承、长期 Worker、任务栏隐藏、托盘图标及隐藏/恢复、动态服务器配置、应用内坐标拖拽、历史窗口关闭按钮的命中、事件隔离与实际关闭、刷新间隔、分钟历史聚合、默认最近一小时、分框日期输入与红框/`!` 越界提示、GPU 三指标显隐、折线图同分钟多指标悬停、分行颜色标记、完整时间显示及移出隐藏、损坏历史文件的查询异常拦截、历史错误对话框的独立置顶属性、未处理 UI 事件的应用级保护、仅背景透明、逐卡显存数据和贴边隐藏，然后生成 `tests/artifacts/native-window-light.png`、`tests/artifacts/native-window.png` 与 `tests/artifacts/history-window.png` 并自动退出。核心测试还验证主题模式规范化、亮暗颜色往返、现有 WPF 控件重绘、Worker 连续请求不退出、Runspace Pool、EXE 版本资源、图标、AppUserModelID 与 Job Object，并使用隔离的模拟 SSH 覆盖 ASKPASS 密码、命名管道 SID ACL、错误密码暂停、并行认证、SSH config 发现、主机密钥和服务器管理窗口，不会改动真实服务器认证。
+冒烟模式会实际运行一次 SSH 采集，验证 EXE 宿主、WPF 主窗口与历史窗口、亮/暗主题往返、中文/英文语言菜单与 SSH 管理窗口英文标题、SSH 管理窗口主题继承、长期 Worker、任务栏隐藏、托盘图标及隐藏/恢复、动态服务器配置、应用内坐标拖拽、历史窗口关闭按钮的命中、事件隔离与实际关闭、刷新间隔、分钟历史聚合、默认最近一小时、分框日期输入与红框/`!` 越界提示、GPU 三指标显隐、折线图同分钟多指标悬停、分行颜色标记、完整时间显示及移出隐藏、损坏历史文件的查询异常拦截、历史错误对话框的独立置顶属性、未处理 UI 事件的应用级保护、仅背景透明、逐卡显存数据和贴边隐藏，然后生成 `tests/artifacts/native-window-light.png`、`tests/artifacts/native-window.png` 与 `tests/artifacts/history-window.png` 并自动退出。核心测试还验证语言/主题模式规范化、亮暗颜色往返、现有 WPF 控件重绘、Worker 连续请求不退出、Runspace Pool、EXE 版本资源、图标、AppUserModelID 与 Job Object，并使用隔离的模拟 SSH 覆盖 ASKPASS 密码、命名管道 SID ACL、错误密码暂停、并行认证、SSH config 发现、主机密钥和服务器管理窗口，不会改动真实服务器认证。
 
 任务管理器中正常会长期保留一个 `ServerPulse.exe` 和一个 PID 稳定的后台采集器 `powershell.exe`。刷新时每台并行服务器各出现一个短生命周期 `ssh.exe`，采集结束即退出；当前监视两台服务器时，任一时刻最多出现两个 SSH，后续刷新会使用新的 SSH PID。它们是系统 OpenSSH 的实际网络连接进程，继续使用现有 SSH 配置、密钥、ProxyJump 和安全 ASKPASS 时无法合并进主进程。与旧实现相比，不再每轮出现新的采集器 PowerShell、`Start-Job` PowerShell 和对应 `conhost`。
 

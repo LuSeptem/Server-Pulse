@@ -1,5 +1,6 @@
 ﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Theme.ps1')
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.Localization.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Core.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1')
@@ -30,6 +31,15 @@ Assert-Equal ($themeRoot.Background.Color.R -gt 220) $true '主题切换更新�
 Assert-Equal ($themeText.Foreground.Color.R -lt 80) $true '亮色主题保持正文高对比度'
 [void](Set-ServerPulseThemeState dark dark);Update-ServerPulseThemeVisualTree $themeRoot
 Assert-Equal $themeRoot.Background.Color.ToString() '#FF0D100E' '现有 WPF 容器可切回暗色'
+
+Assert-Equal (Normalize-ServerPulseLanguageMode 'EN') 'en' '语言模式不区分大小写'
+Assert-Equal (Normalize-ServerPulseLanguageMode 'invalid') 'zh' '无效语言模式安全回退中文'
+Assert-Equal (Resolve-ServerPulseLanguage -Mode system -SystemLanguage en) 'en' '跟随系统语言可解析为英文'
+Assert-Equal (Set-ServerPulseLanguageState -Mode zh -ResolvedLanguage zh) 'zh' '语言状态可切换为中文'
+Assert-Equal (Get-ServerPulseText 'main.manage') '管理' '默认界面文案为中文'
+[void](Set-ServerPulseLanguageState -Mode en -ResolvedLanguage en)
+Assert-Equal (Get-ServerPulseText 'main.manage') 'Manage' '英文资源可解析'
+[void](Set-ServerPulseLanguageState -Mode zh -ResolvedLanguage zh)
 
 $fields = @(Split-MetricCsvLine '0, "GPU, Pro", "a""b"')
 Assert-Equal $fields.Count 3 'CSV 字段数量'
@@ -373,6 +383,11 @@ Assert-Equal ([bool]($mainScript -match "@\('light','亮'\),@\('dark','暗'\),@\
 Assert-Equal ([bool]($mainScript -match "ThemeMode = 'dark'")) $true '全新和旧配置默认使用暗色主题'
 Assert-Equal ([bool]($mainScript -match 'ThemeMode=\$script:themeMode')) $true '用户主题选择随设置持久化'
 Assert-Equal ([bool]($mainScript -match 'Get-ServerPulseSystemTheme|Resolve-ServerPulseTheme')) $true '跟随系统模式定时解析 Windows 应用主题'
+Assert-Equal ([bool]($mainScript -match 'x:Name="LanguageButton"')) $true '主窗口右上角提供语言切换按钮'
+Assert-Equal ([bool]($mainScript -match "@\('zh','中文'\),@\('en','English'\),@\('system','跟随系统'\)")) $true '语言菜单包含中文、英文和跟随系统三种模式'
+Assert-Equal ([bool]($mainScript -match "LanguageMode = 'zh'")) $true '全新配置默认使用中文'
+Assert-Equal ([bool]($mainScript -match 'LanguageMode=\$script:languageMode')) $true '用户语言选择随设置持久化'
+Assert-Equal ([bool]($mainScript -match 'Set-ServerPulseLanguageMode')) $true '语言按钮切换会刷新主界面'
 Assert-Equal ([bool]($mainScript -match '\[Windows\.Forms\.NotifyIcon\]::new\(\)')) $true '创建 Windows 托盘图标'
 Assert-Equal ([bool]($mainScript -match 'Join-Path \$scriptRoot ''assets\\server-pulse\.ico''')) $true '托盘加载 Server Pulse 多分辨率图标'
 Assert-Equal ([bool]($mainScript -match '\$script:trayOwnedIcon\.Dispose\(\)')) $true '退出时释放自定义托盘图标句柄'
@@ -382,8 +397,8 @@ Assert-Equal ([bool]($mainScript -match 'function Hide-ServerPulseToTray')) $tru
 Assert-Equal ([bool]($mainScript -match '(?s)\$ui\.MinimizeButton\.Add_Click.+?Hide-ServerPulseToTray')) $true '最小化按钮隐藏到托盘'
 Assert-Equal ([bool]($mainScript -match '(?s)\$window\.Add_Closing.+?\$script:trayIcon\.Dispose\(\)')) $true '退出时释放托盘图标'
 Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager')) $true '主窗口和托盘可打开 SSH 服务器管理窗口'
-Assert-Equal ([bool]($mainScript -match '''retry_wait''\{"● \$retrySeconds 秒后重试"\}')) $true '主卡片显示断线自动重试倒计时'
-Assert-Equal ([bool]($mainScript -match '''circuit_open''\{''● 重试已暂停''\}')) $true '主卡片显示连接熔断暂停'
+Assert-Equal ([bool]($mainScript -match "'retry_wait'\{Get-ServerPulseText 'main.retryState'")) $true '主卡片显示断线自动重试倒计时'
+Assert-Equal ([bool]($mainScript -match "'circuit_open'\{Get-ServerPulseText 'main.retryPaused'")) $true '主卡片显示连接熔断暂停'
 Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen\).*\$script:sshManagerWindow\.Activate\(\).*return')) $true 'SSH 管理窗口具有单实例激活门闩'
 Assert-Equal ([bool]($mainScript -match 'if\(\$script:sshManagerOpen-or\$script:sshManagerOpenQueued\)\{return\}')) $true '自动打开 SSH 管理窗口不会重复排队'
 Assert-Equal ([bool]($mainScript -match 'Show-ServerPulseSshManager -Queued')) $true '排队的管理窗口调用可被手动打开取消'
@@ -394,6 +409,7 @@ Assert-Equal ([bool]($sshScript -match 'SERVERPULSE_AUTH_TOKEN=\$token')) $true 
 Assert-Equal ([bool]($sshScript -match 'EnvironmentVariables\[[^\]]+\]\s*=\s*\$Password')) $false '密码不得写入子进程环境变量'
 $managerScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($managerScript -match 'New-ServerPulseThemeBrush')) $true 'SSH 管理窗口复用共享主题色'
+Assert-Equal ([bool]($managerScript -match 'Update-ServerManagerLanguage')) $true 'SSH 管理窗口支持语言刷新'
 Assert-Equal ([bool]($managerScript -match 'InheritHistory=\[bool\]\$w\.Tag\.Inherit\.IsChecked')) $true '编辑连接身份时由用户选择是否继承历史'
 Assert-Equal ([bool]($managerScript -match 'DeleteCredentialButton')) $true '服务器管理窗口允许独立删除 Windows 凭据'
 Assert-Equal ([bool]($managerScript -match '\.BeginStop\(')) $true '关闭管理窗口时异步停止 SSH 发现而不阻塞 UI'
@@ -413,6 +429,7 @@ $vramFormatPattern = '''\{0:0\.0\} GB · \{1\}'''
 Assert-Equal ([bool]($mainScript -match $vramFormatPattern)) $true '实时显存用户值同时显示 GB 与百分比'
 $historyScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($historyScript -match 'New-ServerPulseThemeBrush')) $true '历史记录窗口复用共享主题色'
+Assert-Equal ([bool]($historyScript -match 'Update-HistoryWindowLanguage')) $true '历史记录窗口支持语言刷新'
 Assert-Equal ([bool]($historyScript -match 'HistoryCloseButton\.Add_Click\(\{\s*\$historyWindow\.Close')) $false '历史关闭回调不得依赖动态窗口变量'
 Assert-Equal ([bool]($historyScript -match '\[Windows\.Window\]::GetWindow\(\$sender\)')) $true '历史关闭回调从按钮解析所属窗口'
 Assert-Equal ([bool]($historyScript -match 'HistoryDragArea\.Add_Mouse[^\r\n]+\$drag')) $false '历史拖拽回调不得依赖动态拖拽变量'
