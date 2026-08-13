@@ -47,6 +47,14 @@ Assert-Equal (Get-ServerPulseText 'main.manage') '管理' '默认界面文案为
 [void](Set-ServerPulseLanguageState -Mode en -ResolvedLanguage en)
 Assert-Equal (Get-ServerPulseText 'main.manage') 'Manage' '英文资源可解析'
 [void](Set-ServerPulseLanguageState -Mode zh -ResolvedLanguage zh)
+Assert-Equal (Get-ServerPulseText 'history.popupPinHint') '单击曲线固定弹窗' '历史详情固定提示使用中文'
+Assert-Equal (Get-ServerPulseText 'history.popupUnpinHint') '双击曲线解除固定' '历史详情解除固定提示使用中文'
+Assert-Equal (Get-ServerPulseText 'history.userCurveHint') '单击查看用户曲线' '历史用户曲线提示使用中文'
+[void](Set-ServerPulseLanguageState -Mode en -ResolvedLanguage en)
+Assert-Equal (Get-ServerPulseText 'history.popupPinHint') 'Click curve to pin popup' '历史详情固定提示提供英文'
+Assert-Equal (Get-ServerPulseText 'history.popupUnpinHint') 'Double-click curve to unpin' '历史详情解除固定提示提供英文'
+Assert-Equal (Get-ServerPulseText 'history.userCurveHint') 'Click to view user curve' '历史用户曲线提示提供英文'
+[void](Set-ServerPulseLanguageState -Mode zh -ResolvedLanguage zh)
 
 $fields = @(Split-MetricCsvLine '0, "GPU, Pro", "a""b"')
 Assert-Equal $fields.Count 3 'CSV 字段数量'
@@ -441,6 +449,9 @@ Assert-Equal ([bool]($mainScript -match $vramFormatPattern)) $true '实时显存
 $historyScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1') -Raw -Encoding UTF8
 Assert-Equal ([bool]($historyScript -match 'New-ServerPulseThemeBrush')) $true '历史记录窗口复用共享主题色'
 Assert-Equal ([bool]($historyScript -match 'Format-ServerPulseGpuTitle')) $true '历史 GPU 图表标题显示型号'
+Assert-Equal ([bool]($historyScript -match 'Update-HistoryChartPopupHint')) $true '历史详情浮窗更新固定状态提示'
+Assert-Equal ([bool]($historyScript -match 'ClickCount[^\r\n]+-ge 2')) $true '历史详情浮窗支持双击曲线解除固定'
+Assert-Equal ([bool]($historyScript -match 'history\.userCurveHint')) $true '历史用户行显示曲线查看提示'
 Assert-Equal ([bool]($historyScript -match 'Update-HistoryWindowLanguage')) $true '历史记录窗口支持语言刷新'
 Assert-Equal ([bool]($historyScript -match 'HistoryCloseButton\.Add_Click\(\{\s*\$historyWindow\.Close')) $false '历史关闭回调不得依赖动态窗口变量'
 Assert-Equal ([bool]($historyScript -match '\[Windows\.Window\]::GetWindow\(\$sender\)')) $true '历史关闭回调从按钮解析所属窗口'
@@ -585,6 +596,7 @@ $wpfPopupLeft=[Windows.Controls.Canvas]::GetLeft($wpfHoverCard.Tag.Popup); $wpfP
 Assert-Equal (($wpfPopupRight -le ($wpfSampleX-7)) -or ($wpfPopupLeft -ge ($wpfSampleX+7))) $true '历史悬停浮窗必须避开当前采样线'
 Assert-Equal $wpfHoverCard.Tag.TimeBlock.Text '2026-08-11 09:45' 'WPF 悬停显示完整具体时间'
 Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' }).Count 3 '悬停浮窗将三个指标分行显示'
+Assert-Equal $wpfHoverCard.Tag.PopupHint.Text '单击曲线固定弹窗' 'WPF 悬停详情浮窗显示固定提示'
 Assert-Equal $wpfHoverCard.Tag.Views[0].PopupText.Text 'GPU  55%' '悬停行显示 GPU 数值'
 Assert-Equal $wpfHoverCard.Tag.Views[1].PopupDot.Fill.ToString() '#FF79C8D8' '悬停行使用对应曲线颜色标记'
 $wpfToggleDown=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left); $wpfToggleDown.RoutedEvent=[Windows.UIElement]::MouseLeftButtonDownEvent; $wpfHoverCard.Tag.Views[1].Toggle.RaiseEvent($wpfToggleDown)
@@ -595,6 +607,7 @@ Assert-Equal @($wpfHoverCard.Tag.Markers | Where-Object { $_.Shape.Visibility -e
 Assert-Equal @($wpfHoverCard.Tag.Views | Where-Object { $_.PopupRow.Visibility -eq 'Visible' }).Count 2 '隐藏后浮窗不显示该指标行'
 $wpfHoverDown=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,[Windows.Input.MouseButton]::Left); $wpfHoverDown.RoutedEvent=[Windows.UIElement]::MouseLeftButtonDownEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverDown)
 Assert-Equal $wpfHoverCard.Tag.IsLocked $true '点击历史图表锁定当前分钟'
+Assert-Equal $wpfHoverCard.Tag.PopupHint.Text '双击曲线解除固定' '锁定详情浮窗切换为双击解除提示'
 Assert-Equal $wpfHoverCard.Tag.Popup.IsHitTestVisible $true '锁定后的历史浮窗恢复交互以选择用户曲线'
 $wpfHoverLeave=[Windows.Input.MouseEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount); $wpfHoverLeave.RoutedEvent=[Windows.UIElement]::MouseLeaveEvent; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
 $wpfHoverCard.Tag.IsLocked=$false; $wpfHoverCard.Tag.Canvas.RaiseEvent($wpfHoverLeave)
@@ -652,6 +665,9 @@ $historyUserCard=New-HistoryChartCard -Title 'CPU 用户' -Subtitle '' -Series $
 $historyUserWindow.Content=$historyUserCard; $historyUserWindow.Show(); $historyUserWindow.UpdateLayout()
 $historyUserCard.Tag.IsLocked=$true; $historyUserCard.Tag.LockedTime=$historyUserTime
 Show-HistoryChartSample -State $historyUserCard.Tag -Time $historyUserTime
+Assert-Equal $historyUserCard.Tag.PopupHint.Text '双击曲线解除固定' '历史固定详情浮窗显示双击解除提示'
+$historyFirstUserRow=@($historyUserCard.Tag.UserPanel.Children | Where-Object { $null -ne $_.Tag -and $null -ne $_.Tag.User -and -not $_.Tag.User.IsSystem } | Select-Object -First 1)[0]
+Assert-Equal $historyFirstUserRow.Child.Children[0].Children.Count 2 '历史用户行在用户名后显示曲线提示'
 $systemPopupRows = @($historyUserCard.Tag.UserPanel.Children | Where-Object { $null -ne $_.Tag -and $null -ne $_.Tag.User -and $_.Tag.User.IsSystem })
 Assert-Equal $systemPopupRows.Count 1 '历史系统未归属始终单列展示'
 Assert-Equal $systemPopupRows[0].Tag.User.Name '系统/未归属' '历史系统未归属保持专用末行身份'

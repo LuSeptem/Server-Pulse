@@ -542,6 +542,17 @@ function Get-HistoryChartUserPoint {
     if($matches.Count){return $matches[0]};return $null
 }
 
+function Update-HistoryChartPopupHint {
+    param($State)
+    $hint = Get-HistoryObjectValue $State @('PopupHint')
+    if ($null -eq $hint) { return }
+    $hint.Text = if ([bool](Get-HistoryObjectValue $State @('IsLocked'))) {
+        Get-ServerPulseText 'history.popupUnpinHint'
+    } else {
+        Get-ServerPulseText 'history.popupPinHint'
+    }
+}
+
 function Get-HistoryNearestChartTime {
     param($State,[double]$CursorX)
     if(-not $State.Timeline.Count){return $null}
@@ -554,6 +565,7 @@ function Get-HistoryNearestChartTime {
 function Set-HistoryChartUnlocked {
     param($State)
     $State.IsLocked=$false;$State.LockedTime=$null;$State.Expanded=$false
+    Update-HistoryChartPopupHint $State
     $State.Guide.Visibility='Collapsed';$State.Popup.Visibility='Collapsed';$State.Popup.IsHitTestVisible=$false
     [Windows.Controls.Panel]::SetZIndex($State.Card,0)
     foreach($view in $State.Views){$view.Marker.Visibility='Collapsed';$view.PopupRow.Visibility='Collapsed'}
@@ -640,9 +652,9 @@ function New-HistoryPopupUserRow {
     param($State,$User,[switch]$Other,[int]$OtherCount=0)
     $border=[Windows.Controls.Border]::new();$border.Padding=[Windows.Thickness]::new(2,2,2,2);$border.Margin=[Windows.Thickness]::new(0,1,0,0);$border.Cursor='Hand';$border.Background=New-HistoryBrush '#01000000'
     $row=[Windows.Controls.Grid]::new();$left=[Windows.Controls.ColumnDefinition]::new();$left.Width='*';[void]$row.ColumnDefinitions.Add($left);$right=[Windows.Controls.ColumnDefinition]::new();$right.Width='Auto';[void]$row.ColumnDefinitions.Add($right)
-    if($Other){$name=New-HistoryText $(if($State.Expanded){Get-ServerPulseText 'main.userCollapse'}else{Get-ServerPulseText 'main.userOther' @($OtherCount)}) 8 '#99A39D';$value=New-HistoryText $(if($State.Expanded){Get-ServerPulseText 'main.userCollapse'}else{Get-ServerPulseText 'main.userExpand'}) 8 '#99A39D';$border.Tag=[PSCustomObject]@{State=$State;Other=$true;User=$null}}
-    else{$name=New-HistoryText ("● $($User.Name)") 8 $User.Color;$value=New-HistoryText (Format-HistoryUserValue $User $State.UserKind) 8 '#EDF2EF';$border.Tag=[PSCustomObject]@{State=$State;Other=$false;User=$User}}
-    $value.HorizontalAlignment='Right';[Windows.Controls.Grid]::SetColumn($value,1);[void]$row.Children.Add($name);[void]$row.Children.Add($value);$border.Child=$row
+    if($Other){$name=New-HistoryText $(if($State.Expanded){Get-ServerPulseText 'main.userCollapse'}else{Get-ServerPulseText 'main.userOther' @($OtherCount)}) 8 '#99A39D';$value=New-HistoryText $(if($State.Expanded){Get-ServerPulseText 'main.userCollapse'}else{Get-ServerPulseText 'main.userExpand'}) 8 '#99A39D';$border.Tag=[PSCustomObject]@{State=$State;Other=$true;User=$null};[void]$row.Children.Add($name)}
+    else{$namePanel=[Windows.Controls.StackPanel]::new();$namePanel.Orientation='Horizontal';$name=New-HistoryText ("● $($User.Name)") 8 $User.Color;$name.TextTrimming='CharacterEllipsis';$name.MaxWidth=88;$hint=New-HistoryText (" · " + (Get-ServerPulseText 'history.userCurveHint')) 7 '#7C8780';$hint.TextTrimming='CharacterEllipsis';$hint.MaxWidth=100;$hint.ToolTip=Get-ServerPulseText 'history.userCurveHint';[void]$namePanel.Children.Add($name);[void]$namePanel.Children.Add($hint);$value=New-HistoryText (Format-HistoryUserValue $User $State.UserKind) 8 '#EDF2EF';$border.Tag=[PSCustomObject]@{State=$State;Other=$false;User=$User};[void]$row.Children.Add($namePanel)}
+    $value.HorizontalAlignment='Right';[Windows.Controls.Grid]::SetColumn($value,1);[void]$row.Children.Add($value);$border.Child=$row
     $border.Add_MouseLeftButtonDown({param($sender,$event);$data=$sender.Tag;$data.State.IsLocked=$true;if($null -eq $data.State.LockedTime){$data.State.LockedTime=$data.State.HoveredTime};if($data.Other){$data.State.Expanded=-not $data.State.Expanded;Show-HistoryChartSample -State $data.State -Time $data.State.LockedTime}else{Toggle-HistoryChartUserSelection $data.State $data.User.Identity};$event.Handled=$true})
     return $border
 }
@@ -654,7 +666,7 @@ function Show-HistoryChartSample {
     if($null -eq $sample){return}
     $State.Guide.X1=$sample.X;$State.Guide.X2=$sample.X
     foreach($value in $sample.Values){$view=@($visible|Where-Object{$_.Name -eq $value.Name}|Select-Object -First 1);if(-not $view.Count){continue};$view=$view[0];[Windows.Controls.Canvas]::SetLeft($view.Marker,$sample.X-4.5);[Windows.Controls.Canvas]::SetTop($view.Marker,$value.Y-4.5);$view.Marker.Visibility='Visible';$view.PopupText.Text=("{0}  {1:0.##}{2}" -f $value.Name,$value.Value,$value.Suffix);$view.PopupRow.Visibility='Visible'}
-    $State.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm');$State.UserPanel.Children.Clear();$userPoint=Get-HistoryChartUserPoint $State $sample.Time
+    $State.TimeBlock.Text=$sample.Time.ToString('yyyy-MM-dd HH:mm');Update-HistoryChartPopupHint $State;$State.UserPanel.Children.Clear();$userPoint=Get-HistoryChartUserPoint $State $sample.Time
     $parent=@($State.Views|Where-Object{$_.Name -eq $State.UserParentSeries}|Select-Object -First 1);$showUsers=($null -ne $userPoint -and (-not $parent.Count -or $parent[0].IsVisible))
  if($showUsers){if($userPoint.Status -eq 'unavailable'){$text=New-HistoryText (Get-ServerPulseText 'history.noUsers') 8 '#7C8780';[void]$State.UserPanel.Children.Add($text)}else{$normal=@($userPoint.Users|Where-Object{-not $_.IsSystem -and ($_.RawValue -gt 0 -or $State.SelectedUsers.Contains([string]$_.Identity))}|Sort-Object @{Expression='RawValue';Descending=$true},Name);$system=@($userPoint.Users|Where-Object{$_.IsSystem}|Select-Object -First 1);$take=if($State.Expanded){$normal.Count}else{[Math]::Min(8,$normal.Count)};for($index=0;$index -lt $take;$index++){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $normal[$index]))};if(-not $State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount ($normal.Count-8)))}elseif($State.Expanded -and $normal.Count -gt 8){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $null -Other -OtherCount 0))};if($system.Count){[void]$State.UserPanel.Children.Add((New-HistoryPopupUserRow $State $system[0]))};if(-not [string]::IsNullOrWhiteSpace([string]$userPoint.DetailNote)){$noteText=if($userPoint.Status -eq 'partial'){Get-ServerPulseText 'history.partial' @($userPoint.DetailNote)}else{$userPoint.DetailNote};$note=New-HistoryText $noteText 7 '#66716A';$note.Margin=[Windows.Thickness]::new(2,3,0,0);[void]$State.UserPanel.Children.Add($note)}}}
     $rowCount=@($State.Views|Where-Object{$_.PopupRow.Visibility -eq 'Visible'}).Count+$State.UserPanel.Children.Count;$State.Popup.Height=25+(14*$rowCount);$popupLeft=if($sample.X -gt ($State.Canvas.Width/2)){$sample.X-$State.Popup.Width-7}else{$sample.X+7};[Windows.Controls.Canvas]::SetLeft($State.Popup,$popupLeft);[Windows.Controls.Canvas]::SetTop($State.Popup,4);$State.Popup.IsHitTestVisible=[bool]$State.IsLocked;[Windows.Controls.Panel]::SetZIndex($State.Card,100);$State.Guide.Visibility='Visible';$State.Popup.Visibility='Visible'
@@ -671,9 +683,12 @@ function Register-HistoryChartInteractions {
     $Canvas.Add_MouseLeave({param($sender,$event);$state=$sender.Tag;if(-not $state.IsLocked){Set-HistoryChartUnlocked $state}})
     $Canvas.Add_MouseLeftButtonDown({
         param($sender,$event)
-        $state=$sender.Tag;$visible=@($state.Views|Where-Object{$_.IsVisible});if(-not $visible.Count){Set-HistoryChartUnlocked $state;$event.Handled=$true;return}
+        $state=$sender.Tag
+        if ($state.IsLocked -and [int]$event.ClickCount -ge 2) { Set-HistoryChartUnlocked $state; $event.Handled=$true; return }
+        $visible=@($state.Views|Where-Object{$_.IsVisible});if(-not $visible.Count){Set-HistoryChartUnlocked $state;$event.Handled=$true;return}
         $cursor=$event.GetPosition($sender);$time=Get-HistoryNearestChartTime $state $cursor.X
-        if($null -eq $time -or ($state.IsLocked -and $null -ne $state.LockedTime -and $state.LockedTime.Ticks -eq $time.Ticks)){Set-HistoryChartUnlocked $state}else{$state.IsLocked=$true;$state.LockedTime=$time;$state.HoveredTime=$time;$state.Expanded=$false;Show-HistoryChartSample $state $time;[void]$state.Card.Focus()};$event.Handled=$true
+        if($state.IsLocked){$event.Handled=$true;return}
+        if($null -ne $time){$state.IsLocked=$true;$state.LockedTime=$time;$state.HoveredTime=$time;$state.Expanded=$false;Show-HistoryChartSample $state $time;[void]$state.Card.Focus()};$event.Handled=$true
     })
     $Popup.Add_MouseMove({param($sender,$event);$event.Handled=$true})
     $Popup.Add_MouseLeftButtonDown({param($sender,$event);$state=$sender.Tag;if($null -ne $state -and $null -ne $state.HoveredTime){$state.IsLocked=$true;$state.LockedTime=$state.HoveredTime};$event.Handled=$true})
@@ -807,9 +822,11 @@ function New-HistoryChartCard {
         $marker=[Windows.Shapes.Ellipse]::new(); $marker.Width=9; $marker.Height=9; $marker.Fill=New-HistoryBrush '#131714'; $marker.Stroke=New-HistoryBrush ([string]$view.Series.Color); $marker.StrokeThickness=2; $marker.Visibility='Collapsed'; $marker.IsHitTestVisible=$false
         [Windows.Controls.Panel]::SetZIndex($marker,22); [void]$canvas.Children.Add($marker); $view.Marker=$marker; $hoverMarkers += [PSCustomObject]@{Name=$view.Name;Shape=$marker}
     }
-    $hoverPopup=[Windows.Controls.Border]::new(); $hoverPopup.Width=190; $hoverPopup.Height=67; $hoverPopup.Padding=[Windows.Thickness]::new(7,4,7,4); $hoverPopup.Background=New-HistoryBrush '#F20D110F'; $hoverPopup.BorderBrush=New-HistoryBrush '#455047'; $hoverPopup.BorderThickness=[Windows.Thickness]::new(1); $hoverPopup.CornerRadius=[Windows.CornerRadius]::new(5); $hoverPopup.Visibility='Collapsed'; $hoverPopup.IsHitTestVisible=$false
+    $hoverPopup=[Windows.Controls.Border]::new(); $hoverPopup.Width=294; $hoverPopup.Height=67; $hoverPopup.Padding=[Windows.Thickness]::new(7,4,7,4); $hoverPopup.Background=New-HistoryBrush '#F20D110F'; $hoverPopup.BorderBrush=New-HistoryBrush '#455047'; $hoverPopup.BorderThickness=[Windows.Thickness]::new(1); $hoverPopup.CornerRadius=[Windows.CornerRadius]::new(5); $hoverPopup.Visibility='Collapsed'; $hoverPopup.IsHitTestVisible=$false
     $hoverPopup.Effect=[Windows.Media.Effects.DropShadowEffect]@{Color=[Windows.Media.Colors]::Black;BlurRadius=8;ShadowDepth=2;Opacity=0.45}
-    $hoverStack=[Windows.Controls.StackPanel]::new(); $hoverTime=New-HistoryText '' 7 '#98A39C'; [void]$hoverStack.Children.Add($hoverTime)
+    $hoverStack=[Windows.Controls.StackPanel]::new(); $hoverHeader=[Windows.Controls.Grid]::new(); [void]$hoverHeader.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new()); $hintColumn=[Windows.Controls.ColumnDefinition]::new(); $hintColumn.Width='Auto'; [void]$hoverHeader.ColumnDefinitions.Add($hintColumn)
+    $hoverTime=New-HistoryText '' 7 '#98A39C'; $hoverTime.TextTrimming='CharacterEllipsis'; [void]$hoverHeader.Children.Add($hoverTime)
+    $hoverHint=New-HistoryText (Get-ServerPulseText 'history.popupPinHint') 7 '#8A958E'; $hoverHint.HorizontalAlignment='Right'; $hoverHint.TextTrimming='CharacterEllipsis'; $hoverHint.MaxWidth=150; [Windows.Controls.Grid]::SetColumn($hoverHint,1); [void]$hoverHeader.Children.Add($hoverHint); [void]$hoverStack.Children.Add($hoverHeader)
     foreach($view in $seriesViews){
         $popupRow=[Windows.Controls.StackPanel]::new(); $popupRow.Orientation='Horizontal'; $popupRow.Margin=[Windows.Thickness]::new(0,2,0,0); $popupRow.Visibility='Collapsed'
         $popupDot=[Windows.Shapes.Ellipse]::new(); $popupDot.Width=6; $popupDot.Height=6; $popupDot.Fill=New-HistoryBrush ([string]$view.Series.Color); $popupDot.Margin=[Windows.Thickness]::new(0,3,6,0); $popupDot.VerticalAlignment='Top'
@@ -823,9 +840,9 @@ function New-HistoryChartCard {
     $selected=[Collections.Generic.List[string]]::new();foreach($identity in @($SelectionStore[$ChartKey])){if($selected.Count -lt 3){$selected.Add([string]$identity)}}
     $lineShapes=[Collections.Generic.List[object]]::new()
     $timeline=@($UserPoints|ForEach-Object{[datetime]$_.Time}|Sort-Object -Unique);if(-not $timeline.Count){$timeline=@($Series|ForEach-Object{@($_.Points)}|ForEach-Object{[datetime]$_.Time}|Sort-Object -Unique)}
-    $hoverState=[PSCustomObject]@{Kind='HistoryChart';Card=$card;ChartKey=$ChartKey;SelectionStore=$SelectionStore;Canvas=$canvas;Guide=$hoverGuide;Markers=@($hoverMarkers);Popup=$hoverPopup;TimeBlock=$hoverTime;Views=@($seriesViews);Start=$Start;End=$End;Duration=$duration;Timeline=@($timeline);Resolver=${function:Get-HistoryChartHoverSample};UserPoints=@($UserPoints);UserKind=$UserKind;UserParentSeries=$UserParentSeries;UserPanel=$userPanel;UserLegend=$userLegend;SelectedUsers=$selected;UserLineShapes=$lineShapes;HoveredTime=$null;LockedTime=$null;IsLocked=$false;Expanded=$false}
+    $hoverState=[PSCustomObject]@{Kind='HistoryChart';Card=$card;ChartKey=$ChartKey;SelectionStore=$SelectionStore;Canvas=$canvas;Guide=$hoverGuide;Markers=@($hoverMarkers);Popup=$hoverPopup;TimeBlock=$hoverTime;PopupHint=$hoverHint;Views=@($seriesViews);Start=$Start;End=$End;Duration=$duration;Timeline=@($timeline);Resolver=${function:Get-HistoryChartHoverSample};UserPoints=@($UserPoints);UserKind=$UserKind;UserParentSeries=$UserParentSeries;UserPanel=$userPanel;UserLegend=$userLegend;SelectedUsers=$selected;UserLineShapes=$lineShapes;HoveredTime=$null;LockedTime=$null;IsLocked=$false;Expanded=$false}
     foreach($view in $seriesViews){if($null -ne $view.Toggle){$view.Toggle.DataContext=$hoverState}}
-    $canvas.Tag=$hoverState; $card.Tag=$hoverState
+    $canvas.Tag=$hoverState; $card.Tag=$hoverState; Update-HistoryChartPopupHint $hoverState
     $hoverPopup.Tag=$hoverState
     Register-HistoryChartInteractions $canvas $hoverPopup $card
     Update-HistoryChartUserSeries $hoverState

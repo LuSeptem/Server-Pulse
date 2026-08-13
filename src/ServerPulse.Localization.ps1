@@ -48,6 +48,9 @@ foreach ($language in @('zh','en')) {
     $r['history.detailMemory'] = if ($language -eq 'zh') { '归属 {0} · 重叠 {1} · 跳过 {2:0.##}' } else { 'Attributed {0} · overlap {1} · skipped {2:0.##}' }
     $r['history.detailGpu'] = if ($language -eq 'zh') { '归属 {0} · 未映射进程 {1:0.##}' } else { 'Attributed {0} · {1:0.##} unmapped processes' }
     $r['history.userRemove'] = if ($language -eq 'zh') { '点击移除用户曲线' } else { 'Click to remove user curve' }
+    $r['history.popupPinHint'] = if ($language -eq 'zh') { '单击曲线固定弹窗' } else { 'Click curve to pin popup' }
+    $r['history.popupUnpinHint'] = if ($language -eq 'zh') { '双击曲线解除固定' } else { 'Double-click curve to unpin' }
+    $r['history.userCurveHint'] = if ($language -eq 'zh') { '单击查看用户曲线' } else { 'Click to view user curve' }
     $r['history.hideSeries'] = if ($language -eq 'zh') { '点击隐藏 {0}' } else { 'Click to hide {0}' }
     $r['history.showSeries'] = if ($language -eq 'zh') { '点击显示 {0}' } else { 'Click to show {0}' }
     $r['history.legend'] = if ($language -eq 'zh') { '绿 利用率 / CPU / MEM   ·   蓝 显存   ·   橙 温度' } else { 'Green utilization / CPU / MEM   ·   Blue VRAM   ·   Orange temperature' }
