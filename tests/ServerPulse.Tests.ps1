@@ -1,4 +1,5 @@
 ﻿$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.Theme.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Core.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1')
@@ -13,6 +14,22 @@ function Assert-Equal {
     }
     $script:passed++
 }
+
+Assert-Equal (Normalize-ServerPulseThemeMode 'LIGHT') 'light' '主题模式不区分大小写'
+Assert-Equal (Normalize-ServerPulseThemeMode 'sepia') 'dark' '无效主题模式安全回退暗色'
+Assert-Equal (Resolve-ServerPulseTheme -Mode system -SystemTheme light) 'light' '跟随系统可解析为亮色'
+$themeDarkBackground=[Windows.Media.ColorConverter]::ConvertFromString('#0D100E')
+$themeLightBackground=ConvertTo-ServerPulseThemeColor $themeDarkBackground light
+Assert-Equal ($themeLightBackground.R -gt 220) $true '亮色主题将主背景转换为高亮度表面'
+$themeRoundTrip=ConvertTo-ServerPulseThemeColor $themeLightBackground dark
+Assert-Equal $themeRoundTrip.ToString() '#FF0D100E' '亮暗主题颜色可无损往返'
+$themeRoot=[Windows.Controls.Border]::new();$themeRoot.Background=New-ServerPulseThemeBrush '#0D100E'
+$themeText=[Windows.Controls.TextBlock]::new();$themeText.Foreground=New-ServerPulseThemeBrush '#E7EBE8';$themeRoot.Child=$themeText
+[void](Set-ServerPulseThemeState light light);Update-ServerPulseThemeVisualTree $themeRoot
+Assert-Equal ($themeRoot.Background.Color.R -gt 220) $true '主题切换更新现有 WPF 容器'
+Assert-Equal ($themeText.Foreground.Color.R -lt 80) $true '亮色主题保持正文高对比度'
+[void](Set-ServerPulseThemeState dark dark);Update-ServerPulseThemeVisualTree $themeRoot
+Assert-Equal $themeRoot.Background.Color.ToString() '#FF0D100E' '现有 WPF 容器可切回暗色'
 
 $fields = @(Split-MetricCsvLine '0, "GPU, Pro", "a""b"')
 Assert-Equal $fields.Count 3 'CSV 字段数量'
@@ -351,6 +368,11 @@ Assert-Equal (($iconSizes|Sort-Object)-join',') '16,20,24,32,48,256' 'ICO 包含
 Assert-Equal ([bool]($mainScript -match '\.DragMove\(')) $false '禁止调用会触发 Windows Snap Assist 的 DragMove'
 Assert-Equal ([bool]($mainScript -match 'Update-ManualDragPosition')) $true '使用应用内坐标拖拽'
 Assert-Equal ([bool]($mainScript -match 'ShowInTaskbar="False"')) $true '主窗口不占用 Windows 任务栏'
+Assert-Equal ([bool]($mainScript -match 'x:Name="ThemeButton"')) $true '主窗口右上角提供主题切换按钮'
+Assert-Equal ([bool]($mainScript -match "@\('light','亮'\),@\('dark','暗'\),@\('system','跟随系统'\)")) $true '主题菜单包含亮、暗和跟随系统三种模式'
+Assert-Equal ([bool]($mainScript -match "ThemeMode = 'dark'")) $true '全新和旧配置默认使用暗色主题'
+Assert-Equal ([bool]($mainScript -match 'ThemeMode=\$script:themeMode')) $true '用户主题选择随设置持久化'
+Assert-Equal ([bool]($mainScript -match 'Get-ServerPulseSystemTheme|Resolve-ServerPulseTheme')) $true '跟随系统模式定时解析 Windows 应用主题'
 Assert-Equal ([bool]($mainScript -match '\[Windows\.Forms\.NotifyIcon\]::new\(\)')) $true '创建 Windows 托盘图标'
 Assert-Equal ([bool]($mainScript -match 'Join-Path \$scriptRoot ''assets\\server-pulse\.ico''')) $true '托盘加载 Server Pulse 多分辨率图标'
 Assert-Equal ([bool]($mainScript -match '\$script:trayOwnedIcon\.Dispose\(\)')) $true '退出时释放自定义托盘图标句柄'
@@ -371,6 +393,7 @@ $sshScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse
 Assert-Equal ([bool]($sshScript -match 'SERVERPULSE_AUTH_TOKEN=\$token')) $true 'ASKPASS 仅通过环境传递随机令牌'
 Assert-Equal ([bool]($sshScript -match 'EnvironmentVariables\[[^\]]+\]\s*=\s*\$Password')) $false '密码不得写入子进程环境变量'
 $managerScript=Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1') -Raw -Encoding UTF8
+Assert-Equal ([bool]($managerScript -match 'New-ServerPulseThemeBrush')) $true 'SSH 管理窗口复用共享主题色'
 Assert-Equal ([bool]($managerScript -match 'InheritHistory=\[bool\]\$w\.Tag\.Inherit\.IsChecked')) $true '编辑连接身份时由用户选择是否继承历史'
 Assert-Equal ([bool]($managerScript -match 'DeleteCredentialButton')) $true '服务器管理窗口允许独立删除 Windows 凭据'
 Assert-Equal ([bool]($managerScript -match '\.BeginStop\(')) $true '关闭管理窗口时异步停止 SSH 发现而不阻塞 UI'
@@ -389,6 +412,7 @@ Assert-Equal ([bool]($mainScript -match $liveUnknownRowsPattern)) $true '实时�
 $vramFormatPattern = '''\{0:0\.0\} GB · \{1\}'''
 Assert-Equal ([bool]($mainScript -match $vramFormatPattern)) $true '实时显存用户值同时显示 GB 与百分比'
 $historyScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1') -Raw -Encoding UTF8
+Assert-Equal ([bool]($historyScript -match 'New-ServerPulseThemeBrush')) $true '历史记录窗口复用共享主题色'
 Assert-Equal ([bool]($historyScript -match 'HistoryCloseButton\.Add_Click\(\{\s*\$historyWindow\.Close')) $false '历史关闭回调不得依赖动态窗口变量'
 Assert-Equal ([bool]($historyScript -match '\[Windows\.Window\]::GetWindow\(\$sender\)')) $true '历史关闭回调从按钮解析所属窗口'
 Assert-Equal ([bool]($historyScript -match 'HistoryDragArea\.Add_Mouse[^\r\n]+\$drag')) $false '历史拖拽回调不得依赖动态拖拽变量'

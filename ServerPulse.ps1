@@ -15,6 +15,12 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
         Background="Transparent" ShowInTaskbar="False" WindowStartupLocation="CenterScreen"
         FontFamily="Bahnschrift, Microsoft YaHei UI" Foreground="#E7EBE8">
   <Window.Resources>
+    <SolidColorBrush x:Key="ThemeQuietHoverBackground" Color="#252A27"/>
+    <SolidColorBrush x:Key="ThemeQuietHoverForeground" Color="#F4F7F5"/>
+    <SolidColorBrush x:Key="ThemeAccentBackground" Color="#A7D948"/>
+    <SolidColorBrush x:Key="ThemeAccentForeground" Color="#0B0E0C"/>
+    <SolidColorBrush x:Key="ThemeAccentHover" Color="#B9EC58"/>
+    <SolidColorBrush x:Key="ThemeAccentPressed" Color="#91C235"/>
     <Style x:Key="QuietButton" TargetType="Button">
       <Setter Property="Foreground" Value="#8C9690"/>
       <Setter Property="Background" Value="Transparent"/>
@@ -31,12 +37,12 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Surface" Property="Background" Value="#252A27"/>
-                <Setter Property="Foreground" Value="#F4F7F5"/>
+                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource ThemeQuietHoverBackground}"/>
+                <Setter Property="Foreground" Value="{DynamicResource ThemeQuietHoverForeground}"/>
               </Trigger>
               <Trigger Property="Tag" Value="active">
-                <Setter TargetName="Surface" Property="Background" Value="#A7D948"/>
-                <Setter Property="Foreground" Value="#0B0E0C"/>
+                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource ThemeAccentBackground}"/>
+                <Setter Property="Foreground" Value="{DynamicResource ThemeAccentForeground}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -66,8 +72,8 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#B9EC58"/></Trigger>
-              <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#91C235"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource ThemeAccentHover}"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource ThemeAccentPressed}"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -93,6 +99,12 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
           <TextBlock x:Name="FleetState" Text="  连接中" Foreground="#78827C" FontSize="10" VerticalAlignment="Center"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="ThemeButton" Style="{StaticResource QuietButton}" ToolTip="界面主题" MinWidth="48" Background="#202521">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <Viewbox Width="12" Height="12" Margin="0,0,4,0"><Canvas Width="16" Height="16"><Ellipse Width="12" Height="12" Canvas.Left="2" Canvas.Top="2" Fill="Transparent" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" StrokeThickness="1.5"/><Path Data="M8 2 A6 6 0 0 0 8 14 Z" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"/></Canvas></Viewbox>
+              <TextBlock x:Name="ThemeButtonText" Text="暗" FontSize="9" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
           <Slider x:Name="OpacitySlider" Width="58" Minimum="40" Maximum="100" Value="94" TickFrequency="5"
                   IsSnapToTickEnabled="True" ToolTip="透明度" Foreground="#A7D948" Margin="4,0,6,0"/>
           <Button x:Name="EdgeButton" Style="{StaticResource QuietButton}" ToolTip="贴边自动隐藏">
@@ -154,13 +166,13 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $reader = [Xml.XmlNodeReader]::new($xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$names = 'WindowSurface','DragArea','FleetDot','FleetState','OpacitySlider','EdgeButton','PinButton','ServerButton','MinimizeButton','CloseButton','SummaryText','HistoryButton','RefreshIntervalBox','UpdatedText','ServerPanel'
+$names = 'WindowSurface','DragArea','FleetDot','FleetState','ThemeButton','ThemeButtonText','OpacitySlider','EdgeButton','PinButton','ServerButton','MinimizeButton','CloseButton','SummaryText','HistoryButton','RefreshIntervalBox','UpdatedText','ServerPanel'
 $ui = @{}
 foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
 $settingsDirectory = if($SmokeTest){Join-Path $scriptRoot 'tests\artifacts\localappdata-smoke\ServerPulse'}else{Join-Path $env:LOCALAPPDATA 'ServerPulse'}
 $settingsPath = Join-Path $settingsDirectory 'settings.json'
-$settings = [PSCustomObject]@{ Version = 2; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
+$settings = [PSCustomObject]@{ Version = 3; ThemeMode = 'dark'; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
 if (Test-Path -LiteralPath $settingsPath) {
     try {
         $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -227,6 +239,7 @@ function Show-ServerPulseErrorDialog {
     $dialog.FindName('DialogDetail').Text=$Detail
     $dialog.FindName('DialogLogPath').Text=if([string]::IsNullOrWhiteSpace($LogPath)){''}else{"详细日志：$LogPath"}
     $dialog.FindName('DialogCloseButton').Add_Click({param($sender,$event);$target=[Windows.Window]::GetWindow($sender);if($null-ne$target){$target.Close()}})
+    Update-ServerPulseThemeVisualTree $dialog
     if($SmokeTest){
         $result=[PSCustomObject]@{Topmost=$dialog.Topmost;ShowInTaskbar=$dialog.ShowInTaskbar;OwnerMatches=($dialog.Owner-eq$Owner);Title=$dialog.FindName('DialogTitle').Text;Message=$dialog.FindName('DialogMessage').Text}
         $dialog.Close()
@@ -259,6 +272,7 @@ $ui.OpacitySlider.Value = [Math]::Max(40, [Math]::Min(100, [double]$settings.Opa
 $ui.EdgeButton.Tag = if ([bool]$settings.AutoHide) { 'active' } else { $null }
 $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null }
 
+. (Join-Path $scriptRoot 'src\ServerPulse.Theme.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.Core.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.History.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.Ssh.ps1')
@@ -307,16 +321,16 @@ $script:sshManagerOpenQueued = $false
 $script:sshManagerWindow = $null
 
 function New-Brush([string]$Color) {
-    return [Windows.Media.BrushConverter]::new().ConvertFromString($Color)
+    return New-ServerPulseThemeBrush $Color
 }
 
 function New-AlphaBrush([string]$Color, [double]$Opacity) {
-    $base = [Windows.Media.ColorConverter]::ConvertFromString($Color)
+    $base = ConvertTo-ServerPulseThemeColor ([Windows.Media.ColorConverter]::ConvertFromString($Color)) $script:serverPulseResolvedTheme
     $alpha = [byte][Math]::Round([Math]::Max(0.0, [Math]::Min(1.0, $Opacity)) * 255)
     $value = [Windows.Media.Color]::FromArgb($alpha, $base.R, $base.G, $base.B)
     $brush = [Windows.Media.SolidColorBrush]::new()
     $brush.Color = $value
-    return $brush
+    return Register-ServerPulseThemeBrush $brush
 }
 
 function New-Text([string]$Text, [double]$Size, [string]$Color) {
@@ -327,6 +341,91 @@ function New-Text([string]$Text, [double]$Size, [string]$Color) {
     $block.VerticalAlignment = 'Center'
     return $block
 }
+
+$script:themeMode = Normalize-ServerPulseThemeMode ([string]$settings.ThemeMode)
+$script:resolvedTheme = Set-ServerPulseThemeState -Mode $script:themeMode -ResolvedTheme (Resolve-ServerPulseTheme $script:themeMode)
+Update-ServerPulseThemeVisualTree $window
+$script:themeChoiceRows = [Collections.ArrayList]::new()
+$script:themePopup = [Windows.Controls.Primitives.Popup]::new()
+$script:themePopup.PlacementTarget = $ui.ThemeButton
+$script:themePopup.Placement = 'Bottom'
+$script:themePopup.HorizontalOffset = -78
+$script:themePopup.VerticalOffset = 4
+$script:themePopup.StaysOpen = $false
+$script:themePopup.AllowsTransparency = $true
+$themePopupSurface = [Windows.Controls.Border]::new()
+$themePopupSurface.Width = 132
+$themePopupSurface.Padding = [Windows.Thickness]::new(5)
+$themePopupSurface.CornerRadius = [Windows.CornerRadius]::new(8)
+$themePopupSurface.Background = New-AlphaBrush '#111512' 0.98
+$themePopupSurface.BorderBrush = New-Brush '#343A36'
+$themePopupSurface.BorderThickness = [Windows.Thickness]::new(1)
+$themePopupPanel = [Windows.Controls.StackPanel]::new()
+$themePopupSurface.Child = $themePopupPanel
+$script:themePopup.Child = $themePopupSurface
+
+function Update-ServerPulseThemeSelector {
+    $labels = @{ light='亮'; dark='暗'; system='跟随系统' }
+    $buttonLabels = @{ light='亮'; dark='暗'; system='系统' }
+    $ui.ThemeButtonText.Text = [string]$buttonLabels[$script:themeMode]
+    $ui.ThemeButton.ToolTip = "界面主题：$($labels[$script:themeMode])"
+    foreach ($row in @($script:themeChoiceRows)) {
+        $active = [string]$row.Mode -eq $script:themeMode
+        $row.Surface.Background = if ($active) { New-Brush '#A7D948' } else { [Windows.Media.Brushes]::Transparent }
+        $row.Label.Foreground = if ($active) { New-Brush '#0B0E0C' } else { New-Brush '#D7DDD9' }
+        $row.Mark.Foreground = if ($active) { New-Brush '#0B0E0C' } else { New-Brush '#657069' }
+        $row.Mark.Text = if ($active) { '●' } else { '' }
+    }
+}
+
+function Set-ServerPulseThemeMode {
+    param([string]$Mode, [switch]$Persist)
+    $script:themeMode = Normalize-ServerPulseThemeMode $Mode
+    $script:resolvedTheme = Set-ServerPulseThemeState -Mode $script:themeMode -ResolvedTheme (Resolve-ServerPulseTheme $script:themeMode)
+    Update-ServerPulseThemeVisualTree $window
+    foreach ($ownedWindow in @($window.OwnedWindows)) {
+        if ($null -ne $ownedWindow) { Update-ServerPulseThemeVisualTree $ownedWindow }
+    }
+    if ($null -ne $script:themePopup.Child) { Update-ServerPulseThemeVisualTree $script:themePopup.Child }
+    if ((Get-Variable -Name userUsagePopupManager -Scope Script -ErrorAction SilentlyContinue) -and $null -ne $script:userUsagePopupManager -and $null -ne $script:userUsagePopupManager.Surface) {
+        Update-ServerPulseThemeVisualTree $script:userUsagePopupManager.Surface
+    }
+    Update-ServerPulseThemeSelector
+    if ($Persist -and -not $SmokeTest) { Save-Settings }
+}
+
+foreach ($choice in @(@('light','亮'),@('dark','暗'),@('system','跟随系统'))) {
+    $surface = [Windows.Controls.Border]::new()
+    $surface.Height = 30
+    $surface.Padding = [Windows.Thickness]::new(9,0,8,0)
+    $surface.CornerRadius = [Windows.CornerRadius]::new(5)
+    $surface.Cursor = [Windows.Input.Cursors]::Hand
+    $grid = [Windows.Controls.Grid]::new()
+    [void]$grid.ColumnDefinitions.Add([Windows.Controls.ColumnDefinition]::new())
+    $markColumn = [Windows.Controls.ColumnDefinition]::new(); $markColumn.Width = 14
+    [void]$grid.ColumnDefinitions.Add($markColumn)
+    $label = New-Text $choice[1] 10 '#D7DDD9'
+    $mark = New-Text '' 7 '#657069'; $mark.HorizontalAlignment = 'Right'
+    [Windows.Controls.Grid]::SetColumn($mark,1)
+    [void]$grid.Children.Add($label); [void]$grid.Children.Add($mark)
+    $surface.Child = $grid
+    $row = [PSCustomObject]@{ Mode=$choice[0]; Surface=$surface; Label=$label; Mark=$mark }
+    $surface.Tag = $row
+    $surface.Add_MouseEnter({
+        param($sender,$eventArgs)
+        if ([string]$sender.Tag.Mode -ne $script:themeMode) { $sender.Background = New-Brush '#252A27' }
+    })
+    $surface.Add_MouseLeave({ Update-ServerPulseThemeSelector })
+    $surface.Add_MouseLeftButtonUp({
+        param($sender,$eventArgs)
+        Set-ServerPulseThemeMode -Mode ([string]$sender.Tag.Mode) -Persist
+        $script:themePopup.IsOpen = $false
+        $eventArgs.Handled = $true
+    })
+    [void]$script:themeChoiceRows.Add($row)
+    [void]$themePopupPanel.Children.Add($surface)
+}
+Update-ServerPulseThemeSelector
 
 function New-MetricCell([string]$Label) {
     $panel = [Windows.Controls.StackPanel]::new()
@@ -943,7 +1042,7 @@ function Save-Settings {
     $left = if ($script:hiddenAtEdge) { $script:shownLeft } else { $window.Left }
     $top = if ($script:hiddenAtEdge) { $script:shownTop } else { $window.Top }
     [PSCustomObject]@{
-        Version=2; Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
+        Version=3; ThemeMode=$script:themeMode; Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
         RefreshIntervalSeconds=$script:refreshIntervalSeconds
         Width=$window.Width; Height=$window.Height; Left=$left; Top=$top
     } | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8
@@ -1054,6 +1153,13 @@ $cursorTimer.Add_Tick({
     }
     if ($touches) { Show-FromEdge }
 })
+$themeFollowTimer = [Windows.Threading.DispatcherTimer]::new()
+$themeFollowTimer.Interval = [TimeSpan]::FromSeconds(2)
+$themeFollowTimer.Add_Tick({
+    if ($script:themeMode -ne 'system') { return }
+    $resolved = Resolve-ServerPulseTheme 'system'
+    if ($resolved -ne $script:resolvedTheme) { Set-ServerPulseThemeMode -Mode 'system' }
+})
 
 function Get-ServerPulseAuthState {
     param([string]$ServerId)
@@ -1155,6 +1261,7 @@ $script:trayIcon.Add_MouseClick({
 $script:trayIcon.Add_BalloonTipClicked({Show-ServerPulseFromTray;Show-ServerPulseSshManager})
 
 function Save-NativeScreenshot {
+    param([string]$FileName='native-window.png')
     $directory = Join-Path $scriptRoot 'tests\artifacts'
     if (-not (Test-Path -LiteralPath $directory)) { [void](New-Item -ItemType Directory -Path $directory) }
     $dpi = [Windows.Media.VisualTreeHelper]::GetDpi($window)
@@ -1169,7 +1276,7 @@ function Save-NativeScreenshot {
     $context.Close()
     $bitmap.Render($visual)
     $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new(); $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
-    $stream = [IO.File]::Create((Join-Path $directory 'native-window.png'))
+    $stream = [IO.File]::Create((Join-Path $directory $FileName))
     try { $encoder.Save($stream) } finally { $stream.Dispose() }
 }
 
@@ -1185,10 +1292,22 @@ function Complete-SmokeTest {
         if ($window.WindowState -ne [Windows.WindowState]::Minimized) { throw '隐藏到托盘失败' }
         Show-ServerPulseFromTray
         if ($window.WindowState -ne [Windows.WindowState]::Normal -or -not $window.IsVisible) { throw '从托盘恢复窗口失败' }
+        $ui.ThemeButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        if(-not$script:themePopup.IsOpen-or$script:themeChoiceRows.Count-ne3){throw '主题切换菜单按钮事件失败'}
+        $script:themePopup.IsOpen=$false
+        $originalThemeMode=$script:themeMode
+        Set-ServerPulseThemeMode -Mode light
+        $window.UpdateLayout()
+        if($script:resolvedTheme-ne'light'-or$ui.ThemeButtonText.Text-ne'亮'-or$ui.WindowSurface.Background.Color.R-lt220){throw '主窗口亮色主题切换失败'}
+        Save-NativeScreenshot 'native-window-light.png'
         $managerSmoke=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnApplied {} -SmokeTest
         $managerSmoke.Window.Show();$managerSmoke.Window.UpdateLayout()
         if($managerSmoke.Context.Rows.Count-lt1-or$null-eq$managerSmoke.Context.Rows[0].Passwordless-or$null-eq$managerSmoke.Context.Rows[0].PasswordBox){throw 'SSH 服务器管理窗口验证失败'}
+        if($managerSmoke.Window.Background.Color.R-lt220){throw 'SSH 管理窗口未继承亮色主题'}
         $managerSmoke.Window.Close()
+        Set-ServerPulseThemeMode -Mode dark
+        if($script:resolvedTheme-ne'dark'-or$ui.ThemeButtonText.Text-ne'暗'-or$ui.WindowSurface.Background.Color.R-gt80){throw '主窗口暗色主题还原失败'}
+        Set-ServerPulseThemeMode -Mode $originalThemeMode
         Save-NativeScreenshot
         $originalOpacity = $script:backgroundOpacity; Set-BackgroundOpacity 0.55
         if ($window.Opacity -ne 1.0) { throw '文字层透明度不应改变' }
@@ -1203,7 +1322,10 @@ function Complete-SmokeTest {
         [void](Set-RefreshInterval $originalInterval)
         $historyRecord = Get-CurrentHistoryMinuteRecord $script:historyRecorder
         if ($null -eq $historyRecord -or @($historyRecord.Servers).Count -ne 2) { throw '历史分钟记录验证失败' }
+        $beforeHistoryTheme=$script:themeMode;Set-ServerPulseThemeMode -Mode light
         $historySmoke = Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder -ScreenshotPath (Join-Path $scriptRoot 'tests\artifacts\history-window.png') -SmokeTest
+        Set-ServerPulseThemeMode -Mode $beforeHistoryTheme
+        if($historySmoke.ThemeBackgroundR-lt220){throw '历史记录窗口未继承亮色主题'}
         if (-not $historySmoke.QueryClickPassed) { throw "历史查询按钮事件失败：$($historySmoke.QueryClickError)" }
         if (-not $historySmoke.QueryFailureContained) { throw '历史查询异常未被窗口内提示安全拦截' }
         if (-not $historySmoke.ChangedRangeQueryPassed) { throw "修改时间后的历史查询失败：$($historySmoke.ChangedRangeQueryError)" }
@@ -1405,6 +1527,7 @@ $window.Add_LocationChanged({
     }
 })
 $window.Add_MouseLeave({ if ($script:dockSide -and -not $script:hiddenAtEdge -and $ui.EdgeButton.Tag -eq 'active' -and -not $script:userUsagePopupManager.Popup.IsOpen) { $hideTimer.Start() } })
+$ui.ThemeButton.Add_Click({ $script:themePopup.IsOpen = -not $script:themePopup.IsOpen })
 $ui.OpacitySlider.Add_ValueChanged({ Set-BackgroundOpacity ($ui.OpacitySlider.Value / 100) })
 $ui.RefreshIntervalBox.Add_PreviewTextInput({ param($sender,$event); if ($event.Text -notmatch '^\d+$') { $event.Handled = $true } })
 $ui.RefreshIntervalBox.Add_PreviewKeyDown({
@@ -1442,13 +1565,13 @@ $window.Add_Loaded({
     if ($null -ne $settings.Left -and $null -ne $settings.Top) {
         $window.Left = [double]$settings.Left; $window.Top = [double]$settings.Top
     }
-    $cursorTimer.Start(); $pollTimer.Start(); Start-Collection
+    $cursorTimer.Start(); $themeFollowTimer.Start(); $pollTimer.Start(); Start-Collection
     if(($script:firstServerStoreRun -or @($script:serverStore.Servers|Where-Object{$_.Monitored}).Count-eq0) -and -not$SmokeTest){Queue-ServerPulseSshManager}
 })
 $window.Add_Closing({
     Close-UserUsagePopup $script:userUsagePopupManager
     if($null-ne$script:sshManagerWindow-and$script:sshManagerWindow.IsVisible){$script:sshManagerWindow.Close()}
-    $pollTimer.Stop(); $cursorTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
+    $pollTimer.Stop(); $cursorTimer.Stop(); $themeFollowTimer.Stop(); $hideTimer.Stop(); $dockDetectTimer.Stop()
     $script:trayIcon.Visible = $false
     $script:trayIcon.Dispose()
     if ($null -ne $script:trayOwnedIcon) { $script:trayOwnedIcon.Dispose(); $script:trayOwnedIcon = $null }
@@ -1463,5 +1586,5 @@ $window.Add_Closing({
 if ($SmokeTest) {
     if ($script:smokeError) { throw $script:smokeError }
     if (-not $script:smokePassed) { throw '原生窗口冒烟测试未完成' }
-    Write-Output 'PASS: native window, tray, SSH manager, resize, opacity, edge hide, SSH snapshot'
+    Write-Output 'PASS: native window, light/dark theme, tray, SSH manager, resize, opacity, edge hide, SSH snapshot'
 }

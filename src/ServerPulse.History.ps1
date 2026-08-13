@@ -410,7 +410,7 @@ function Get-ServerPulseHistoryRecords {
 
 function New-HistoryBrush {
     param([Parameter(Mandatory)][string]$Color)
-    return [Windows.Media.BrushConverter]::new().ConvertFromString($Color)
+    return New-ServerPulseThemeBrush $Color
 }
 
 function New-HistoryText {
@@ -1090,6 +1090,7 @@ function Show-ServerPulseHistoryWindow {
 '@
     $reader = [Xml.XmlNodeReader]::new($historyXaml)
     $historyWindow = [Windows.Markup.XamlReader]::Load($reader)
+    Update-ServerPulseThemeVisualTree $historyWindow
     $historyWindow.Owner = $Owner; $historyWindow.Topmost = $Owner.Topmost
     $names = @('HistoryDragArea','HistoryCloseButton','HistoryQueryButton','HistoryHourButton','HistoryRangeStatus','HistoryPanel','HistoryFooterText')
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
@@ -1192,7 +1193,8 @@ function Show-ServerPulseHistoryWindow {
         if (-not $changedQueryState.Completed) { $changedQueryState.Passed=$false; $changedQueryState.Error='修改时间后的异步查询点击超时' }
         $changedRangeQueryPassed=($changedQueryState.Passed -and $historyWindow.IsVisible)
         $historyUi.HistoryStartMonthBox.Text='13'; $invalidResult=Set-HistoryDateInputValidation -Ui $historyUi -Prefix 'HistoryStart'
-        $validationPassed=($null -eq $invalidResult.Value -and $historyUi.HistoryStartMonthError.Visibility -eq 'Visible' -and $historyUi.HistoryStartMonthBox.BorderBrush.ToString() -eq '#FFFF5E5E')
+        $expectedValidationBrush=(New-HistoryBrush '#FFFF5E5E').ToString()
+        $validationPassed=($null -eq $invalidResult.Value -and $historyUi.HistoryStartMonthError.Visibility -eq 'Visible' -and $historyUi.HistoryStartMonthBox.BorderBrush.ToString() -eq $expectedValidationBrush)
         Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start; [void](Invoke-ServerPulseHistoryRender -State $historyState); $historyWindow.UpdateLayout()
         $normalRenderPassed=($historyUi.HistoryRangeStatus.Text -ne '查询失败')
         $hoverTestTime=$start.AddMinutes(30)
@@ -1245,7 +1247,7 @@ function Show-ServerPulseHistoryWindow {
         $closeButtonPassed=($script:historyCloseSmokeState.Completed -and $script:historyCloseSmokeState.ClosedByHandler)
         $closeButtonError=$script:historyCloseSmokeState.Error
         Remove-Variable -Name historyCloseSmokeState -Scope Script -ErrorAction SilentlyContinue
-        $result=[PSCustomObject]@{PanelCount=$historyUi.HistoryPanel.Children.Count;Status=[string]$historyUi.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeButtonError;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea}
+        $result=[PSCustomObject]@{PanelCount=$historyUi.HistoryPanel.Children.Count;Status=[string]$historyUi.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeButtonError;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea;ThemeBackgroundR=[int]$historyWindow.Content.Background.Color.R}
         return $result
     }
     [void]$historyWindow.ShowDialog()

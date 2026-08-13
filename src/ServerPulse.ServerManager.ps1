@@ -1,4 +1,4 @@
-﻿function New-ServerManagerBrush([string]$Color) { return [Windows.Media.BrushConverter]::new().ConvertFromString($Color) }
+﻿function New-ServerManagerBrush([string]$Color) { return New-ServerPulseThemeBrush $Color }
 
 function Copy-ServerPulseManagedServer {
     param($Server)
@@ -259,6 +259,7 @@ function Show-ServerPulseManualServerDialog {
     $inherit=[Windows.Controls.CheckBox]::new();$inherit.Content='继承原服务器历史';$inherit.IsChecked=$true;$inherit.Visibility=if($editing){'Visible'}else{'Collapsed'};$inherit.Margin='0,9,0,0';$inherit.ToolTip='取消后会生成新的服务器 ID；旧历史仍保留到期。若连接到不同物理服务器，建议取消。';[void]$panel.Children.Add($inherit)
     $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,14,0,0';$ok=[Windows.Controls.Button]::new();$ok.Content=if($editing){'保存'}else{'添加'};$ok.Padding='14,4';$cancel=[Windows.Controls.Button]::new();$cancel.Content='取消';$cancel.Padding='14,4';$cancel.Margin='8,0,0,0';[void]$buttons.Children.Add($ok);[void]$buttons.Children.Add($cancel);[void]$panel.Children.Add($buttons)
     $dialog.Tag=[PSCustomObject]@{Inputs=$inputs;Original=$Server;Inherit=$inherit;Result=$null};$ok.Tag=$dialog;$ok.Add_Click({param($sender,$eventArgs);$w=$sender.Tag;try{$i=$w.Tag.Inputs;$port=0;if(-not[int]::TryParse($i.Port.Text,[ref]$port)){throw '端口必须是数字'};$original=$w.Tag.Original;$server=New-ServerPulseManagedServer -Id $(if($null-ne$original){[string]$original.Id}else{$null}) -Label $i.Label.Text.Trim() -Source manual -SshTarget $i.Host.Text.Trim() -HostName $i.Host.Text.Trim() -Port $port -User $i.User.Text.Trim() -Monitored $(if($null-ne$original){[bool]$original.Monitored}else{$true});if(-not$server.Label){throw '显示名称不能为空'};$w.Tag.Result=[PSCustomObject]@{Server=$server;InheritHistory=[bool]$w.Tag.Inherit.IsChecked};$w.DialogResult=$true}catch{[Windows.MessageBox]::Show($w,$_.Exception.Message,'输入错误','OK','Error')|Out-Null}});$cancel.Tag=$dialog;$cancel.Add_Click({param($sender,$eventArgs);$sender.Tag.DialogResult=$false})
+    Update-ServerPulseThemeVisualTree $dialog
     [void]$dialog.ShowDialog();return $dialog.Tag.Result
 }
 
@@ -300,6 +301,7 @@ function Show-ServerPulseServerManager {
         finally{$sender.IsEnabled=$true}
     })
     $window.Tag=$context;$window.Add_Closed({param($sender,$eventArgs);$ctx=$sender.Tag;Stop-ServerManagerCandidateDiscovery $ctx;Clear-ServerPulseSessionSecrets $ctx.SessionSecrets;foreach($pending in @($ctx.PendingCredentialWrites.Values)){$pending.Password=$null};$ctx.PendingCredentialWrites.Clear()})
+    Update-ServerPulseThemeVisualTree $window
     $result=[PSCustomObject]@{Window=$window;Context=$context;ApplyButton=$apply;AddButton=$add}
     if(-not$SmokeTest){$window.Show();[void]$window.Activate()}
     return $result
