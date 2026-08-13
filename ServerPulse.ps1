@@ -1099,7 +1099,7 @@ function Show-ServerPulseSshManager {
     $script:authManagerPrompted=$true
     $script:sshManagerOpen=$true
     try{
-        $manager=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -OnRetryRequested {param($serverId);Request-ServerPulseReconnect $serverId} -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows}
+        $manager=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -ValidationStates $script:serverAuthStates -OnRetryRequested {param($serverId);Request-ServerPulseReconnect $serverId} -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows}
         $script:sshManagerWindow=$manager.Window
         $manager.Window.Add_Closed({$script:sshManagerOpen=$false;$script:sshManagerWindow=$null})
     }catch{$script:sshManagerOpen=$false;$script:sshManagerWindow=$null;throw}

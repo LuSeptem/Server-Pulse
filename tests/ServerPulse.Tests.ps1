@@ -424,8 +424,9 @@ $managerOwner=[Windows.Window]::new();$managerOwner.Show()
 $managerServer=New-ServerPulseManagedServer -Id 'manager-test' -Label 'Manager Test' -Source manual -SshTarget 'gpu.example' -HostName 'gpu.example' -Port 22 -User alice -Monitored $true
 $managerStore=[PSCustomObject]@{Version=1;Path=(Join-Path ([IO.Path]::GetTempPath()) 'serverpulse-manager-unused.json');Servers=@($managerServer)}
 $managerSecrets=New-ServerPulseSessionSecretStore
+$managerValidationStates=@{}
 Set-ServerPulseSessionSecret $managerSecrets $managerServer.Identity 'manager-session-secret'
-$managerConstruction=[Diagnostics.Stopwatch]::StartNew();$managerSmoke=Show-ServerPulseServerManager -Owner $managerOwner -Store $managerStore -SessionSecrets $managerSecrets -AskPassPath 'unused' -TimeoutMs 1000 -OnApplied {} -SmokeTest;$managerConstruction.Stop()
+$managerConstruction=[Diagnostics.Stopwatch]::StartNew();$managerSmoke=Show-ServerPulseServerManager -Owner $managerOwner -Store $managerStore -SessionSecrets $managerSecrets -AskPassPath 'unused' -TimeoutMs 1000 -ValidationStates $managerValidationStates -OnApplied {} -SmokeTest;$managerConstruction.Stop()
 Assert-Equal ($managerSmoke -is [PSCustomObject]) $true '服务器管理窗口冒烟入口只返回一个状态对象'
 Assert-Equal ($managerConstruction.ElapsedMilliseconds-lt1000) $true 'SSH 配置发现不阻塞管理窗口构造'
 Assert-Equal ($managerSmoke.Context.DiscoveryAsync -ne $null) $true 'SSH 配置发现运行在后台而非阻塞窗口构造'
@@ -468,6 +469,22 @@ Assert-Equal (Get-ServerPulseSessionSecret $managerSecrets $managerServer.Identi
 $managerRow.Monitor.IsChecked=$false
 Assert-Equal (Get-ServerPulseSessionSecret $managerSecrets $managerServer.Identity) 'manager-session-secret' '取消管理窗口前取消勾选不提前改变当前会话密码'
 $managerSmoke.Window.Close();$managerOwner.Close();Clear-ServerPulseSessionSecrets $managerSecrets
+$rememberOwner=[Windows.Window]::new();$rememberOwner.Show();$rememberSecrets=New-ServerPulseSessionSecretStore;$rememberStates=@{}
+$rememberFirst=Show-ServerPulseServerManager -Owner $rememberOwner -Store $managerStore -SessionSecrets $rememberSecrets -AskPassPath 'unused' -TimeoutMs 1000 -ValidationStates $rememberStates -OnApplied {} -SmokeTest
+$rememberFirstRow=$rememberFirst.Context.Rows[0]
+Complete-ServerPulseAuthenticationResult $rememberFirst.Context $rememberFirstRow ([PSCustomObject]@{Passed=$true;Status='online';AuthMode='passwordless';Error=$null}) $null
+Assert-Equal $rememberStates['manager-test'].Mode 'passwordless' '重新检测成功后缓存免密认证模式'
+$rememberFirst.Window.Close()
+$rememberSecond=Show-ServerPulseServerManager -Owner $rememberOwner -Store $managerStore -SessionSecrets $rememberSecrets -AskPassPath 'unused' -TimeoutMs 1000 -ValidationStates $rememberStates -OnApplied {} -SmokeTest
+$rememberSecondRow=$rememberSecond.Context.Rows[0]
+Assert-Equal $rememberSecondRow.Status 'passwordless' '关闭并重开管理窗口仍显示免密已验证'
+Assert-Equal $rememberSecondRow.Passwordless.IsChecked $true '关闭并重开管理窗口仍勾选免密登录'
+Complete-ServerPulseAuthenticationResult $rememberSecond.Context $rememberSecondRow ([PSCustomObject]@{Passed=$true;Status='online';AuthMode='password';Error=$null}) $null
+$rememberSecond.Window.Close()
+$rememberThird=Show-ServerPulseServerManager -Owner $rememberOwner -Store $managerStore -SessionSecrets $rememberSecrets -AskPassPath 'unused' -TimeoutMs 1000 -ValidationStates $rememberStates -OnApplied {} -SmokeTest
+Assert-Equal $rememberThird.Context.Rows[0].Status 'online' '密码验证结果关闭并重开管理窗口后仍保留'
+Assert-Equal $rememberThird.Context.Rows[0].Passwordless.IsChecked $false '密码认证恢复时免密复选框保持未勾选'
+$rememberThird.Window.Close();$rememberOwner.Close();Clear-ServerPulseSessionSecrets $rememberSecrets
 $modelessOwner=[Windows.Window]::new();$modelessOwner.Topmost=$true;$modelessOwner.Show();$modelessSecrets=New-ServerPulseSessionSecretStore
 $modelessManager=Show-ServerPulseServerManager -Owner $modelessOwner -Store $managerStore -SessionSecrets $modelessSecrets -AskPassPath 'unused' -TimeoutMs 1000 -OnApplied {}
 Assert-Equal $modelessManager.Window.IsVisible $true '非模态 SSH 管理窗口立即可见'

@@ -24,6 +24,34 @@ function Get-ServerPulseAuthenticationPassword {
     return $null
 }
 
+function Get-ServerManagerRememberedValidation {
+    param($Context,$Server)
+    if($null-eq$Context-or$null-eq$Context.ValidationStates){return $null}
+    $id=[string]$Server.Id
+    if(-not$Context.ValidationStates.ContainsKey($id)){return $null}
+    $remembered=$Context.ValidationStates[$id]
+    $mode=if([string]$remembered.Mode-in@('passwordless','password')){[string]$remembered.Mode}else{'auto'}
+    $status=[string]$remembered.Status
+    if($status-eq'online'-and$mode-eq'passwordless'){$status='passwordless'}
+    if($status-notin@('online','passwordless','authentication_required','authentication_failed','host_key_unknown','host_key_changed','connection','error')){return $null}
+    return [PSCustomObject]@{Mode=$mode;Status=$status}
+}
+
+function Save-ServerManagerRememberedValidation {
+    param($Context,$RowState)
+    if($null-eq$Context-or$null-eq$Context.ValidationStates){return}
+    $id=[string]$RowState.Server.Id;$status=[string]$RowState.Status;$mode=[string]$RowState.AuthMode
+    $storedStatus=if($status-eq'passwordless'){'online'}else{$status}
+    if($Context.ValidationStates.ContainsKey($id)){
+        $remembered=$Context.ValidationStates[$id]
+        $remembered.Mode=$mode;$remembered.Status=$storedStatus
+        if($remembered.PSObject.Properties.Name-contains'Paused'){$remembered.Paused=$storedStatus-in@('authentication_required','authentication_failed','host_key_unknown','host_key_changed')}
+        if($remembered.PSObject.Properties.Name-contains'Notified'-and$storedStatus-eq'online'){$remembered.Notified=$false}
+    }else{
+        $Context.ValidationStates[$id]=[PSCustomObject]@{Mode=$mode;Status=$storedStatus;Paused=($storedStatus-in@('authentication_required','authentication_failed','host_key_unknown','host_key_changed'));Notified=$false}
+    }
+}
+
 function Invoke-ServerPulseAuthenticationBatch {
     param([object[]]$Requests, [string]$ModulePath, [string]$AskPassPath, [int]$TimeoutMs, [string]$SshPath='ssh.exe')
     $jobs = foreach ($request in $Requests) {
@@ -104,6 +132,7 @@ function Complete-ServerPulseAuthenticationResult {
         $RowState.CredentialText.Text=if($Context.PendingCredentialWrites.ContainsKey($RowState.Server.Identity)){'已保存（待应用）'}else{Get-ServerPulseCredentialState $RowState.Server $Context.SessionSecrets}
         $RowState.DeleteCredentialButton.Visibility=if($RowState.CredentialText.Text-eq'已保存'){'Visible'}else{'Collapsed'}
     }else{Set-ServerManagerRowStatus $RowState ([string]$Result.Status) ([string]$Result.Error)}
+    Save-ServerManagerRememberedValidation $Context $RowState
 }
 
 function Invoke-ServerManagerRowTest {
@@ -192,6 +221,8 @@ function New-ServerManagerRow {
     $save=[Windows.Controls.CheckBox]::new();$save.Content='存入 Windows 凭据管理器';$save.IsChecked=$false;$save.Foreground=New-ServerManagerBrush '#AAB3AD';$save.FontSize=9;$save.Margin='0,6,0,0';[void]$passwordPanel.Children.Add($save);[void]$stack.Children.Add($passwordPanel)
     $state=[PSCustomObject]@{Context=$Context;Server=$Server;Surface=$surface;Monitor=$monitor;Meta=$meta;StatusText=$status;Passwordless=$passwordless;CredentialText=$credential;UpdateCredentialButton=$updateCredential;DeleteCredentialButton=$deleteCredential;TestButton=$test;EditButton=$edit;DeleteButton=$delete;PasswordPanel=$passwordPanel;PasswordBox=$password;Reveal=$reveal;Eye=$eye;SaveCredential=$save;Status='unknown';AuthMode='auto'}
     Register-ServerManagerRowEvents $state
+    $remembered=Get-ServerManagerRememberedValidation $Context $Server
+    if($null-ne$remembered){$state.AuthMode=[string]$remembered.Mode;Set-ServerManagerRowStatus $state ([string]$remembered.Status)}
     return $state
 }
 
@@ -232,7 +263,7 @@ function Show-ServerPulseManualServerDialog {
 }
 
 function Show-ServerPulseServerManager {
-    param([Windows.Window]$Owner,$Store,[hashtable]$SessionSecrets,[string]$AskPassPath,[int]$TimeoutMs,[scriptblock]$OnRetryRequested,[scriptblock]$OnApplied,[switch]$SmokeTest)
+    param([Windows.Window]$Owner,$Store,[hashtable]$SessionSecrets,[string]$AskPassPath,[int]$TimeoutMs,[hashtable]$ValidationStates,[scriptblock]$OnRetryRequested,[scriptblock]$OnApplied,[switch]$SmokeTest)
     $window=[Windows.Window]::new();$window.Title='Server Pulse · SSH 服务器';$window.Width=620;$window.Height=650;$window.MinWidth=520;$window.MinHeight=420;$window.Owner=$Owner;$window.WindowStartupLocation='CenterOwner';$window.ShowInTaskbar=$false;$window.Background=New-ServerManagerBrush '#0D100E';$window.Foreground=New-ServerManagerBrush '#E7ECE8';$window.FontFamily='Microsoft YaHei UI'
     $topmostBinding=[Windows.Data.Binding]::new('Topmost');$topmostBinding.Source=$Owner;$topmostBinding.Mode='OneWay';[void]$window.SetBinding([Windows.Window]::TopmostProperty,$topmostBinding)
     $root=[Windows.Controls.DockPanel]::new();$root.Margin=16;$window.Content=$root
@@ -244,7 +275,8 @@ function Show-ServerPulseServerManager {
     $scroll=[Windows.Controls.ScrollViewer]::new();$scroll.VerticalScrollBarVisibility='Auto';$panel=[Windows.Controls.StackPanel]::new();$scroll.Content=$panel;[void]$root.Children.Add($scroll)
     $workingSecrets=New-ServerPulseSessionSecretStore
     foreach($identity in @($SessionSecrets.Keys)){$secret=Get-ServerPulseSessionSecret $SessionSecrets $identity;if($null-ne$secret){Set-ServerPulseSessionSecret $workingSecrets $identity $secret};$secret=$null}
-    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied}
+    if($null-eq$ValidationStates){$ValidationStates=@{}}
+    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;ValidationStates=$ValidationStates;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied}
     foreach($server in @($Store.Servers)){ $copy=Copy-ServerPulseManagedServer $server;$row=New-ServerManagerRow $context $copy;[void]$context.Rows.Add($row);[void]$panel.Children.Add($row.Surface) }
     Start-ServerManagerCandidateDiscovery $context
     $add.Tag=$context;$add.Add_Click({param($sender,$eventArgs);$ctx=$sender.Tag;$result=Show-ServerPulseManualServerDialog $ctx.Window;if($null-ne$result){$row=New-ServerManagerRow $ctx $result.Server;[void]$ctx.Rows.Add($row);[void]$ctx.Panel.Children.Add($row.Surface);Invoke-ServerManagerRowTest $row}})
