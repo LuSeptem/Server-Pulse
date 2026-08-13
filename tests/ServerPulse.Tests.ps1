@@ -32,6 +32,13 @@ Assert-Equal ($themeText.Foreground.Color.R -lt 80) $true '亮色主题保持正
 [void](Set-ServerPulseThemeState dark dark);Update-ServerPulseThemeVisualTree $themeRoot
 Assert-Equal $themeRoot.Background.Color.ToString() '#FF0D100E' '现有 WPF 容器可切回暗色'
 
+$brushRegistryBefore = $script:serverPulseThemeBrushes.Count
+$cachedThemeBrush = New-ServerPulseThemeBrush '#A7D948'
+1..1000 | ForEach-Object { $null = New-ServerPulseThemeBrush '#A7D948' }
+$lastThemeBrush = New-ServerPulseThemeBrush '#A7D948'
+Assert-Equal ([object]::ReferenceEquals($cachedThemeBrush,$lastThemeBrush)) $true '重复刷新复用同一主题画刷'
+Assert-Equal ($script:serverPulseThemeBrushes.Count - $brushRegistryBefore) 1 '主题画刷缓存不会随刷新线性增长'
+
 Assert-Equal (Normalize-ServerPulseLanguageMode 'EN') 'en' '语言模式不区分大小写'
 Assert-Equal (Normalize-ServerPulseLanguageMode 'invalid') 'zh' '无效语言模式安全回退中文'
 Assert-Equal (Resolve-ServerPulseLanguage -Mode system -SystemLanguage en) 'en' '跟随系统语言可解析为英文'

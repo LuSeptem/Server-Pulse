@@ -2,7 +2,7 @@
 
 $script:serverPulseThemeMode = 'dark'
 $script:serverPulseResolvedTheme = 'dark'
-$script:serverPulseThemeBrushes = [Collections.ArrayList]::new()
+$script:serverPulseThemeBrushes = [Collections.Generic.Dictionary[string,Windows.Media.SolidColorBrush]]::new([StringComparer]::OrdinalIgnoreCase)
 $script:serverPulseDarkToLight = @{}
 $script:serverPulseLightToDark = @{}
 
@@ -101,37 +101,57 @@ function ConvertTo-ServerPulseThemeColor {
     return [Windows.Media.Color]::FromArgb($source.A,$target.R,$target.G,$target.B)
 }
 
+function Get-ServerPulseThemeBrushKey {
+    param([Parameter(Mandatory)]$Color)
+
+    return ('{0:X2}{1:X2}{2:X2}{3:X2}' -f [int]$Color.A,[int]$Color.R,[int]$Color.G,[int]$Color.B)
+}
+
 function Register-ServerPulseThemeBrush {
-    param($Brush)
-    if ($Brush -is [Windows.Media.SolidColorBrush] -and -not $script:serverPulseThemeBrushes.Contains($Brush)) {
-        [void]$script:serverPulseThemeBrushes.Add($Brush)
-    }
+    param($Brush,[string]$CacheKey)
+
+    if ($Brush -isnot [Windows.Media.SolidColorBrush]) { return $Brush }
+    $key = if ([string]::IsNullOrWhiteSpace($CacheKey)) { Get-ServerPulseThemeBrushKey $Brush.Color } else { $CacheKey }
+    if ($script:serverPulseThemeBrushes.ContainsKey($key)) { return $script:serverPulseThemeBrushes[$key] }
+    $script:serverPulseThemeBrushes[$key] = $Brush
     return $Brush
 }
 
 function New-ServerPulseThemeBrush {
     param([Parameter(Mandatory)][string]$Color)
     $source = [Windows.Media.ColorConverter]::ConvertFromString($Color)
+    $cacheKey = Get-ServerPulseThemeBrushKey $source
+    if ($script:serverPulseThemeBrushes.ContainsKey($cacheKey)) {
+        return Set-ServerPulseBrushTheme $script:serverPulseThemeBrushes[$cacheKey] $script:serverPulseResolvedTheme
+    }
     $rgb = '#{0:X2}{1:X2}{2:X2}' -f $source.R,$source.G,$source.B
     if (-not $script:serverPulseDarkToLight.ContainsKey($rgb) -and -not $script:serverPulseLightToDark.ContainsKey($rgb)) { Add-ServerPulseThemeColorPair $rgb }
     $value = ConvertTo-ServerPulseThemeColor $source $script:serverPulseResolvedTheme
-    return Register-ServerPulseThemeBrush ([Windows.Media.SolidColorBrush]::new($value))
+    return Register-ServerPulseThemeBrush ([Windows.Media.SolidColorBrush]::new($value)) $cacheKey
 }
 
 function Set-ServerPulseBrushTheme {
     param($Brush, [ValidateSet('light','dark')][string]$Theme = $script:serverPulseResolvedTheme)
     if ($Brush -isnot [Windows.Media.SolidColorBrush]) { return $Brush }
-    [void](Register-ServerPulseThemeBrush $Brush)
     $target = ConvertTo-ServerPulseThemeColor $Brush.Color $Theme
     if (-not $Brush.IsFrozen) { $Brush.Color = $target; return $Brush }
-    return Register-ServerPulseThemeBrush ([Windows.Media.SolidColorBrush]::new($target))
+    $cacheKey = $null
+    foreach ($entry in @($script:serverPulseThemeBrushes.GetEnumerator())) {
+        if ([object]::ReferenceEquals($entry.Value,$Brush)) { $cacheKey = [string]$entry.Key; break }
+    }
+    $replacement = [Windows.Media.SolidColorBrush]::new($target)
+    if (-not [string]::IsNullOrWhiteSpace($cacheKey)) {
+        $script:serverPulseThemeBrushes[$cacheKey] = $replacement
+        return $replacement
+    }
+    return Register-ServerPulseThemeBrush $replacement
 }
 
 function Set-ServerPulseThemeState {
     param([string]$Mode, [ValidateSet('light','dark')][string]$ResolvedTheme)
     $script:serverPulseThemeMode = Normalize-ServerPulseThemeMode $Mode
     $script:serverPulseResolvedTheme = if ($ResolvedTheme) { $ResolvedTheme } else { Resolve-ServerPulseTheme $script:serverPulseThemeMode }
-    foreach ($brush in @($script:serverPulseThemeBrushes)) { [void](Set-ServerPulseBrushTheme $brush $script:serverPulseResolvedTheme) }
+    foreach ($brush in @($script:serverPulseThemeBrushes.Values)) { [void](Set-ServerPulseBrushTheme $brush $script:serverPulseResolvedTheme) }
     return $script:serverPulseResolvedTheme
 }
 

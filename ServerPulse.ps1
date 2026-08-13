@@ -334,12 +334,15 @@ function New-Brush([string]$Color) {
 }
 
 function New-AlphaBrush([string]$Color, [double]$Opacity) {
-    $base = ConvertTo-ServerPulseThemeColor ([Windows.Media.ColorConverter]::ConvertFromString($Color)) $script:serverPulseResolvedTheme
+    $source = [Windows.Media.ColorConverter]::ConvertFromString($Color)
+    $base = ConvertTo-ServerPulseThemeColor $source $script:serverPulseResolvedTheme
     $alpha = [byte][Math]::Round([Math]::Max(0.0, [Math]::Min(1.0, $Opacity)) * 255)
+    $cacheColor = [Windows.Media.Color]::FromArgb($alpha, $source.R, $source.G, $source.B)
+    $cacheKey = Get-ServerPulseThemeBrushKey $cacheColor
     $value = [Windows.Media.Color]::FromArgb($alpha, $base.R, $base.G, $base.B)
     $brush = [Windows.Media.SolidColorBrush]::new()
     $brush.Color = $value
-    return Register-ServerPulseThemeBrush $brush
+    return Register-ServerPulseThemeBrush $brush $cacheKey
 }
 
 function New-Text([string]$Text, [double]$Size, [string]$Color) {
