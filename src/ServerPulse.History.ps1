@@ -1139,7 +1139,11 @@ function Format-HistoryStorageBytes {
 
 function Get-HistoryStorageContextValue {
     param($Context,[string]$Name,$Default=$null)
-    if ($null -ne $Context -and $Context.PSObject.Properties.Name -contains $Name -and $null -ne $Context.$Name) { return $Context.$Name }
+    if ($null -ne $Context -and $Context -is [Collections.IDictionary] -and $Context.Contains($Name) -and $null -ne $Context[$Name]) { return $Context[$Name] }
+    if ($null -ne $Context) {
+        $property=$Context.PSObject.Properties[$Name]
+        if ($null -ne $property -and $null -ne $property.Value) { return $property.Value }
+    }
     return $Default
 }
 
@@ -1158,15 +1162,57 @@ function Set-HistoryStorageContextValue {
     }
 }
 
+function Ensure-HistoryStorageContext {
+    param($Context,[Parameter(Mandatory)]$Recorder)
+    $recordDirectory=[string](Get-HistoryStorageContextValue $Recorder 'Directory' '')
+    if ([string]::IsNullOrWhiteSpace($recordDirectory)) {
+        $recordDirectory=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ServerPulse\history'
+    }
+    try { $activeRoot=Split-Path -Parent ([IO.Path]::GetFullPath($recordDirectory)) } catch { $activeRoot=$recordDirectory }
+    if ([string]::IsNullOrWhiteSpace($activeRoot)) { $activeRoot=$recordDirectory }
+    if ($null -eq $Context) { $Context=[PSCustomObject]@{} }
+
+    foreach ($entry in @(
+        @('DefaultRoot',$activeRoot),
+        @('ActiveRoot',$activeRoot),
+        @('PreferredRoot',$activeRoot),
+        @('IsFallback',$false),
+        @('PrivacyWarned',$false),
+        @('PendingSync',$false),
+        @('HistoryWritePaused',$false)
+    )) {
+        $name=[string]$entry[0];$current=Get-HistoryStorageContextValue $Context $name $null
+        if ($null -eq $current -or (($name -match 'Root$') -and [string]::IsNullOrWhiteSpace([string]$current))) {
+            [void](Set-HistoryStorageContextValue $Context $name $entry[1])
+        }
+    }
+    [void](Set-HistoryStorageContextValue $Context 'Recorder' $Recorder)
+
+    $settings=Get-HistoryStorageContextValue $Context 'Settings' $null
+    if ($null -eq $settings) { $settings=[PSCustomObject]@{};[void](Set-HistoryStorageContextValue $Context 'Settings' $settings) }
+    foreach ($entry in @(
+        @('HistoryRetentionDays',[int](Get-HistoryStorageContextValue $Recorder 'RetentionDays' 7)),
+        @('HistoryNeverCleanup',[bool](Get-HistoryStorageContextValue $Recorder 'NeverCleanup' $false)),
+        @('HistoryLastRetentionDays',[int](Get-HistoryStorageContextValue $Recorder 'LastRetentionDays' 7)),
+        @('HistoryStorageConfigured',$true),
+        @('CleanupPaused',[bool](Get-HistoryStorageContextValue $Recorder 'CleanupPaused' $false)),
+        @('CleanupOnStartup',$false)
+    )) {
+        $name=[string]$entry[0];$current=Get-HistoryStorageContextValue $settings $name $null
+        if ($null -eq $current) { [void](Set-HistoryStorageContextValue $settings $name $entry[1]) }
+    }
+    return $Context
+}
+
 function Get-HistoryStorageSettingsObject {
     param($Context)
     $settings = Get-HistoryStorageContextValue $Context 'Settings' $null
     if ($null -eq $settings) { $settings = [PSCustomObject]@{} }
-    $never = if ($settings.PSObject.Properties.Name -contains 'HistoryNeverCleanup') { [bool]$settings.HistoryNeverCleanup } else { $false }
-    $days = if ($settings.PSObject.Properties.Name -contains 'HistoryRetentionDays') { $settings.HistoryRetentionDays } else { 7 }
-    $last = if ($settings.PSObject.Properties.Name -contains 'HistoryLastRetentionDays') { $settings.HistoryLastRetentionDays } else { 7 }
-    $paused = if ($settings.PSObject.Properties.Name -contains 'CleanupPaused') { [bool]$settings.CleanupPaused } else { $false }
-    $configured = if ($settings.PSObject.Properties.Name -contains 'HistoryStorageConfigured') { [bool]$settings.HistoryStorageConfigured } else { $false }
+    $never = [bool](Get-HistoryStorageContextValue $settings 'HistoryNeverCleanup' $false)
+    $days = Get-HistoryStorageContextValue $settings 'HistoryRetentionDays' 7
+    $last = Get-HistoryStorageContextValue $settings 'HistoryLastRetentionDays' 7
+    $paused = [bool](Get-HistoryStorageContextValue $settings 'CleanupPaused' $false)
+    $configured = [bool](Get-HistoryStorageContextValue $settings 'HistoryStorageConfigured' $false)
     return ConvertTo-ServerPulseRetentionSettings -Days $days -NeverCleanup:$never -LastRetentionDays $last -Configured:$configured -CleanupPaused:$paused
 }
 
@@ -1198,7 +1244,7 @@ function Set-HistoryStorageInputValidation {
 function Show-HistoryCleanupChoiceDialog {
     param([Windows.Window]$Owner)
     [xml]$xaml=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="450" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="450" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
   <Border BorderBrush="#3A423D" BorderThickness="1" CornerRadius="9" Padding="16"><StackPanel>
     <TextBlock x:Name="Message" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,15"/>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
@@ -1221,7 +1267,7 @@ function Show-HistoryCleanupChoiceDialog {
 function Show-HistoryMigrationConflictDialog {
     param([Windows.Window]$Owner)
     [xml]$xaml=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="470" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="470" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
   <Border BorderBrush="#3A423D" BorderThickness="1" CornerRadius="9" Padding="16"><StackPanel>
     <TextBlock x:Name="Message" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,15"/>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="Overwrite" Width="78" Height="28" Margin="0,0,7,0"/><Button x:Name="Merge" Width="92" Height="28" Margin="0,0,7,0"/><Button x:Name="Cancel" Width="92" Height="28" IsDefault="True" IsCancel="True"/></StackPanel>
@@ -1252,11 +1298,11 @@ function Invoke-HistoryStorageContextApply {
     $privacyWarned=[bool](Get-HistoryStorageContextValue $Context 'PrivacyWarned' $false)
     if($null -ne $Owner -and -not [string]::IsNullOrWhiteSpace($defaultRoot) -and -not [string]::Equals($defaultRoot,$target,[StringComparison]::OrdinalIgnoreCase) -and -not $privacyWarned){
         if([Windows.MessageBox]::Show($Owner,(Get-ServerPulseText 'history.settingsPrivacy'),'Server Pulse','YesNo','Warning') -ne 'Yes'){return [PSCustomObject]@{Applied=$false;Cancelled=$true;Migration=$null}}
-        if($Context.PSObject.Properties.Name -contains 'PrivacyWarned'){$Context.PrivacyWarned=$true}else{$Context|Add-Member -NotePropertyName PrivacyWarned -NotePropertyValue $true}
+        [void](Set-HistoryStorageContextValue $Context 'PrivacyWarned' $true)
     }
     $migration=$null
     if(-not [string]::Equals($currentRoot,$target,[StringComparison]::OrdinalIgnoreCase)){
-        if($Context.PSObject.Properties.Name -contains 'HistoryWritePaused'){$Context.HistoryWritePaused=$true}
+        [void](Set-HistoryStorageContextValue $Context 'HistoryWritePaused' $true)
         try {
             $currentRecorder=Get-HistoryStorageContextValue $Context 'Recorder' $null
             if($null -ne $currentRecorder){[void](Flush-ServerPulseHistoryRecorder $currentRecorder)}
@@ -1272,7 +1318,7 @@ function Invoke-HistoryStorageContextApply {
                 if($mode -eq 'Cancel'){return [PSCustomObject]@{Applied=$false;Cancelled=$true;Migration=$probe}}
                 $migration=Invoke-ServerPulseDataRootMigration -SourceRoot $currentRoot -TargetRoot $target -ConflictMode $mode
             }else{$migration=$probe}
-        } finally {if($Context.PSObject.Properties.Name -contains 'HistoryWritePaused'){$Context.HistoryWritePaused=$false}}
+        } finally {[void](Set-HistoryStorageContextValue $Context 'HistoryWritePaused' $false)}
     }
     $keepFallback=$wasFallback -and [string]::Equals($currentRoot,$target,[StringComparison]::OrdinalIgnoreCase)
     if($keepFallback){[void](Set-HistoryStorageContextValue $Context 'ActiveRoot' $target);[void](Set-HistoryStorageContextValue $Context 'PreferredRoot' $preferredBefore);[void](Set-HistoryStorageContextValue $Context 'IsFallback' $true);[void](Set-HistoryStorageContextValue $Context 'PendingSync' $true)}
@@ -1281,11 +1327,11 @@ function Invoke-HistoryStorageContextApply {
     if($null -ne $rec){$rec.Directory=Join-Path $target 'history';[void](Set-ServerPulseHistoryRetention -Recorder $rec -Days $Retention.RetentionDays -NeverCleanup:$Retention.NeverCleanup -CleanupPaused:([bool]$Retention.CleanupPaused) -StorageConfigured:$true)}
     $settings=Get-HistoryStorageContextValue $Context 'Settings' $null
     if($null -ne $settings){
-        $settings.HistoryRetentionDays=[int]$Retention.RetentionDays;$settings.HistoryLastRetentionDays=[int]$Retention.LastRetentionDays;$settings.HistoryNeverCleanup=[bool]$Retention.NeverCleanup;$settings.HistoryStorageConfigured=$true
-        if($CleanupAction -eq 'immediate'){$settings.CleanupPaused=$false;$settings.CleanupOnStartup=$false}
-        elseif($CleanupAction -eq 'nextStartup'){$settings.CleanupPaused=$false;$settings.CleanupOnStartup=$true}
-        elseif($Retention.NeverCleanup){$settings.CleanupPaused=$false;$settings.CleanupOnStartup=$false}
-        else{$settings.CleanupPaused=[bool]$Retention.CleanupPaused}
+        [void](Set-HistoryStorageContextValue $settings 'HistoryRetentionDays' ([int]$Retention.RetentionDays));[void](Set-HistoryStorageContextValue $settings 'HistoryLastRetentionDays' ([int]$Retention.LastRetentionDays));[void](Set-HistoryStorageContextValue $settings 'HistoryNeverCleanup' ([bool]$Retention.NeverCleanup));[void](Set-HistoryStorageContextValue $settings 'HistoryStorageConfigured' $true)
+        if($CleanupAction -eq 'immediate'){[void](Set-HistoryStorageContextValue $settings 'CleanupPaused' $false);[void](Set-HistoryStorageContextValue $settings 'CleanupOnStartup' $false)}
+        elseif($CleanupAction -eq 'nextStartup'){[void](Set-HistoryStorageContextValue $settings 'CleanupPaused' $false);[void](Set-HistoryStorageContextValue $settings 'CleanupOnStartup' $true)}
+        elseif($Retention.NeverCleanup){[void](Set-HistoryStorageContextValue $settings 'CleanupPaused' $false);[void](Set-HistoryStorageContextValue $settings 'CleanupOnStartup' $false)}
+        else{[void](Set-HistoryStorageContextValue $settings 'CleanupPaused' ([bool]$Retention.CleanupPaused))}
     }
     $pointerPath=Get-HistoryStorageContextValue $Context 'PointerPath' $null
     if($pointerPath){$pointerPreferred=if($keepFallback){$preferredBefore}else{$target};Write-ServerPulseLocationPointer -Path $pointerPath -Pointer (New-ServerPulseLocationPointer -PreferredDataRootPath $pointerPreferred -PendingSync:$keepFallback -ActiveDataRootPath $target)}
@@ -1360,16 +1406,7 @@ function Show-ServerPulseHistoryWindow {
         [switch]$SmokeTest
     )
 
-    if ($null -eq $StorageContext) {
-        $activeRoot = Split-Path -Parent ([IO.Path]::GetFullPath($Recorder.Directory))
-        $StorageContext = [PSCustomObject]@{
-            DefaultRoot=$activeRoot;ActiveRoot=$activeRoot;PreferredRoot=$activeRoot;PointerPath=$null;IsFallback=$false;PrivacyWarned=$false
-            Recorder=$Recorder;Settings=[PSCustomObject]@{HistoryRetentionDays=$Recorder.RetentionDays;HistoryNeverCleanup=$Recorder.NeverCleanup;HistoryLastRetentionDays=$Recorder.LastRetentionDays;HistoryStorageConfigured=$true;CleanupPaused=$Recorder.CleanupPaused;CleanupOnStartup=$false}
-            SaveSettings=$null;ApplyRoot=$null;OnRequery=$null
-        }
-    } else {
-        $StorageContext.Recorder=$Recorder
-    }
+    $StorageContext=Ensure-HistoryStorageContext -Context $StorageContext -Recorder $Recorder
     $storageSettings=Get-HistoryStorageSettingsObject $StorageContext
     if (-not $SmokeTest -and -not $storageSettings.Configured) {
         $setup=Show-ServerPulseHistorySetupDialog -Owner $Owner -Context $StorageContext

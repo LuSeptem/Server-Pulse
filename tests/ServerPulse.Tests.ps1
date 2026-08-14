@@ -728,9 +728,12 @@ Assert-Equal ([bool]($mainSource -match '& \$historyAskPassCommand -Directory'))
 Assert-Equal ([bool]($mainSource -match '\$historyContextSetterCommand = Get-Command Set-HistoryStorageContextValue')) $true '历史目录切换回调预先捕获上下文属性函数'
 Assert-Equal ([bool]($mainSource -match '& \$historyContextSetterCommand -Context \$script:historyStorageContext')) $true '历史目录切换回调使用安全上下文属性写入'
 Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="540"')) $true '首次记录配置弹窗声明 WPF x 命名空间'
+Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="450"')) $true '清理确认弹窗声明 WPF x 命名空间'
+Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="470"')) $true '迁移冲突弹窗声明 WPF x 命名空间'
 Assert-Equal ([bool]($historySource -match 'Get-Command Get-ServerPulseText')) $true '历史模块可自补载本地化函数'
 Assert-Equal ([bool]($historySource -match 'function Get-HistorySetupText')) $true '首次记录配置错误提示具有本地化兜底'
 Assert-Equal ([bool]($historySource -match 'function Set-HistoryStorageContextValue')) $true '历史上下文支持补齐缺失属性'
+Assert-Equal ([bool]($historySource -match 'function Ensure-HistoryStorageContext')) $true '记录窗口初始化时规范化历史上下文'
 Assert-Equal ([bool]($historySource -notmatch '\$Context\.ActiveRoot=')) $true '历史上下文不直接写入可能缺失的属性'
 Assert-Equal ([bool]($historySource -match '\$setupInvalidPathTemplate')) $true '首次记录配置点击事件捕获错误文案'
 Assert-Equal ([bool]($historySource -notmatch "Save'.*Get-HistorySetupText")) $true '首次记录配置点击事件不依赖动态本地化函数'
@@ -866,6 +869,20 @@ Assert-Equal $missingHistoryContext.ActiveRoot 'C:\ServerPulse' '历史上下文
 $historyContextMap=@{}
 Set-HistoryStorageContextValue -Context $historyContextMap -Name 'ActiveRoot' -Value 'C:\ServerPulse'
 Assert-Equal $historyContextMap['ActiveRoot'] 'C:\ServerPulse' '哈希表历史上下文可安全写入'
+$contextRecorderRoot=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-context-'+[guid]::NewGuid().ToString('N'))
+try {
+    $contextRecorder=New-ServerPulseHistoryRecorder -Directory (Join-Path $contextRecorderRoot 'history') -RetentionDays 7 -StorageConfigured $true
+    $normalizedContext=Ensure-HistoryStorageContext -Context $null -Recorder $contextRecorder
+    Assert-Equal ([string]$normalizedContext.ActiveRoot) ([string]$contextRecorderRoot) '空历史上下文可自动建立活动目录'
+    Assert-Equal ([bool]$normalizedContext.Settings.HistoryStorageConfigured) $true '空历史上下文自动标记存储已配置'
+    $normalizedMap=Ensure-HistoryStorageContext -Context @{} -Recorder $contextRecorder
+    Assert-Equal ([string]$normalizedMap['ActiveRoot']) ([string]$contextRecorderRoot) '哈希表历史上下文可自动规范化'
+    $incompleteContext=[pscustomobject]@{Recorder=$contextRecorder;Settings=[pscustomobject]@{HistoryStorageConfigured=$true}}
+    $incompleteRetention=ConvertTo-ServerPulseRetentionSettings -Days 7 -LastRetentionDays 7 -Configured $true
+    $incompleteApply=Invoke-HistoryStorageContextApply -Context $incompleteContext -TargetRoot $contextRecorderRoot -Retention $incompleteRetention
+    Assert-Equal $incompleteApply.Applied $true '缺少活动目录字段的上下文仍可应用记录设置'
+    Assert-Equal ([string]$incompleteContext.ActiveRoot) ([string]$contextRecorderRoot) '应用记录设置后补齐活动目录字段'
+} finally { if(Test-Path -LiteralPath $contextRecorderRoot){Remove-Item -LiteralPath $contextRecorderRoot -Recurse -Force -ErrorAction SilentlyContinue} }
 $cutoff=Get-ServerPulseRetentionCutoffDate -Now ([datetime]'2026-08-14T12:34:00') -RetentionDays 7
 Assert-Equal $cutoff.ToString('yyyy-MM-dd') '2026-08-08' '保留天数按自然日计算截止日期'
 Assert-Equal (Get-ServerPulseCleanupDecision -PreviousDays 30 -NewDays 7) 'prompt' '缩短保留时长需要清理确认'
