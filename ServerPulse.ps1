@@ -322,10 +322,12 @@ if (-not $SmokeTest -and $historyConfigured) {
     } catch { }
 }
 if($cleanupOnStartupConsumed){try{Write-ServerPulseJsonAtomic -Path $settingsPath -Value $settings -Depth 8}catch{} }
+$historyJsonWriterCommand = Get-Command Write-ServerPulseJsonAtomic -ErrorAction SilentlyContinue
+$historyAskPassCommand = Get-Command Ensure-ServerPulseAskPassHelper -ErrorAction SilentlyContinue
 $script:historyStorageContext = [PSCustomObject]@{
     DefaultRoot=$defaultDataRoot;ActiveRoot=$settingsDirectory;PreferredRoot=if($dataRootResolution.PreferredRoot){$dataRootResolution.PreferredRoot}else{$settingsDirectory};PointerPath=$locationPointerPath;IsFallback=[bool]$dataRootResolution.IsFallback;PendingSync=[bool]$dataRootResolution.IsFallback;PrivacyWarned=$false;HistoryWritePaused=$false;Recorder=$script:historyRecorder;Settings=$settings
-    SaveSettings={param($settingsObject,$root);if($null -ne $settingsObject){$script:settings=$settingsObject};if($root){$script:settingsDirectory=$root;$script:settingsPath=Join-Path $root 'settings.json'};Save-Settings}.GetNewClosure()
-    ApplyRoot={param($root,$settingsObject);$script:settingsDirectory=$root;$script:settingsPath=Join-Path $root 'settings.json';$script:serverStorePath=Join-Path $root 'servers.json';$script:historyRecorder.Directory=Join-Path $root 'history';$script:askPassPath=Ensure-ServerPulseAskPassHelper (Join-Path $root 'bin');$script:historyStorageContext.ActiveRoot=$root;$script:historyStorageContext.PreferredRoot=$root;$script:historyStorageContext.IsFallback=$false;$script:historyStorageContext.PendingSync=$false}.GetNewClosure()
+    SaveSettings={param($settingsObject,$root);if($null -ne $settingsObject){$script:settings=$settingsObject};if($root){$script:settingsDirectory=$root;$script:settingsPath=Join-Path $root 'settings.json'};if($null -eq $historyJsonWriterCommand){throw 'Settings writer is unavailable. Please restart Server Pulse.'};& $historyJsonWriterCommand -Path $script:settingsPath -Value $script:settings -Depth 8}.GetNewClosure()
+    ApplyRoot={param($root,$settingsObject);$script:settingsDirectory=$root;$script:settingsPath=Join-Path $root 'settings.json';$script:serverStorePath=Join-Path $root 'servers.json';$script:historyRecorder.Directory=Join-Path $root 'history';if($null -eq $historyAskPassCommand){throw 'SSH helper is unavailable. Please restart Server Pulse.'};$script:askPassPath=& $historyAskPassCommand -Directory (Join-Path $root 'bin');$script:historyStorageContext.ActiveRoot=$root;$script:historyStorageContext.PreferredRoot=$root;$script:historyStorageContext.IsFallback=$false;$script:historyStorageContext.PendingSync=$false}.GetNewClosure()
     OnRequery={}.GetNewClosure()
 }
 $script:cards = @{}
