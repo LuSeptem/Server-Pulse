@@ -1,11 +1,42 @@
 ﻿Set-StrictMode -Version Latest
 
+# History can also be loaded by an older launcher or a copied script bundle.
+# Load localization here when the host did not load the normal module chain, so
+# the first-run dialog can always render labels and error text.
+$historyLocalizationModulePath = Join-Path $PSScriptRoot 'ServerPulse.Localization.ps1'
+if ($null -eq (Get-Command Get-ServerPulseText -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $historyLocalizationModulePath)) {
+    . $historyLocalizationModulePath
+}
+
 # History can also be loaded by older launchers or a copied script bundle.  Make
 # the storage policy helpers available here as well, so the first-run setup
 # dialog never depends on load order in the host script.
 $historyStorageModulePath = Join-Path $PSScriptRoot 'ServerPulse.Storage.ps1'
 if ($null -eq (Get-Command ConvertTo-ServerPulseRetentionSettings -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $historyStorageModulePath)) {
     . $historyStorageModulePath
+}
+
+function Get-HistorySetupText {
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [object[]]$Arguments
+    )
+
+    # Do not let an unavailable localization function hide the original save
+    # error. Normal resource lookup is preferred; the fallback keeps old or
+    # copied bundles usable until they are updated.
+    try {
+        if ($null -ne (Get-Command Get-ServerPulseText -ErrorAction SilentlyContinue)) {
+            return Get-ServerPulseText -Key $Key -Arguments $Arguments
+        }
+    } catch { }
+
+    $firstArgument = if ($null -ne $Arguments -and $Arguments.Count -gt 0) { [string]$Arguments[0] } else { '' }
+    switch ($Key) {
+        'history.settingsPathInvalid' { return ('Invalid data directory: {0}' -f $firstArgument) }
+        'history.migrationCancel' { return 'Migration cancelled.' }
+        default { return $Key }
+    }
 }
 
 function Get-HistoryObjectValue {
@@ -1275,14 +1306,14 @@ function Show-ServerPulseHistorySetupDialog {
         try {
             $ret=ConvertTo-ServerPulseRetentionSettings -Days $dialog.FindName('Retention').Text -NeverCleanup:([bool]$dialog.FindName('Never').IsChecked) -LastRetentionDays 7 -Configured $true
             $path=Test-ServerPulseDataRootPath -Path $dialog.FindName('Path').Text -Create
-            if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{Get-ServerPulseText 'history.settingsPathInvalid' @($path.Reason)};return}
+            if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{Get-HistorySetupText 'history.settingsPathInvalid' @($path.Reason)};return}
             $applied=Invoke-HistoryStorageContextApply -Context $Context -TargetRoot $path.Path -Retention $ret -CleanupAction 'none' -Owner $Owner
-            if($null -eq $applied -or -not [bool]$applied.Applied){$dialog.FindName('Error').Text=Get-ServerPulseText 'history.migrationCancel';return}
+            if($null -eq $applied -or -not [bool]$applied.Applied){$dialog.FindName('Error').Text=Get-HistorySetupText 'history.migrationCancel';return}
             $result.Saved=$true;$result.Cancelled=$false;$result.RetentionDays=$ret.RetentionDays;$result.NeverCleanup=$ret.NeverCleanup;$result.Root=$path.Path;$dialog.Close()
         } catch {
             $message=[string]$_.Exception.Message
             if($message.Length -gt 220){$message=$message.Substring(0,217)+'...'}
-            $dialog.FindName('Error').Text=Get-ServerPulseText 'history.settingsPathInvalid' @($message)
+            $dialog.FindName('Error').Text=Get-HistorySetupText 'history.settingsPathInvalid' @($message)
         }
     }.GetNewClosure())
     Update-ServerPulseThemeVisualTree $dialog;[void]$dialog.ShowDialog()

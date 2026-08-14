@@ -722,6 +722,8 @@ Assert-Equal ([bool]($collectorSource -match '\[Console\]::In\.ReadLine\(\)')) $
 Assert-Equal ([bool]($collectorSource -match 'Invoke-ServerPulsePersistentCollection')) $true 'Worker 使用每服务器长期 SSH 会话而非逐轮启动 ssh.exe'
 Assert-Equal ([bool]($mainSource -match '\$info\.Arguments=.*?-Worker')) $true '主窗口启动长期采集器而非逐轮采集进程'
 Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="540"')) $true '首次记录配置弹窗声明 WPF x 命名空间'
+Assert-Equal ([bool]($historySource -match 'Get-Command Get-ServerPulseText')) $true '历史模块可自补载本地化函数'
+Assert-Equal ([bool]($historySource -match 'function Get-HistorySetupText')) $true '首次记录配置错误提示具有本地化兜底'
 Assert-Equal ([bool]($historySource -match 'Get-Command ConvertTo-ServerPulseRetentionSettings')) $true '历史模块可自补载存储策略函数'
 Assert-Equal ([bool]($historySource -match 'Invoke-HistoryStorageContextApply -Context \$Context -TargetRoot \$path\.Path')) $true '首次记录配置保存成功后才关闭弹窗'
 Assert-Equal ([bool]($launcherSource -match 'ServerPulse\.exe')) $true '兼容启动器优先启动 EXE 宿主'
