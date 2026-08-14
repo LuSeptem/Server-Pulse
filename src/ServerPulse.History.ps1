@@ -1300,9 +1300,17 @@ function Show-ServerPulseHistorySetupDialog {
     $dialog.FindName('Title').Text=Get-ServerPulseText 'history.setupTitle';$dialog.FindName('Message').Text=Get-ServerPulseText 'history.setupMessage';$dialog.FindName('RetentionLabel').Text=Get-ServerPulseText 'history.retention';$dialog.FindName('RetentionUnit').Text=Get-ServerPulseText 'history.retentionUnit';$dialog.FindName('Never').Content=Get-ServerPulseText 'history.neverCleanup';$dialog.FindName('PathLabel').Text=Get-ServerPulseText 'history.dataRoot';$dialog.FindName('Browse').Content=Get-ServerPulseText 'history.browse';$dialog.FindName('Save').Content=Get-ServerPulseText 'history.setupSave';$dialog.FindName('Cancel').Content=Get-ServerPulseText 'history.setupCancel'
     $dialog.FindName('Path').Text=[string](Get-HistoryStorageContextValue $Context 'ActiveRoot')
     $result=[PSCustomObject]@{Saved=$false;Cancelled=$true;RetentionDays=7;NeverCleanup=$false;Root=$null}
-    # Event handlers created with GetNewClosure do not reliably resolve helper
-    # functions from this script's scope. Resolve the two error templates before
-    # registering the handler and capture plain strings instead.
+    # Event handlers created with GetNewClosure do not reliably resolve function
+    # names from this script's scope. Capture command objects before registering
+    # the handler so the save path invokes the already-resolved implementations.
+    $convertRetentionCommand = Get-Command ConvertTo-ServerPulseRetentionSettings -ErrorAction SilentlyContinue
+    $testDataRootCommand = Get-Command Test-ServerPulseDataRootPath -ErrorAction SilentlyContinue
+    $applyStorageCommand = Get-Command Invoke-HistoryStorageContextApply -ErrorAction SilentlyContinue
+    $setupDependencyError = if ($null -eq $convertRetentionCommand -or $null -eq $testDataRootCommand -or $null -eq $applyStorageCommand) {
+        'History storage dependencies are unavailable. Please restart Server Pulse.'
+    } else { $null }
+    # Resolve the two error templates before registering the handler and capture
+    # plain strings instead of looking up localization dynamically on click.
     $setupInvalidPathTemplate = 'Invalid data directory: {0}'
     $setupMigrationCancelText = 'Migration cancelled.'
     try { $setupInvalidPathTemplate = [string](Get-ServerPulseText 'history.settingsPathInvalid' @('{0}')) } catch { }
@@ -1311,10 +1319,11 @@ function Show-ServerPulseHistorySetupDialog {
     $dialog.FindName('Browse').Add_Click({$picker=[Windows.Forms.FolderBrowserDialog]::new();$picker.SelectedPath=$dialog.FindName('Path').Text;if($picker.ShowDialog() -eq [Windows.Forms.DialogResult]::OK){$dialog.FindName('Path').Text=$picker.SelectedPath};$picker.Dispose()}.GetNewClosure())
     $dialog.FindName('Save').Add_Click({
         try {
-            $ret=ConvertTo-ServerPulseRetentionSettings -Days $dialog.FindName('Retention').Text -NeverCleanup:([bool]$dialog.FindName('Never').IsChecked) -LastRetentionDays 7 -Configured $true
-            $path=Test-ServerPulseDataRootPath -Path $dialog.FindName('Path').Text -Create
+            if ($null -ne $setupDependencyError) { throw $setupDependencyError }
+            $ret=& $convertRetentionCommand -Days $dialog.FindName('Retention').Text -NeverCleanup:([bool]$dialog.FindName('Never').IsChecked) -LastRetentionDays 7 -Configured $true
+            $path=& $testDataRootCommand -Path $dialog.FindName('Path').Text -Create
             if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{($setupInvalidPathTemplate -f [string]$path.Reason)};return}
-            $applied=Invoke-HistoryStorageContextApply -Context $Context -TargetRoot $path.Path -Retention $ret -CleanupAction 'none' -Owner $Owner
+            $applied=& $applyStorageCommand -Context $Context -TargetRoot $path.Path -Retention $ret -CleanupAction 'none' -Owner $Owner
             if($null -eq $applied -or -not [bool]$applied.Applied){$dialog.FindName('Error').Text=$setupMigrationCancelText;return}
             $result.Saved=$true;$result.Cancelled=$false;$result.RetentionDays=$ret.RetentionDays;$result.NeverCleanup=$ret.NeverCleanup;$result.Root=$path.Path;$dialog.Close()
         } catch {
