@@ -1263,7 +1263,7 @@ function Invoke-HistoryStorageContextApply {
     if($keepFallback){$Context.ActiveRoot=$target;$Context.PreferredRoot=$preferredBefore;$Context.IsFallback=$true;$Context.PendingSync=$true}
     else{$Context.ActiveRoot=$target;$Context.PreferredRoot=$target;$Context.IsFallback=$false;$Context.PendingSync=$false}
     $rec=Get-HistoryStorageContextValue $Context 'Recorder' $null
-    if($null -ne $rec){$rec.Directory=Join-Path $target 'history';[void](Set-ServerPulseHistoryRetention -Recorder $rec -Days $Retention.RetentionDays -NeverCleanup:$Retention.NeverCleanup -CleanupPaused:[bool]$Retention.CleanupPaused -StorageConfigured:$true)}
+    if($null -ne $rec){$rec.Directory=Join-Path $target 'history';[void](Set-ServerPulseHistoryRetention -Recorder $rec -Days $Retention.RetentionDays -NeverCleanup:$Retention.NeverCleanup -CleanupPaused:([bool]$Retention.CleanupPaused) -StorageConfigured:$true)}
     $settings=Get-HistoryStorageContextValue $Context 'Settings' $null
     if($null -ne $settings){
         $settings.HistoryRetentionDays=[int]$Retention.RetentionDays;$settings.HistoryLastRetentionDays=[int]$Retention.LastRetentionDays;$settings.HistoryNeverCleanup=[bool]$Retention.NeverCleanup;$settings.HistoryStorageConfigured=$true

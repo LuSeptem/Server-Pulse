@@ -731,6 +731,8 @@ Assert-Equal ([bool]($historySource -match '\$applyStorageCommand = Get-Command 
 Assert-Equal ([bool]($historySource -match '& \$convertRetentionCommand -Days')) $true '首次记录配置点击事件使用已捕获的保留策略函数'
 Assert-Equal ([bool]($historySource -match '& \$testDataRootCommand -Path')) $true '首次记录配置点击事件使用已捕获的目录校验函数'
 Assert-Equal ([bool]($historySource -match '& \$applyStorageCommand -Context \$Context -TargetRoot \$path\.Path')) $true '首次记录配置保存成功后才关闭弹窗'
+Assert-Equal ([bool]($historySource -match '-CleanupPaused:\(\[bool\]\$Retention\.CleanupPaused\)')) $true '应用历史设置时布尔参数显式加括号'
+Assert-Equal ([bool]($historySource -notmatch '-CleanupPaused:\[bool\]\$Retention\.CleanupPaused')) $true '应用历史设置不把布尔转换表达式当成字符串'
 Assert-Equal ([bool]($launcherSource -match 'ServerPulse\.exe')) $true '兼容启动器优先启动 EXE 宿主'
 Assert-Equal (Test-Path -LiteralPath $hostSourcePath) $true '仓库包含可重复构建的 EXE 宿主源码'
 Assert-Equal (Test-Path -LiteralPath $hostExecutablePath) $true '仓库包含 ServerPulse.exe 宿主'
@@ -854,6 +856,12 @@ $cutoff=Get-ServerPulseRetentionCutoffDate -Now ([datetime]'2026-08-14T12:34:00'
 Assert-Equal $cutoff.ToString('yyyy-MM-dd') '2026-08-08' '保留天数按自然日计算截止日期'
 Assert-Equal (Get-ServerPulseCleanupDecision -PreviousDays 30 -NewDays 7) 'prompt' '缩短保留时长需要清理确认'
 Assert-Equal (Get-ServerPulseCleanupDecision -PreviousDays 30 -NewDays 7 -NewNeverCleanup $true) 'none' '永不清理跳过清理确认'
+$retentionApplyRoot=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-retention-apply-'+[guid]::NewGuid().ToString('N'))
+try {
+    $retentionApplyRecorder=New-ServerPulseHistoryRecorder -Directory (Join-Path $retentionApplyRoot 'history') -RetentionDays 7 -StorageConfigured $true
+    $retentionApplied=Set-ServerPulseHistoryRetention -Recorder $retentionApplyRecorder -Days 7 -NeverCleanup:$false -CleanupPaused:([bool]$true) -StorageConfigured:$true
+    Assert-Equal $retentionApplied.CleanupPaused $true '应用记录设置时清理暂停布尔参数可正常绑定'
+} finally { if(Test-Path -LiteralPath $retentionApplyRoot){Remove-Item -LiteralPath $retentionApplyRoot -Recurse -Force -ErrorAction SilentlyContinue} }
 
 $storageRoot=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-storage-test-'+[guid]::NewGuid().ToString('N'));$storageSource=Join-Path $storageRoot 'source';$storageTarget=Join-Path $storageRoot 'target'
 try {
