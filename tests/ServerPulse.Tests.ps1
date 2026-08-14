@@ -1,6 +1,7 @@
 ﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Theme.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Localization.ps1')
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.Storage.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Core.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1')
@@ -829,6 +830,58 @@ try{
 }finally{
     if($null-ne$failureWorker){try{$failureWorker.StandardInput.Close()}catch{};if(-not$failureWorker.WaitForExit(3000)){$failureWorker.Kill()};$failureWorker.Dispose()}
     if(Test-Path -LiteralPath $failureCountFile){Remove-Item -LiteralPath $failureCountFile -Force}
+}
+
+$retentionValid=ConvertTo-ServerPulseRetentionSettings -Days 1 -LastRetentionDays 7
+Assert-Equal $retentionValid.IsValid $true '历史保留最小值 1 天有效'
+Assert-Equal (ConvertTo-ServerPulseRetentionSettings -Days 3650).IsValid $true '历史保留最大值 3650 天有效'
+Assert-Equal (ConvertTo-ServerPulseRetentionSettings -Days 0).IsValid $false '历史保留拒绝 0 天'
+Assert-Equal (ConvertTo-ServerPulseRetentionSettings -Days 3651).IsValid $false '历史保留拒绝超过 3650 天'
+$neverRetention=ConvertTo-ServerPulseRetentionSettings -Days $null -NeverCleanup $true -LastRetentionDays 42
+Assert-Equal "$($neverRetention.NeverCleanup):$($neverRetention.RetentionDays)" 'True:42' '永不清理保留上一次有效天数'
+$cutoff=Get-ServerPulseRetentionCutoffDate -Now ([datetime]'2026-08-14T12:34:00') -RetentionDays 7
+Assert-Equal $cutoff.ToString('yyyy-MM-dd') '2026-08-08' '保留天数按自然日计算截止日期'
+Assert-Equal (Get-ServerPulseCleanupDecision -PreviousDays 30 -NewDays 7) 'prompt' '缩短保留时长需要清理确认'
+Assert-Equal (Get-ServerPulseCleanupDecision -PreviousDays 30 -NewDays 7 -NewNeverCleanup $true) 'none' '永不清理跳过清理确认'
+
+$storageRoot=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-storage-test-'+[guid]::NewGuid().ToString('N'));$storageSource=Join-Path $storageRoot 'source';$storageTarget=Join-Path $storageRoot 'target'
+try {
+    [void](New-Item -ItemType Directory -Path (Join-Path $storageSource 'history') -Force)
+    [IO.File]::WriteAllText((Join-Path $storageSource 'settings.json'),'{}')
+    [IO.File]::WriteAllText((Join-Path $storageSource 'history\2026-01-01.v2.jsonl'),'sample`n')
+    $pointerPath=Join-Path $storageRoot 'ServerPulse.location.json'
+    $pointer=New-ServerPulseLocationPointer -PreferredDataRootPath $storageSource
+    Write-ServerPulseLocationPointer -Path $pointerPath -Pointer $pointer
+    Assert-Equal (Read-ServerPulseLocationPointer -Path $pointerPath).PreferredDataRootPath $storageSource 'location 指针可原子写入并读取'
+    $resolvedPreferred=Resolve-ServerPulseDataRoot -DefaultRoot $storageSource -PointerPath $pointerPath -CreateDefault
+    Assert-Equal "$($resolvedPreferred.IsFallback):$($resolvedPreferred.ActiveRoot -eq [IO.Path]::GetFullPath($storageSource))" 'False:True' '有效 location 指针可解析首选目录'
+    [IO.File]::WriteAllText($pointerPath,'{ broken')
+    Assert-Equal (Read-ServerPulseLocationPointer -Path $pointerPath).Invalid $true '损坏的 location 指针安全标记无效'
+    Write-ServerPulseLocationPointer -Path $pointerPath -Pointer $pointer
+    $missingPreferred=Join-Path $storageRoot 'missing-preferred';Write-ServerPulseLocationPointer -Path $pointerPath -Pointer (New-ServerPulseLocationPointer -PreferredDataRootPath $missingPreferred)
+    $resolvedFallback=Resolve-ServerPulseDataRoot -DefaultRoot $storageSource -PointerPath $pointerPath -CreateDefault
+    Assert-Equal "$($resolvedFallback.IsFallback):$($resolvedFallback.ActiveRoot -eq [IO.Path]::GetFullPath($storageSource))" 'True:True' '首选目录不可用时只回退默认目录'
+    Write-ServerPulseLocationPointer -Path $pointerPath -Pointer $pointer
+    $envPath='%TEMP%\ServerPulse-storage-env-test'
+    $envResolved=Test-ServerPulseDataRootPath -Path $envPath -Create
+    Assert-Equal $envResolved.IsValid $true '数据目录支持环境变量并自动创建'
+    Assert-Equal (Test-ServerPulseDataRootPath -Path 'relative\ServerPulse').ErrorCode 'relative' '数据目录拒绝相对路径'
+    Assert-Equal (Test-ServerPulseDataRootPath -Path '\\server\share').ErrorCode 'unc' '数据目录拒绝 UNC 路径'
+    $storageBomBytes=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..\src\ServerPulse.Storage.ps1'))
+    Assert-Equal ("{0},{1},{2}" -f $storageBomBytes[0],$storageBomBytes[1],$storageBomBytes[2]) '239,187,191' '存储模块保持 UTF-8 BOM'
+    $migration=Invoke-ServerPulseDataRootMigration -SourceRoot $storageSource -TargetRoot $storageTarget -ConflictMode Cancel
+    Assert-Equal $migration.Status 'Migrated' '数据根目录迁移成功'
+    Assert-Equal (Test-Path -LiteralPath (Join-Path $storageTarget 'history\2026-01-01.v2.jsonl')) $true '迁移包含历史 JSONL'
+    Assert-Equal (Test-Path -LiteralPath $migration.BackupPath) $true '迁移成功后保留源目录备份'
+    $rec=New-ServerPulseHistoryRecorder -Directory (Join-Path $storageTarget 'history') -RetentionDays 1 -StorageConfigured $true
+    $oldFile=Join-Path $rec.Directory '2020-01-01.v2.jsonl';[IO.File]::WriteAllText($oldFile,'old`n')
+    $rec.CleanupPaused=$true;$paused=Remove-ExpiredServerPulseHistory -Recorder $rec -Now ([datetime]'2026-08-14')
+    Assert-Equal $paused.Reason 'paused' '不清理选项暂停自动删除'
+    $rec.CleanupPaused=$false;$cleaned=Remove-ExpiredServerPulseHistory -Recorder $rec -Now ([datetime]'2026-08-14')
+    Assert-Equal $cleaned.Removed 2 '恢复自动清理后删除过期 JSONL'
+} finally {
+    if(Test-Path -LiteralPath $storageRoot){Remove-Item -LiteralPath $storageRoot -Recurse -Force -ErrorAction SilentlyContinue}
+    $envTest=Join-Path $env:TEMP 'ServerPulse-storage-env-test';if(Test-Path -LiteralPath $envTest){Remove-Item -LiteralPath $envTest -Recurse -Force -ErrorAction SilentlyContinue}
 }
 
 Write-Output "PASS: $passed assertions"

@@ -42,6 +42,7 @@ ServerPulse.exe
 | `src/ServerPulse.Ssh.ps1` | SSH 目标解析、凭据键、主机指纹和 ASKPASS 通道 |
 | `src/ServerPulse.ServerManager.ps1` | 服务器发现、认证验证、密码和管理窗口 |
 | `src/ServerPulse.History.ps1` | 分钟聚合、JSON/JSONL 混读、历史曲线和用户曲线 |
+| `src/ServerPulse.Storage.ps1` | 数据根目录指针、保留策略、路径校验、清理决策和迁移事务 |
 | `src/ServerPulse.Theme.ps1` | 亮/暗/系统主题和可复用画刷缓存 |
 | `src/ServerPulse.Localization.ps1` | 中文、英文和系统语言资源 |
 | `src/ServerPulse.Host.cs` | 原生 EXE 宿主、AppUserModelID、Job Object |
@@ -88,9 +89,32 @@ Gpu.UserMemory = {
 
 状态为 `ok`、`partial` 或 `unavailable`。协议缺少用户段时按旧版数据处理，用户归属标记为不可用而不是空占用。
 
-## 5. 历史存储与查询
+## 5. 历史存储、数据根目录与查询
 
-新格式为 `%LOCALAPPDATA%\ServerPulse\history\yyyy-MM-dd.v2.jsonl`，一行一个版本 2 的分钟记录，采用追加写入。读取器同时兼容旧版 `yyyy-MM-dd.json`，同一天允许新旧格式混合。
+默认数据根目录为 `%LOCALAPPDATA%\ServerPulse\`，目录结构固定为：
+
+```text
+settings.json
+servers.json
+error.log
+history\yyyy-MM-dd.v2.jsonl
+history\yyyy-MM-dd.json
+```
+
+默认首次配置为 7 个自然日。记录页没有独立的查询最大跨度；查询早于保留截止日期时返回空结果。设置对象新增：
+
+```text
+HistoryRetentionDays       # 1–3650；永不清理时保留最后一次有效值
+HistoryNeverCleanup        # true 时跳过自动删除
+HistoryLastRetentionDays   # 取消永不清理时恢复
+HistoryStorageConfigured   # 首次配置确认后为 true
+CleanupPaused              # “不清理”动作留下的暂停状态
+CleanupOnStartup           # “下次启动清理”一次性标记
+```
+
+`%LOCALAPPDATA%\ServerPulse.location.json` 是数据根目录之外的原子指针文件，只保存首选/活动路径和待同步状态，不保存密码、历史或用户指标。启动时先测试默认目录，再测试首选目录；首选目录删除、断盘或无权限时只回退到默认目录并标记 `PendingSync`，不会静默选择其他路径。
+
+新格式为 `history\yyyy-MM-dd.v2.jsonl`，一行一个版本 2 的分钟记录，采用追加写入。读取器同时兼容旧版 `yyyy-MM-dd.json`，同一天允许新旧格式混合。
 
 分钟聚合规则：
 
@@ -99,9 +123,22 @@ Gpu.UserMemory = {
 - 同一分钟因重启产生多行时按有效样本数加权合并。
 - 旧版记录没有用户字段时，用户曲线断线，不补零。
 - 文件末尾的损坏/不完整 JSONL 行被忽略，并累计 `ReadErrors`，此前记录仍可查询。
-- 保留期由 `historyRetentionDays` 控制，默认 30 天；清理同时处理 `.json` 和 `.jsonl`。
+- `settings.json` 中保留策略损坏时启动阶段回到未配置状态，由记录页重新确认，不能阻断主窗口。
+- 清理由 `1–3650` 个自然日控制，同时处理 `.json` 和 `.v2.jsonl`。保留缩短时由用户选择立即清理、下次启动清理或暂停自动清理；“下次启动清理”消费一次后立即持久化清除，“永不清理”跳过所有删除。
 
 记录只保存分钟聚合资源、UID 和用户名，不保存进程详情。历史 UI 以 `serverId + gpuIndex` 复用图表锚点，避免刷新时固定弹窗失联；曲线断点必须真实反映缺失分钟。
+
+### 5.1 迁移事务
+
+路径变更先刷新当前分钟、暂停新的历史写入并生成源/目标/文件数/估算大小摘要。目标冲突策略为 `Overwrite`、`Merge`、`Cancel`，默认取消：
+
+- `settings.json`、`servers.json` 以当前源为权威，覆盖前先备份目标；
+- `error.log` 在合并模式追加；
+- JSON/JSONL 历史去除完全相同记录，内容冲突的同一分钟记录保留；
+- 成功后源目录重命名为带时间戳的备份，再原子更新 location 指针；
+- 任意步骤失败时源目录保持可用，目标冲突备份用于回滚。
+
+Windows 凭据管理器属于操作系统安全存储，不在迁移范围内；规范化凭据键保持不变。迁移完成后重新绑定记录器、服务器列表和 ASKPASS 辅助目录，并按原查询范围重绘曲线。
 
 ## 6. SSH、凭据与主机密钥
 
@@ -137,7 +174,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-ServerPu
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ServerPulse.Tests.ps1
 ```
 
-测试覆盖：旧/新采集协议、CPU jiffies 差分、PID 复用、RSS 重复、逐卡显存映射、历史混读和加权、损坏末行、认证状态、凭据键、主题/语言、WPF 事件生命周期、图表固定、贴边和内存缓存。
+测试覆盖：旧/新采集协议、CPU jiffies 差分、PID 复用、RSS 重复、逐卡显存映射、历史混读和加权、损坏末行、认证状态、凭据键、主题/语言、WPF 事件生命周期、图表固定、贴边和内存缓存，以及保留天数边界、永不清理/暂停、自然日截止、location 指针、环境变量路径、数据根目录迁移、源目录备份和 JSONL 清理。
 
 ### 冒烟测试
 

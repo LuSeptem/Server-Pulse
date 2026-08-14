@@ -176,9 +176,13 @@ $names = 'WindowSurface','DragArea','FleetDot','FleetState','LanguageButton','La
 $ui = @{}
 foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 
-$settingsDirectory = if($SmokeTest){Join-Path $scriptRoot 'tests\artifacts\localappdata-smoke\ServerPulse'}else{Join-Path $env:LOCALAPPDATA 'ServerPulse'}
+. (Join-Path $scriptRoot 'src\ServerPulse.Storage.ps1')
+$defaultDataRoot = Get-ServerPulseDefaultDataRoot -LocalAppDataPath $env:LOCALAPPDATA -SmokeTest:$SmokeTest -SmokeRoot (Join-Path $scriptRoot 'tests\artifacts\localappdata-smoke\ServerPulse')
+$locationPointerPath = Get-ServerPulseLocationPointerPath -LocalAppDataPath $env:LOCALAPPDATA -SmokeTest:$SmokeTest -SmokeRoot $defaultDataRoot
+$dataRootResolution = Resolve-ServerPulseDataRoot -DefaultRoot $defaultDataRoot -PointerPath $locationPointerPath -CreateDefault
+$settingsDirectory = $dataRootResolution.ActiveRoot
 $settingsPath = Join-Path $settingsDirectory 'settings.json'
-$settings = [PSCustomObject]@{ Version = 4; ThemeMode = 'dark'; LanguageMode = 'zh'; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null }
+$settings = [PSCustomObject]@{ Version = 5; ThemeMode = 'dark'; LanguageMode = 'zh'; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null; HistoryRetentionDays = 7; HistoryNeverCleanup = $false; HistoryLastRetentionDays = 7; HistoryStorageConfigured = $false; CleanupPaused = $false; CleanupOnStartup = $false }
 if (Test-Path -LiteralPath $settingsPath) {
     try {
         $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -299,8 +303,31 @@ $savedInterval = ConvertTo-RefreshIntervalSeconds $settings.RefreshIntervalSecon
 $script:refreshIntervalSeconds = if ($null -ne $savedInterval) { $savedInterval } elseif ($null -ne $configuredInterval) { $configuredInterval } else { 5 }
 $ui.RefreshIntervalBox.Text = [string]$script:refreshIntervalSeconds
 $historyDirectory = Join-Path $settingsDirectory 'history'
-$script:historyRecorder = New-ServerPulseHistoryRecorder -Directory $historyDirectory -RetentionDays $config.HistoryRetentionDays
-if (-not $SmokeTest) { try { Remove-ExpiredServerPulseHistory $script:historyRecorder } catch { } }
+$historyConfigured = [bool]$settings.HistoryStorageConfigured
+$historyRetentionValue = if($historyConfigured){$settings.HistoryRetentionDays}else{7}
+$historyNeverValue = [bool]$settings.HistoryNeverCleanup
+$historyLastRetention = if($settings.HistoryLastRetentionDays){[int]$settings.HistoryLastRetentionDays}else{7}
+$historyPolicy = ConvertTo-ServerPulseRetentionSettings -Days $historyRetentionValue -NeverCleanup:$historyNeverValue -LastRetentionDays $historyLastRetention -Configured:$historyConfigured -CleanupPaused:([bool]$settings.CleanupPaused)
+if(-not $historyPolicy.IsValid){
+    $historyConfigured=$false;$historyRetentionValue=7;$historyNeverValue=$false;$historyLastRetention=7
+    $settings.HistoryRetentionDays=7;$settings.HistoryNeverCleanup=$false;$settings.HistoryLastRetentionDays=7;$settings.CleanupPaused=$false;$historyPolicy=ConvertTo-ServerPulseRetentionSettings -Days 7 -LastRetentionDays 7 -Configured:$false
+}
+$historyRetention = [int]$historyPolicy.RetentionDays
+$script:historyRecorder = New-ServerPulseHistoryRecorder -Directory $historyDirectory -RetentionDays $historyRetention -NeverCleanup ([bool]$settings.HistoryNeverCleanup) -CleanupPaused ([bool]$settings.CleanupPaused) -LastRetentionDays $historyLastRetention -StorageConfigured:$historyConfigured
+$cleanupOnStartupConsumed = $false
+if (-not $SmokeTest -and $historyConfigured) {
+    try {
+        if([bool]$settings.CleanupOnStartup){$settings.CleanupOnStartup=$false;$cleanupOnStartupConsumed=$true}
+        if(-not [bool]$settings.CleanupPaused -and -not [bool]$settings.HistoryNeverCleanup){[void](Remove-ExpiredServerPulseHistory $script:historyRecorder)}
+    } catch { }
+}
+if($cleanupOnStartupConsumed){try{Write-ServerPulseJsonAtomic -Path $settingsPath -Value $settings -Depth 8}catch{} }
+$script:historyStorageContext = [PSCustomObject]@{
+    DefaultRoot=$defaultDataRoot;ActiveRoot=$settingsDirectory;PreferredRoot=if($dataRootResolution.PreferredRoot){$dataRootResolution.PreferredRoot}else{$settingsDirectory};PointerPath=$locationPointerPath;IsFallback=[bool]$dataRootResolution.IsFallback;PendingSync=[bool]$dataRootResolution.IsFallback;PrivacyWarned=$false;HistoryWritePaused=$false;Recorder=$script:historyRecorder;Settings=$settings
+    SaveSettings={param($settingsObject,$root);if($null -ne $settingsObject){$script:settings=$settingsObject};if($root){$script:settingsDirectory=$root;$script:settingsPath=Join-Path $root 'settings.json'};Save-Settings}.GetNewClosure()
+    ApplyRoot={param($root,$settingsObject);$script:settingsDirectory=$root;$script:settingsPath=Join-Path $root 'settings.json';$script:serverStorePath=Join-Path $root 'servers.json';$script:historyRecorder.Directory=Join-Path $root 'history';$script:askPassPath=Ensure-ServerPulseAskPassHelper (Join-Path $root 'bin');$script:historyStorageContext.ActiveRoot=$root;$script:historyStorageContext.PreferredRoot=$root;$script:historyStorageContext.IsFallback=$false;$script:historyStorageContext.PendingSync=$false}.GetNewClosure()
+    OnRequery={}.GetNewClosure()
+}
 $script:cards = @{}
 $script:collectionProcess = $null
 $script:lastSnapshot = $null
@@ -1159,11 +1186,18 @@ function Save-Settings {
     if (-not (Test-Path -LiteralPath $settingsDirectory)) { [void](New-Item -ItemType Directory -Path $settingsDirectory) }
     $left = if ($script:hiddenAtEdge) { $script:shownLeft } else { $window.Left }
     $top = if ($script:hiddenAtEdge) { $script:shownTop } else { $window.Top }
-    [PSCustomObject]@{
-        Version=4; ThemeMode=$script:themeMode; LanguageMode=$script:languageMode; Opacity=[Math]::Round($script:backgroundOpacity,2); AutoHide=($ui.EdgeButton.Tag -eq 'active'); Topmost=$window.Topmost
-        RefreshIntervalSeconds=$script:refreshIntervalSeconds
-        Width=$window.Width; Height=$window.Height; Left=$left; Top=$top
-    } | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+    $settings.Version=5; $settings.ThemeMode=$script:themeMode; $settings.LanguageMode=$script:languageMode; $settings.Opacity=[Math]::Round($script:backgroundOpacity,2); $settings.AutoHide=($ui.EdgeButton.Tag -eq 'active'); $settings.Topmost=$window.Topmost
+    $settings.RefreshIntervalSeconds=$script:refreshIntervalSeconds; $settings.Width=$window.Width; $settings.Height=$window.Height; $settings.Left=$left; $settings.Top=$top
+    if ($settings.PSObject.Properties.Name -notcontains 'HistoryRetentionDays') { $settings | Add-Member -NotePropertyName HistoryRetentionDays -NotePropertyValue 7 }
+    if ($settings.PSObject.Properties.Name -notcontains 'HistoryLastRetentionDays') { $settings | Add-Member -NotePropertyName HistoryLastRetentionDays -NotePropertyValue 7 }
+    if ($settings.PSObject.Properties.Name -notcontains 'HistoryNeverCleanup') { $settings | Add-Member -NotePropertyName HistoryNeverCleanup -NotePropertyValue $false }
+    if ($settings.PSObject.Properties.Name -notcontains 'HistoryStorageConfigured') { $settings | Add-Member -NotePropertyName HistoryStorageConfigured -NotePropertyValue $false }
+    if ($settings.PSObject.Properties.Name -notcontains 'CleanupPaused') { $settings | Add-Member -NotePropertyName CleanupPaused -NotePropertyValue $false }
+    if ($settings.PSObject.Properties.Name -notcontains 'CleanupOnStartup') { $settings | Add-Member -NotePropertyName CleanupOnStartup -NotePropertyValue $false }
+    Write-ServerPulseJsonAtomic -Path $settingsPath -Value $settings -Depth 8
+    if ((Get-Variable -Name historyStorageContext -Scope Script -ErrorAction SilentlyContinue) -and $null -ne $script:historyStorageContext -and [bool]$script:historyStorageContext.IsFallback) {
+        try { Write-ServerPulseLocationPointer -Path $locationPointerPath -Pointer (New-ServerPulseLocationPointer -PreferredDataRootPath ([string]$script:historyStorageContext.PreferredRoot) -PendingSync $true -ActiveDataRootPath $settingsDirectory -LastError (Get-ServerPulseText 'history.settingsFallback')) } catch { }
+    }
 }
 
 function Set-RefreshInterval {
@@ -1584,7 +1618,8 @@ $pollTimer.Add_Tick({
             try {
                 $snapshot = $stdout | ConvertFrom-Json
                 if($snapshot.PSObject.Properties.Name -contains 'WorkerError' -and $snapshot.WorkerError){throw [string]$snapshot.WorkerError}
-                 try { Add-ServerPulseHistorySnapshot -Recorder $script:historyRecorder -Snapshot $snapshot } catch { $ui.HistoryButton.ToolTip = Get-ServerPulseText 'main.historyWriteError' @($_.Exception.Message) }
+                 $historyWritePaused=($null -ne $script:historyStorageContext -and [bool]$script:historyStorageContext.HistoryWritePaused)
+                 if(-not $historyWritePaused){try { Add-ServerPulseHistorySnapshot -Recorder $script:historyRecorder -Snapshot $snapshot } catch { $ui.HistoryButton.ToolTip = Get-ServerPulseText 'main.historyWriteError' @($_.Exception.Message) }}
                  $script:lastSnapshot = $snapshot
                  $servers = @($snapshot.Servers)
                 $shouldPromptAuth=$false
@@ -1673,7 +1708,7 @@ $ui.RefreshIntervalBox.Add_PreviewKeyDown({
 })
 $ui.RefreshIntervalBox.Add_LostKeyboardFocus({ [void](Set-RefreshInterval $ui.RefreshIntervalBox.Text -Persist) })
 $ui.HistoryButton.Add_Click({
-    try { Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder }
+    try { Show-ServerPulseHistoryWindow -Owner $window -Recorder $script:historyRecorder -StorageContext $script:historyStorageContext }
     catch {
         $historyException=$_.Exception
         $logPath=$null

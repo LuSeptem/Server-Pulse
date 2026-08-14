@@ -176,16 +176,45 @@ function ConvertTo-HistoryMinuteRecord {
 function New-ServerPulseHistoryRecorder {
     param(
         [Parameter(Mandatory)][string]$Directory,
-        [int]$RetentionDays = 30
+        [int]$RetentionDays = 7,
+        [bool]$NeverCleanup = $false,
+        [bool]$CleanupPaused = $false,
+        [int]$LastRetentionDays = 7,
+        [bool]$StorageConfigured = $true
     )
 
+    $retention = ConvertTo-ServerPulseRetentionSettings -Days $RetentionDays -NeverCleanup:$NeverCleanup -LastRetentionDays $LastRetentionDays -Configured:$StorageConfigured -CleanupPaused:$CleanupPaused
+    if (-not $retention.IsValid) { throw $retention.Error }
     return [PSCustomObject]@{
         Directory     = $Directory
-        RetentionDays = [Math]::Max(1, $RetentionDays)
+        RetentionDays = [int]$retention.RetentionDays
+        NeverCleanup  = [bool]$retention.NeverCleanup
+        CleanupPaused = [bool]$retention.CleanupPaused
+        LastRetentionDays = [int]$retention.LastRetentionDays
+        StorageConfigured = [bool]$retention.Configured
         Minute        = $null
         Snapshots     = [Collections.Generic.List[object]]::new()
         ReadErrors    = [Collections.Generic.List[string]]::new()
     }
+}
+
+function Set-ServerPulseHistoryRetention {
+    param(
+        [Parameter(Mandatory)]$Recorder,
+        [AllowNull()]$Days,
+        [bool]$NeverCleanup = $false,
+        [bool]$CleanupPaused = $false,
+        [bool]$StorageConfigured = $true
+    )
+
+    $settings = ConvertTo-ServerPulseRetentionSettings -Days $Days -NeverCleanup:$NeverCleanup -LastRetentionDays $Recorder.LastRetentionDays -Configured:$StorageConfigured -CleanupPaused:$CleanupPaused
+    if (-not $settings.IsValid) { throw $settings.Error }
+    $Recorder.RetentionDays = [int]$settings.RetentionDays
+    $Recorder.LastRetentionDays = [int]$settings.LastRetentionDays
+    $Recorder.NeverCleanup = [bool]$settings.NeverCleanup
+    $Recorder.CleanupPaused = [bool]$settings.CleanupPaused
+    $Recorder.StorageConfigured = [bool]$settings.Configured
+    return $settings
 }
 
 function Write-HistoryReadError {
@@ -319,15 +348,19 @@ function Get-CurrentHistoryMinuteRecord {
 function Remove-ExpiredServerPulseHistory {
     param([Parameter(Mandatory)]$Recorder, [datetime]$Now = [DateTime]::Now)
 
-    if (-not (Test-Path -LiteralPath $Recorder.Directory)) { return }
-    $cutoff = $Now.Date.AddDays(-$Recorder.RetentionDays + 1)
+    if ($Recorder.PSObject.Properties.Name -contains 'NeverCleanup' -and [bool]$Recorder.NeverCleanup) { return [PSCustomObject]@{Skipped=$true;Reason='never';Removed=0;Cutoff=$null} }
+    if ($Recorder.PSObject.Properties.Name -contains 'CleanupPaused' -and [bool]$Recorder.CleanupPaused) { return [PSCustomObject]@{Skipped=$true;Reason='paused';Removed=0;Cutoff=$null} }
+    if (-not (Test-Path -LiteralPath $Recorder.Directory)) { return [PSCustomObject]@{Skipped=$true;Reason='missing';Removed=0;Cutoff=$null} }
+    $cutoff = Get-ServerPulseRetentionCutoffDate -Now $Now -RetentionDays ([int]$Recorder.RetentionDays)
+    $removed=0
     foreach ($file in (Get-ChildItem -LiteralPath $Recorder.Directory -File | Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}(?:\.v2\.jsonl|\.json)$' })) {
         $date = [datetime]::MinValue
         $dateText=$file.Name.Substring(0,10)
         if ([datetime]::TryParseExact($dateText, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$date) -and $date -lt $cutoff) {
-            Remove-Item -LiteralPath $file.FullName -Force
+            Remove-Item -LiteralPath $file.FullName -Force; $removed++
         }
     }
+    return [PSCustomObject]@{Skipped=$false;Reason='applied';Removed=$removed;Cutoff=$cutoff}
 }
 
 function ConvertFrom-HistoryMinuteText {
@@ -577,7 +610,8 @@ function Update-HistoryWindowLanguage {
     $Window.Title = Get-ServerPulseText 'history.title'
     $translations = @{
         '占用记录'=(Get-ServerPulseText 'history.title'); '开始'=(Get-ServerPulseText 'history.start'); '结束'=(Get-ServerPulseText 'history.end'); '年'=(Get-ServerPulseText 'history.year'); '月'=(Get-ServerPulseText 'history.month'); '日'=(Get-ServerPulseText 'history.day'); '时'=(Get-ServerPulseText 'history.hour'); '分'=(Get-ServerPulseText 'history.minute'); '查询'=(Get-ServerPulseText 'history.query'); '最近 1 小时'=(Get-ServerPulseText 'history.recentHour'); '默认显示最近一小时 · 分钟平均值'=(Get-ServerPulseText 'history.footer');
-        'Start'=(Get-ServerPulseText 'history.start'); 'End'=(Get-ServerPulseText 'history.end'); 'Query'=(Get-ServerPulseText 'history.query'); 'Last 1 hour'=(Get-ServerPulseText 'history.recentHour'); 'Last hour by default · minute averages'=(Get-ServerPulseText 'history.footer'); 'Y'=(Get-ServerPulseText 'history.year'); 'M'=(Get-ServerPulseText 'history.month'); 'D'=(Get-ServerPulseText 'history.day'); 'h'=(Get-ServerPulseText 'history.hour'); 'min'=(Get-ServerPulseText 'history.minute')
+        'Start'=(Get-ServerPulseText 'history.start'); 'End'=(Get-ServerPulseText 'history.end'); 'Query'=(Get-ServerPulseText 'history.query'); 'Last 1 hour'=(Get-ServerPulseText 'history.recentHour'); 'Last hour by default · minute averages'=(Get-ServerPulseText 'history.footer'); 'Y'=(Get-ServerPulseText 'history.year'); 'M'=(Get-ServerPulseText 'history.month'); 'D'=(Get-ServerPulseText 'history.day'); 'h'=(Get-ServerPulseText 'history.hour'); 'min'=(Get-ServerPulseText 'history.minute');
+        '记录设置'=(Get-ServerPulseText 'history.settings'); 'History settings'=(Get-ServerPulseText 'history.settings'); '设置'=(Get-ServerPulseText 'history.settingsExpand'); 'Settings'=(Get-ServerPulseText 'history.settingsExpand'); '保留时长'=(Get-ServerPulseText 'history.retention'); 'Retention'=(Get-ServerPulseText 'history.retention'); '天'=(Get-ServerPulseText 'history.retentionUnit'); 'days'=(Get-ServerPulseText 'history.retentionUnit'); '永不清理'=(Get-ServerPulseText 'history.neverCleanup'); 'Never clean up'=(Get-ServerPulseText 'history.neverCleanup'); '数据目录'=(Get-ServerPulseText 'history.dataRoot'); 'Data directory'=(Get-ServerPulseText 'history.dataRoot'); '浏览'=(Get-ServerPulseText 'history.browse'); 'Browse'=(Get-ServerPulseText 'history.browse'); '保存并应用'=(Get-ServerPulseText 'history.settingsApply'); 'Save and apply'=(Get-ServerPulseText 'history.settingsApply')
     }
     $pending = [Collections.Stack]::new(); $pending.Push($Window)
     while ($pending.Count -gt 0) {
@@ -586,6 +620,16 @@ function Update-HistoryWindowLanguage {
         if ($node -is [Windows.Controls.Button] -and $node.Content -is [string] -and $translations.ContainsKey([string]$node.Content)) { $node.Content = $translations[[string]$node.Content] }
         if ($node -is [Windows.DependencyObject]) { foreach ($child in [Windows.LogicalTreeHelper]::GetChildren($node)) { if ($child -is [Windows.DependencyObject]) { $pending.Push($child) } } }
     }
+    $uiByName=@{}
+    foreach($name in @('HistorySettingsTitle','HistoryRetentionLabel','HistoryRetentionUnit','HistoryRetentionTip','HistoryDataRootLabel','HistorySettingsApplyButton','HistoryBrowseButton','HistoryNeverCleanupBox')){$uiByName[$name]=$Window.FindName($name)}
+    if($null -ne $uiByName.HistorySettingsTitle){$uiByName.HistorySettingsTitle.Text=Get-ServerPulseText 'history.settings'}
+    if($null -ne $uiByName.HistoryRetentionLabel){$uiByName.HistoryRetentionLabel.Text=Get-ServerPulseText 'history.retention'}
+    if($null -ne $uiByName.HistoryRetentionUnit){$uiByName.HistoryRetentionUnit.Text=Get-ServerPulseText 'history.retentionUnit'}
+    if($null -ne $uiByName.HistoryRetentionTip){$uiByName.HistoryRetentionTip.Text=Get-ServerPulseText 'history.retentionTip'}
+    if($null -ne $uiByName.HistoryDataRootLabel){$uiByName.HistoryDataRootLabel.Text=Get-ServerPulseText 'history.dataRoot'}
+    if($null -ne $uiByName.HistorySettingsApplyButton){$uiByName.HistorySettingsApplyButton.Content=Get-ServerPulseText 'history.settingsApply'}
+    if($null -ne $uiByName.HistoryBrowseButton){$uiByName.HistoryBrowseButton.Content=Get-ServerPulseText 'history.browse'}
+    if($null -ne $uiByName.HistoryNeverCleanupBox){$uiByName.HistoryNeverCleanupBox.Content=Get-ServerPulseText 'history.neverCleanup'}
     if ($null -ne $Window.Tag -and $Window.Tag.PSObject.Properties.Name -contains 'Renderer') { try { [void](& $Window.Tag.Renderer -State $Window.Tag) } catch { } }
 }
 
@@ -1011,7 +1055,17 @@ function Invoke-ServerPulseHistoryRender {
         $records = @(Get-ServerPulseHistoryRecords -Recorder $State.Recorder -Start $rangeStart -End $rangeEnd)
         $historyUi.HistoryPanel.Children.Clear()
         if ($records.Count -eq 0) {
-            $empty = New-HistoryText (Get-ServerPulseText 'history.noRecords') 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
+            $emptyKey='history.noRecords'
+            try {
+                $retentionConfigured=if($State.Recorder.PSObject.Properties.Name -contains 'StorageConfigured'){[bool]$State.Recorder.StorageConfigured}else{$true}
+                $neverCleanup=if($State.Recorder.PSObject.Properties.Name -contains 'NeverCleanup'){[bool]$State.Recorder.NeverCleanup}else{$false}
+                $cleanupPaused=if($State.Recorder.PSObject.Properties.Name -contains 'CleanupPaused'){[bool]$State.Recorder.CleanupPaused}else{$false}
+                if($retentionConfigured -and -not $neverCleanup -and -not $cleanupPaused){
+                    $cutoff=Get-ServerPulseRetentionCutoffDate -Now ([DateTime]::Now) -RetentionDays ([int]$State.Recorder.RetentionDays)
+                    if($rangeEnd.Date -lt $cutoff.Date){$emptyKey='history.noRecordsRetention'}
+                }
+            } catch { }
+            $empty = New-HistoryText (Get-ServerPulseText $emptyKey) 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
             [void]$historyUi.HistoryPanel.Children.Add($empty)
         } else {
             $serverIds = @($records | ForEach-Object { @($_.Servers) } | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
@@ -1036,13 +1090,215 @@ function Invoke-ServerPulseHistoryRender {
     }
 }
 
+function Format-HistoryStorageBytes {
+    param([long]$Bytes)
+    if ($Bytes -ge 1GB) { return ('{0:0.0} GB' -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ('{0:0.0} MB' -f ($Bytes / 1MB)) }
+    if ($Bytes -ge 1KB) { return ('{0:0.0} KB' -f ($Bytes / 1KB)) }
+    return ('{0} B' -f $Bytes)
+}
+
+function Get-HistoryStorageContextValue {
+    param($Context,[string]$Name,$Default=$null)
+    if ($null -ne $Context -and $Context.PSObject.Properties.Name -contains $Name -and $null -ne $Context.$Name) { return $Context.$Name }
+    return $Default
+}
+
+function Get-HistoryStorageSettingsObject {
+    param($Context)
+    $settings = Get-HistoryStorageContextValue $Context 'Settings' $null
+    if ($null -eq $settings) { $settings = [PSCustomObject]@{} }
+    $never = if ($settings.PSObject.Properties.Name -contains 'HistoryNeverCleanup') { [bool]$settings.HistoryNeverCleanup } else { $false }
+    $days = if ($settings.PSObject.Properties.Name -contains 'HistoryRetentionDays') { $settings.HistoryRetentionDays } else { 7 }
+    $last = if ($settings.PSObject.Properties.Name -contains 'HistoryLastRetentionDays') { $settings.HistoryLastRetentionDays } else { 7 }
+    $paused = if ($settings.PSObject.Properties.Name -contains 'CleanupPaused') { [bool]$settings.CleanupPaused } else { $false }
+    $configured = if ($settings.PSObject.Properties.Name -contains 'HistoryStorageConfigured') { [bool]$settings.HistoryStorageConfigured } else { $false }
+    return ConvertTo-ServerPulseRetentionSettings -Days $days -NeverCleanup:$never -LastRetentionDays $last -Configured:$configured -CleanupPaused:$paused
+}
+
+function Set-HistoryStorageTextBoxState {
+    param($Box,$Mark,[bool]$Invalid)
+    if ($Invalid) {
+        $Box.BorderBrush=New-HistoryBrush '#FF5E5E'; $Box.Background=New-HistoryBrush '#281718'; $Box.Foreground=New-HistoryBrush '#FFE2E2'; if ($null -ne $Mark) { $Mark.Visibility='Visible' }
+    } else {
+        $Box.BorderBrush=New-HistoryBrush '#39413C'; $Box.Background=New-HistoryBrush '#171C19'; $Box.Foreground=New-HistoryBrush '#D4DBD7'; if ($null -ne $Mark) { $Mark.Visibility='Collapsed' }
+    }
+}
+
+function Set-HistoryStorageInputValidation {
+    param($Ui,[switch]$CreatePath)
+    $never=[bool]$Ui.HistoryNeverCleanupBox.IsChecked
+    $days=$Ui.HistoryRetentionBox.Text
+    $retention=ConvertTo-ServerPulseRetentionSettings -Days $days -NeverCleanup:$never -LastRetentionDays 7 -Configured $true
+    Set-HistoryStorageTextBoxState -Box $Ui.HistoryRetentionBox -Mark $Ui.HistoryRetentionError -Invalid:(-not $retention.IsValid)
+    if ($never) {
+        $Ui.HistoryRetentionBox.Text='';$Ui.HistoryRetentionBox.IsEnabled=$false
+    } else { $Ui.HistoryRetentionBox.IsEnabled=$true }
+    $pathResult=Test-ServerPulseDataRootPath -Path $Ui.HistoryDataRootBox.Text -Create:$CreatePath
+    Set-HistoryStorageTextBoxState -Box $Ui.HistoryDataRootBox -Mark $Ui.HistoryDataRootError -Invalid:(-not $pathResult.IsValid)
+    $Ui.HistorySettingsStatus.Text=if(-not $retention.IsValid){$retention.Error}elseif(-not $pathResult.IsValid){Get-ServerPulseText 'history.settingsPathInvalid' @($pathResult.Reason)}else{''}
+    $Ui.HistorySettingsStatus.Foreground=if(-not $retention.IsValid -or -not $pathResult.IsValid){New-HistoryBrush '#FF8A80'}else{New-HistoryBrush '#7F8B83'}
+    return [PSCustomObject]@{Retention=$retention;Path=$pathResult;IsValid=($retention.IsValid -and $pathResult.IsValid)}
+}
+
+function Show-HistoryCleanupChoiceDialog {
+    param([Windows.Window]$Owner)
+    [xml]$xaml=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="450" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
+  <Border BorderBrush="#3A423D" BorderThickness="1" CornerRadius="9" Padding="16"><StackPanel>
+    <TextBlock x:Name="Message" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,15"/>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button x:Name="Immediate" Content="立即清理" Width="92" Height="28" Margin="0,0,7,0"/>
+      <Button x:Name="Next" Content="下次启动清理" Width="112" Height="28" Margin="0,0,7,0" IsDefault="True"/>
+      <Button x:Name="None" Content="不清理" Width="78" Height="28" IsCancel="True"/>
+    </StackPanel>
+  </StackPanel></Border>
+</Window>
+'@
+    $reader=[Xml.XmlNodeReader]::new($xaml);$dialog=[Windows.Markup.XamlReader]::Load($reader);$dialog.Owner=$Owner
+    $dialog.FindName('Message').Text=Get-ServerPulseText 'history.cleanupPrompt'
+    $dialog.FindName('Immediate').Content=Get-ServerPulseText 'history.cleanupImmediate';$dialog.FindName('Next').Content=Get-ServerPulseText 'history.cleanupNextStartup';$dialog.FindName('None').Content=Get-ServerPulseText 'history.cleanupNone'
+    $result=[PSCustomObject]@{Value='none'}
+    foreach($pair in @(@('Immediate','immediate'),@('Next','nextStartup'),@('None','none'))){$button=$dialog.FindName($pair[0]);$value=$pair[1];$button.Add_Click({param($sender,$event);$result.Value=$value;$dialog.Close()}.GetNewClosure())}
+    Update-ServerPulseThemeVisualTree $dialog;[void]$dialog.FindName('Next').Focus()
+    [void]$dialog.ShowDialog();return $result.Value
+}
+
+function Show-HistoryMigrationConflictDialog {
+    param([Windows.Window]$Owner)
+    [xml]$xaml=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="470" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
+  <Border BorderBrush="#3A423D" BorderThickness="1" CornerRadius="9" Padding="16"><StackPanel>
+    <TextBlock x:Name="Message" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,15"/>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="Overwrite" Width="78" Height="28" Margin="0,0,7,0"/><Button x:Name="Merge" Width="92" Height="28" Margin="0,0,7,0"/><Button x:Name="Cancel" Width="92" Height="28" IsDefault="True" IsCancel="True"/></StackPanel>
+  </StackPanel></Border>
+</Window>
+'@
+    $reader=[Xml.XmlNodeReader]::new($xaml);$dialog=[Windows.Markup.XamlReader]::Load($reader);$dialog.Owner=$Owner;$dialog.FindName('Message').Text=Get-ServerPulseText 'history.migrationConflict'
+    $dialog.FindName('Overwrite').Content=Get-ServerPulseText 'history.migrationOverwrite';$dialog.FindName('Merge').Content=Get-ServerPulseText 'history.migrationMerge';$dialog.FindName('Cancel').Content=Get-ServerPulseText 'history.migrationCancel'
+    $result=[PSCustomObject]@{Value='Cancel'}
+    foreach($pair in @(@('Overwrite','Overwrite'),@('Merge','Merge'),@('Cancel','Cancel'))){$button=$dialog.FindName($pair[0]);$value=$pair[1];$button.Add_Click({param($sender,$event);$result.Value=$value;$dialog.Close()}.GetNewClosure())}
+    Update-ServerPulseThemeVisualTree $dialog;[void]$dialog.FindName('Cancel').Focus();[void]$dialog.ShowDialog();return $result.Value
+}
+
+function Invoke-HistoryStorageContextApply {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$TargetRoot,
+        [Parameter(Mandatory)]$Retention,
+        [string]$CleanupAction='none',
+        [Windows.Window]$Owner
+    )
+    $currentRoot=[string](Get-HistoryStorageContextValue $Context 'ActiveRoot' (Split-Path -Parent (Get-HistoryStorageContextValue $Context 'Recorder').Directory))
+    $wasFallback=[bool](Get-HistoryStorageContextValue $Context 'IsFallback' $false)
+    $preferredBefore=[string](Get-HistoryStorageContextValue $Context 'PreferredRoot' $currentRoot)
+    $targetResult=Test-ServerPulseDataRootPath -Path $TargetRoot -Create
+    if(-not$targetResult.IsValid){throw $targetResult.Reason};$target=$targetResult.Path
+    $defaultRoot=[string](Get-HistoryStorageContextValue $Context 'DefaultRoot' '')
+    $privacyWarned=[bool](Get-HistoryStorageContextValue $Context 'PrivacyWarned' $false)
+    if($null -ne $Owner -and -not [string]::IsNullOrWhiteSpace($defaultRoot) -and -not [string]::Equals($defaultRoot,$target,[StringComparison]::OrdinalIgnoreCase) -and -not $privacyWarned){
+        if([Windows.MessageBox]::Show($Owner,(Get-ServerPulseText 'history.settingsPrivacy'),'Server Pulse','YesNo','Warning') -ne 'Yes'){return [PSCustomObject]@{Applied=$false;Cancelled=$true;Migration=$null}}
+        if($Context.PSObject.Properties.Name -contains 'PrivacyWarned'){$Context.PrivacyWarned=$true}else{$Context|Add-Member -NotePropertyName PrivacyWarned -NotePropertyValue $true}
+    }
+    $migration=$null
+    if(-not [string]::Equals($currentRoot,$target,[StringComparison]::OrdinalIgnoreCase)){
+        if($Context.PSObject.Properties.Name -contains 'HistoryWritePaused'){$Context.HistoryWritePaused=$true}
+        try {
+            $currentRecorder=Get-HistoryStorageContextValue $Context 'Recorder' $null
+            if($null -ne $currentRecorder){[void](Flush-ServerPulseHistoryRecorder $currentRecorder)}
+            if($null -ne $Owner){
+                $summary=Get-ServerPulseDataRootInventory -Root $currentRoot
+                $question=Get-ServerPulseText 'history.migrationSummary' @($currentRoot,$target,$summary.Count,(Format-HistoryStorageBytes $summary.Bytes))
+                if([Windows.MessageBox]::Show($Owner,$question,(Get-ServerPulseText 'history.migrationTitle'),'YesNo','Warning') -ne 'Yes'){return [PSCustomObject]@{Applied=$false;Cancelled=$true;Migration=$null}}
+            }
+            $probe=Invoke-ServerPulseDataRootMigration -SourceRoot $currentRoot -TargetRoot $target -ConflictMode Cancel
+            if($probe.Status -eq 'Cancelled'){
+                if($null -eq $Owner){return [PSCustomObject]@{Applied=$false;Cancelled=$true;Migration=$probe}}
+                $mode=Show-HistoryMigrationConflictDialog -Owner $Owner
+                if($mode -eq 'Cancel'){return [PSCustomObject]@{Applied=$false;Cancelled=$true;Migration=$probe}}
+                $migration=Invoke-ServerPulseDataRootMigration -SourceRoot $currentRoot -TargetRoot $target -ConflictMode $mode
+            }else{$migration=$probe}
+        } finally {if($Context.PSObject.Properties.Name -contains 'HistoryWritePaused'){$Context.HistoryWritePaused=$false}}
+    }
+    $keepFallback=$wasFallback -and [string]::Equals($currentRoot,$target,[StringComparison]::OrdinalIgnoreCase)
+    if($keepFallback){$Context.ActiveRoot=$target;$Context.PreferredRoot=$preferredBefore;$Context.IsFallback=$true;$Context.PendingSync=$true}
+    else{$Context.ActiveRoot=$target;$Context.PreferredRoot=$target;$Context.IsFallback=$false;$Context.PendingSync=$false}
+    $rec=Get-HistoryStorageContextValue $Context 'Recorder' $null
+    if($null -ne $rec){$rec.Directory=Join-Path $target 'history';[void](Set-ServerPulseHistoryRetention -Recorder $rec -Days $Retention.RetentionDays -NeverCleanup:$Retention.NeverCleanup -CleanupPaused:[bool]$Retention.CleanupPaused -StorageConfigured:$true)}
+    $settings=Get-HistoryStorageContextValue $Context 'Settings' $null
+    if($null -ne $settings){
+        $settings.HistoryRetentionDays=[int]$Retention.RetentionDays;$settings.HistoryLastRetentionDays=[int]$Retention.LastRetentionDays;$settings.HistoryNeverCleanup=[bool]$Retention.NeverCleanup;$settings.HistoryStorageConfigured=$true
+        if($CleanupAction -eq 'immediate'){$settings.CleanupPaused=$false;$settings.CleanupOnStartup=$false}
+        elseif($CleanupAction -eq 'nextStartup'){$settings.CleanupPaused=$false;$settings.CleanupOnStartup=$true}
+        elseif($Retention.NeverCleanup){$settings.CleanupPaused=$false;$settings.CleanupOnStartup=$false}
+        else{$settings.CleanupPaused=[bool]$Retention.CleanupPaused}
+    }
+    $pointerPath=Get-HistoryStorageContextValue $Context 'PointerPath' $null
+    if($pointerPath){$pointerPreferred=if($keepFallback){$preferredBefore}else{$target};Write-ServerPulseLocationPointer -Path $pointerPath -Pointer (New-ServerPulseLocationPointer -PreferredDataRootPath $pointerPreferred -PendingSync:$keepFallback -ActiveDataRootPath $target)}
+    $save=Get-HistoryStorageContextValue $Context 'SaveSettings' $null;if($null -ne $save){& $save $settings $target}
+    $apply=Get-HistoryStorageContextValue $Context 'ApplyRoot' $null;if($null -ne $apply){& $apply $target $settings}
+    if($keepFallback){$Context.ActiveRoot=$target;$Context.PreferredRoot=$preferredBefore;$Context.IsFallback=$true;$Context.PendingSync=$true}
+    $requery=Get-HistoryStorageContextValue $Context 'OnRequery' $null;if($null -ne $requery){& $requery}
+    if($CleanupAction -eq 'immediate' -and $null -ne $rec){[void](Remove-ExpiredServerPulseHistory $rec)}
+    return [PSCustomObject]@{Applied=$true;Cancelled=$false;Migration=$migration;Root=$target;Settings=$settings}
+}
+
+function Show-ServerPulseHistorySetupDialog {
+    param([Parameter(Mandatory)]$Owner,[Parameter(Mandatory)]$Context,[switch]$SmokeTest)
+    if($SmokeTest){return [PSCustomObject]@{Saved=$true;Cancelled=$false;RetentionDays=7;NeverCleanup=$false;Root=[string](Get-HistoryStorageContextValue $Context 'ActiveRoot') }}
+    [xml]$xaml=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="540" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
+  <Border BorderBrush="#3A423D" BorderThickness="1" CornerRadius="10" Padding="18"><StackPanel>
+    <TextBlock x:Name="Title" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/><TextBlock x:Name="Message" TextWrapping="Wrap" FontSize="10" Foreground="#AEB9B1" Margin="0,0,0,16"/>
+    <StackPanel Orientation="Horizontal" Margin="0,0,0,10"><TextBlock x:Name="RetentionLabel" Width="90" VerticalAlignment="Center"/><TextBox x:Name="Retention" Width="64" Height="27" Text="7" TextAlignment="Center" VerticalContentAlignment="Center"/><TextBlock x:Name="RetentionUnit" Margin="6,0,0,0" VerticalAlignment="Center"/><CheckBox x:Name="Never" Content="永不清理" Margin="18,0,0,0" VerticalAlignment="Center"/></StackPanel>
+    <StackPanel Orientation="Horizontal" Margin="0,0,0,4"><TextBlock x:Name="PathLabel" Width="90" VerticalAlignment="Center"/><TextBox x:Name="Path" Width="330" Height="27" VerticalContentAlignment="Center" Padding="6,0"/><Button x:Name="Browse" Content="浏览" Width="64" Height="27" Margin="8,0,0,0"/></StackPanel>
+    <TextBlock x:Name="Error" Foreground="#FF8A80" TextWrapping="Wrap" MinHeight="20" Margin="90,0,0,7"/>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="Save" Width="92" Height="29" Margin="0,0,8,0"/><Button x:Name="Cancel" Width="76" Height="29" IsCancel="True"/></StackPanel>
+  </StackPanel></Border>
+</Window>
+'@
+    $reader=[Xml.XmlNodeReader]::new($xaml);$dialog=[Windows.Markup.XamlReader]::Load($reader);$dialog.Owner=$Owner
+    $dialog.FindName('Title').Text=Get-ServerPulseText 'history.setupTitle';$dialog.FindName('Message').Text=Get-ServerPulseText 'history.setupMessage';$dialog.FindName('RetentionLabel').Text=Get-ServerPulseText 'history.retention';$dialog.FindName('RetentionUnit').Text=Get-ServerPulseText 'history.retentionUnit';$dialog.FindName('Never').Content=Get-ServerPulseText 'history.neverCleanup';$dialog.FindName('PathLabel').Text=Get-ServerPulseText 'history.dataRoot';$dialog.FindName('Browse').Content=Get-ServerPulseText 'history.browse';$dialog.FindName('Save').Content=Get-ServerPulseText 'history.setupSave';$dialog.FindName('Cancel').Content=Get-ServerPulseText 'history.setupCancel'
+    $dialog.FindName('Path').Text=[string](Get-HistoryStorageContextValue $Context 'ActiveRoot')
+    $result=[PSCustomObject]@{Saved=$false;Cancelled=$true;RetentionDays=7;NeverCleanup=$false;Root=$null}
+    $dialog.FindName('Never').Add_Checked({$dialog.FindName('Retention').Text='';$dialog.FindName('Retention').IsEnabled=$false}.GetNewClosure());$dialog.FindName('Never').Add_Unchecked({$dialog.FindName('Retention').Text='7';$dialog.FindName('Retention').IsEnabled=$true}.GetNewClosure())
+    $dialog.FindName('Browse').Add_Click({$picker=[Windows.Forms.FolderBrowserDialog]::new();$picker.SelectedPath=$dialog.FindName('Path').Text;if($picker.ShowDialog() -eq [Windows.Forms.DialogResult]::OK){$dialog.FindName('Path').Text=$picker.SelectedPath};$picker.Dispose()}.GetNewClosure())
+    $dialog.FindName('Save').Add_Click({
+        $ret=ConvertTo-ServerPulseRetentionSettings -Days $dialog.FindName('Retention').Text -NeverCleanup:([bool]$dialog.FindName('Never').IsChecked) -LastRetentionDays 7 -Configured $true
+        $path=Test-ServerPulseDataRootPath -Path $dialog.FindName('Path').Text -Create
+        if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{Get-ServerPulseText 'history.settingsPathInvalid' @($path.Reason)};return}
+        $result.Saved=$true;$result.Cancelled=$false;$result.RetentionDays=$ret.RetentionDays;$result.NeverCleanup=$ret.NeverCleanup;$result.Root=$path.Path;$dialog.Close()
+    }.GetNewClosure())
+    Update-ServerPulseThemeVisualTree $dialog;[void]$dialog.ShowDialog()
+    if($result.Saved){$ret=ConvertTo-ServerPulseRetentionSettings -Days $result.RetentionDays -NeverCleanup:$result.NeverCleanup -LastRetentionDays 7 -Configured $true;try{Invoke-HistoryStorageContextApply -Context $Context -TargetRoot $result.Root -Retention $ret -CleanupAction 'none' -Owner $Owner|Out-Null}catch{$result.Saved=$false;$result.Cancelled=$true}}
+    return $result
+}
+
 function Show-ServerPulseHistoryWindow {
     param(
         [Parameter(Mandatory)]$Owner,
         [Parameter(Mandatory)]$Recorder,
         [string]$ScreenshotPath,
+        $StorageContext,
         [switch]$SmokeTest
     )
+
+    if ($null -eq $StorageContext) {
+        $activeRoot = Split-Path -Parent ([IO.Path]::GetFullPath($Recorder.Directory))
+        $StorageContext = [PSCustomObject]@{
+            DefaultRoot=$activeRoot;ActiveRoot=$activeRoot;PreferredRoot=$activeRoot;PointerPath=$null;IsFallback=$false;PrivacyWarned=$false
+            Recorder=$Recorder;Settings=[PSCustomObject]@{HistoryRetentionDays=$Recorder.RetentionDays;HistoryNeverCleanup=$Recorder.NeverCleanup;HistoryLastRetentionDays=$Recorder.LastRetentionDays;HistoryStorageConfigured=$true;CleanupPaused=$Recorder.CleanupPaused;CleanupOnStartup=$false}
+            SaveSettings=$null;ApplyRoot=$null;OnRequery=$null
+        }
+    } else {
+        $StorageContext.Recorder=$Recorder
+    }
+    $storageSettings=Get-HistoryStorageSettingsObject $StorageContext
+    if (-not $SmokeTest -and -not $storageSettings.Configured) {
+        $setup=Show-ServerPulseHistorySetupDialog -Owner $Owner -Context $StorageContext
+        if(-not $setup.Saved){return $null}
+        $storageSettings=Get-HistoryStorageSettingsObject $StorageContext
+    }
 
     [xml]$historyXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1064,7 +1320,7 @@ function Show-ServerPulseHistoryWindow {
   </Window.Resources>
   <Border Background="#FA0D100E" BorderBrush="#3A423D" BorderThickness="1" CornerRadius="12">
     <Grid>
-      <Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition Height="94"/><RowDefinition Height="*"/><RowDefinition Height="24"/></Grid.RowDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="24"/></Grid.RowDefinitions>
       <Grid Margin="14,5,8,3">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions>
         <Grid x:Name="HistoryDragArea" Grid.Column="0" Background="Transparent">
@@ -1074,7 +1330,8 @@ function Show-ServerPulseHistoryWindow {
         <Button x:Name="HistoryCloseButton" Grid.Column="1" Content="×" Width="34" Height="30" Background="Transparent" BorderThickness="0" Foreground="#8C9690" FontSize="14" Cursor="Hand"/>
       </Grid>
       <Border Grid.Row="1" BorderBrush="#252B27" BorderThickness="0,1,0,1" Padding="14,0">
-        <Grid>
+        <StackPanel>
+        <Grid x:Name="HistoryQueryGrid" Height="94">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <Grid.RowDefinitions><RowDefinition Height="47"/><RowDefinition Height="47"/></Grid.RowDefinitions>
           <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -1108,9 +1365,32 @@ function Show-ServerPulseHistoryWindow {
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
               <Button x:Name="HistoryQueryButton" Content="查询" Style="{StaticResource HistoryButton}"/>
               <Button x:Name="HistoryHourButton" Content="最近 1 小时" Style="{StaticResource HistoryButton}" Margin="6,0,0,0"/>
+              <Button x:Name="HistorySettingsButton" Content="设置" Style="{StaticResource HistoryButton}" Margin="6,0,0,0"/>
             </StackPanel>
           </StackPanel>
         </Grid>
+        <Border x:Name="HistorySettingsPanel" Visibility="Collapsed" Background="#101512" BorderBrush="#2E3831" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="HistorySettingsTitle" Text="记录设置" FontSize="10" FontWeight="SemiBold" Foreground="#DCE3DE" Grid.ColumnSpan="4" Margin="0,0,0,8"/>
+            <TextBlock x:Name="HistoryRetentionLabel" Text="保留时长" FontSize="9" Foreground="#9AA59E" Grid.Row="1" VerticalAlignment="Center"/>
+            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0">
+              <TextBox x:Name="HistoryRetentionBox" Style="{StaticResource HistoryInput}" Width="58" MaxLength="4" Text="7" TextAlignment="Center"/>
+              <TextBlock x:Name="HistoryRetentionUnit" Text="天" FontSize="9" Foreground="#89958D" VerticalAlignment="Center" Margin="5,0,0,0"/>
+              <TextBlock x:Name="HistoryRetentionError" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="4,0,0,0"/>
+              <TextBlock x:Name="HistoryRetentionTip" Text="自然日计算，范围 1–3650 天" FontSize="8" Foreground="#68736C" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            </StackPanel>
+            <CheckBox x:Name="HistoryNeverCleanupBox" Grid.Row="1" Grid.Column="2" Content="永不清理" Foreground="#C7D0CA" FontSize="9" VerticalAlignment="Center" Margin="12,0,0,0"/>
+            <TextBlock x:Name="HistoryDataRootLabel" Text="数据目录" FontSize="9" Foreground="#9AA59E" Grid.Row="2" VerticalAlignment="Center" Margin="0,8,0,0"/>
+            <TextBox x:Name="HistoryDataRootBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource HistoryInput}" TextAlignment="Left" Padding="7,0" Margin="12,8,0,0"/>
+            <TextBlock x:Name="HistoryDataRootError" Grid.Row="2" Grid.Column="2" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="5,8,0,0"/>
+            <Button x:Name="HistoryBrowseButton" Grid.Row="2" Grid.Column="3" Content="浏览" Style="{StaticResource HistoryButton}" Margin="8,8,0,0"/>
+            <TextBlock x:Name="HistorySettingsStatus" Grid.Row="3" Grid.ColumnSpan="3" Text="" FontSize="8" Foreground="#7F8B83" TextWrapping="Wrap" Margin="0,9,12,0"/>
+            <Button x:Name="HistorySettingsApplyButton" Grid.Row="3" Grid.Column="3" Content="保存并应用" Style="{StaticResource HistoryButton}" Margin="8,8,0,0"/>
+          </Grid>
+        </Border>
+        </StackPanel>
       </Border>
       <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
         <StackPanel x:Name="HistoryPanel"/>
@@ -1127,7 +1407,7 @@ function Show-ServerPulseHistoryWindow {
     $historyWindow = [Windows.Markup.XamlReader]::Load($reader)
     Update-ServerPulseThemeVisualTree $historyWindow
     $historyWindow.Owner = $Owner; $historyWindow.Topmost = $Owner.Topmost
-    $names = @('HistoryDragArea','HistoryCloseButton','HistoryQueryButton','HistoryHourButton','HistoryRangeStatus','HistoryPanel','HistoryFooterText')
+    $names = @('HistoryDragArea','HistoryCloseButton','HistoryQueryButton','HistoryHourButton','HistorySettingsButton','HistoryRangeStatus','HistoryPanel','HistoryFooterText','HistorySettingsPanel','HistorySettingsTitle','HistoryRetentionLabel','HistoryRetentionBox','HistoryRetentionUnit','HistoryRetentionTip','HistoryRetentionError','HistoryNeverCleanupBox','HistoryDataRootLabel','HistoryDataRootBox','HistoryDataRootError','HistoryBrowseButton','HistorySettingsStatus','HistorySettingsApplyButton')
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
         foreach ($field in @('Year','Month','Day','Hour','Minute')) { $names += "${prefix}${field}Box"; $names += "${prefix}${field}Error" }
     }
@@ -1141,6 +1421,12 @@ function Show-ServerPulseHistoryWindow {
     $start = $end.AddHours(-1)
     Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryStart' -Value $start
     Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $end
+    $historyUi.HistoryRetentionBox.Text=if($storageSettings.NeverCleanup){''}else{[string]$storageSettings.RetentionDays}
+    $historyUi.HistoryNeverCleanupBox.IsChecked=[bool]$storageSettings.NeverCleanup
+    $displayRoot=if([bool](Get-HistoryStorageContextValue $StorageContext 'IsFallback' $false)){Get-HistoryStorageContextValue $StorageContext 'ActiveRoot' (Get-HistoryStorageContextValue $StorageContext 'PreferredRoot')}else{Get-HistoryStorageContextValue $StorageContext 'PreferredRoot' (Get-HistoryStorageContextValue $StorageContext 'ActiveRoot')}
+    $historyUi.HistoryDataRootBox.Text=[string]$displayRoot
+    [void](Set-HistoryStorageInputValidation -Ui $historyUi)
+    $historyUi.HistorySettingsStatus.Text=if([bool](Get-HistoryStorageContextValue $StorageContext 'IsFallback' $false)){Get-ServerPulseText 'history.settingsFallback'}elseif([bool](Get-HistoryStorageContextValue $StorageContext 'PendingSync' $false)){Get-ServerPulseText 'history.settingsPending'}else{if($storageSettings.NeverCleanup){Get-ServerPulseText 'history.settingsStatusNever'}elseif($storageSettings.CleanupPaused){Get-ServerPulseText 'history.settingsStatusPaused'}else{Get-ServerPulseText 'history.settingsStatusRetention' @($storageSettings.RetentionDays)}}
     $historySelectionStore=@{}
     $historyState=[PSCustomObject]@{
         Ui=$historyUi
@@ -1160,6 +1446,37 @@ function Show-ServerPulseHistoryWindow {
         param($sender,$event)
         $state=$sender.Tag
         [void](& $state.Renderer -State $state)
+    })
+    $historyUi.HistorySettingsButton.Tag=$historyState
+    $historyUi.HistorySettingsButton.Add_Click({
+        param($sender,$event)
+        $state=$sender.Tag; $state.Ui.HistorySettingsPanel.Visibility=if($state.Ui.HistorySettingsPanel.Visibility -eq 'Visible'){'Collapsed'}else{'Visible'}
+        $state.Ui.HistorySettingsButton.Content=if($state.Ui.HistorySettingsPanel.Visibility -eq 'Visible'){Get-ServerPulseText 'history.settings'}else{Get-ServerPulseText 'history.settingsExpand'}
+        $event.Handled=$true
+    })
+    $historyUi.HistoryNeverCleanupBox.Tag=[PSCustomObject]@{Ui=$historyUi;LastDays=[int]$storageSettings.LastRetentionDays}
+    $historyUi.HistoryNeverCleanupBox.Add_Checked({ param($sender,$event);$number=0;if([int]::TryParse([string]$sender.Tag.Ui.HistoryRetentionBox.Text,[ref]$number)-and$number -ge 1 -and$number -le 3650){$sender.Tag.LastDays=$number}; [void](Set-HistoryStorageInputValidation -Ui $sender.Tag.Ui) }.GetNewClosure())
+    $historyUi.HistoryNeverCleanupBox.Add_Unchecked({ param($sender,$event);$sender.Tag.Ui.HistoryRetentionBox.Text=[string]$sender.Tag.LastDays; [void](Set-HistoryStorageInputValidation -Ui $sender.Tag.Ui) }.GetNewClosure())
+    $historyUi.HistoryRetentionBox.Tag=[PSCustomObject]@{Ui=$historyUi};$historyUi.HistoryRetentionBox.Add_TextChanged({param($sender,$event);if($null -ne $sender.Tag){[void](Set-HistoryStorageInputValidation -Ui $sender.Tag.Ui)}})
+    $historyUi.HistoryDataRootBox.Tag=[PSCustomObject]@{Ui=$historyUi};$historyUi.HistoryDataRootBox.Add_TextChanged({param($sender,$event);if($null -ne $sender.Tag){[void](Set-HistoryStorageInputValidation -Ui $sender.Tag.Ui)}})
+    $historyUi.HistoryBrowseButton.Tag=$historyState
+    $historyUi.HistoryBrowseButton.Add_Click({param($sender,$event);$state=$sender.Tag;$picker=[Windows.Forms.FolderBrowserDialog]::new();$picker.SelectedPath=$state.Ui.HistoryDataRootBox.Text;if($picker.ShowDialog() -eq [Windows.Forms.DialogResult]::OK){$state.Ui.HistoryDataRootBox.Text=$picker.SelectedPath};$picker.Dispose();$event.Handled=$true})
+    $historyUi.HistorySettingsApplyButton.Tag=[PSCustomObject]@{State=$historyState;Context=$StorageContext;Owner=$historyWindow}
+    $historyUi.HistorySettingsApplyButton.Add_Click({
+        param($sender,$event)
+        $tag=$sender.Tag;$state=$tag.State;$context=$tag.Context
+        try {
+            $valid=Set-HistoryStorageInputValidation -Ui $state.Ui -CreatePath
+            if(-not$valid.IsValid){return}
+            if([bool]$state.Ui.HistoryNeverCleanupBox.IsChecked -and $null -ne $state.Ui.HistoryNeverCleanupBox.Tag){$valid.Retention.RetentionDays=[int]$state.Ui.HistoryNeverCleanupBox.Tag.LastDays;$valid.Retention.LastRetentionDays=[int]$state.Ui.HistoryNeverCleanupBox.Tag.LastDays}
+            $old=Get-HistoryStorageSettingsObject $context;$cleanup=Get-ServerPulseCleanupDecision -PreviousDays $old.RetentionDays -NewDays $valid.Retention.RetentionDays -PreviousNeverCleanup:$old.NeverCleanup -NewNeverCleanup:$valid.Retention.NeverCleanup
+            if($old.CleanupPaused -and -not $valid.Retention.NeverCleanup){$cleanup='prompt'}
+            $action='none';if($cleanup -eq 'prompt' -and -not $valid.Retention.NeverCleanup){$action=Show-HistoryCleanupChoiceDialog -Owner $tag.Owner}
+            $valid.Retention.CleanupPaused=if($cleanup -eq 'prompt'){($action -eq 'none')}elseif($old.CleanupPaused -and -not $valid.Retention.NeverCleanup){$true}else{$false}
+            $applied=Invoke-HistoryStorageContextApply -Context $context -TargetRoot $valid.Path.Path -Retention $valid.Retention -CleanupAction $action -Owner $tag.Owner
+            if($applied.Applied){$state.Ui.HistorySettingsStatus.Text=if($action -eq 'none' -and $cleanup -eq 'prompt'){Get-ServerPulseText 'history.settingsStatusPaused'}elseif($valid.Retention.NeverCleanup){Get-ServerPulseText 'history.settingsStatusNever'}else{Get-ServerPulseText 'history.settingsSaved' @($valid.Path.Path)};$state.Ui.HistorySettingsPanel.Visibility='Collapsed';$state.Ui.HistorySettingsButton.Content=Get-ServerPulseText 'history.settingsExpand';[void](& $state.Renderer -State $state)}
+        } catch {$state.Ui.HistorySettingsStatus.Text=Get-ServerPulseText 'history.settingsPathInvalid' @($_.Exception.Message);$state.Ui.HistorySettingsStatus.Foreground=New-HistoryBrush '#FF8A80'}
+        $event.Handled=$true
     })
     $historyUi.HistoryHourButton.Tag=$historyState
     $historyUi.HistoryHourButton.Add_Click({
