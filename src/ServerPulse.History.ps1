@@ -1247,7 +1247,7 @@ function Show-ServerPulseHistorySetupDialog {
     param([Parameter(Mandatory)]$Owner,[Parameter(Mandatory)]$Context,[switch]$SmokeTest)
     if($SmokeTest){return [PSCustomObject]@{Saved=$true;Cancelled=$false;RetentionDays=7;NeverCleanup=$false;Root=[string](Get-HistoryStorageContextValue $Context 'ActiveRoot') }}
     [xml]$xaml=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="540" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="540" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
   <Border BorderBrush="#3A423D" BorderThickness="1" CornerRadius="10" Padding="18"><StackPanel>
     <TextBlock x:Name="Title" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/><TextBlock x:Name="Message" TextWrapping="Wrap" FontSize="10" Foreground="#AEB9B1" Margin="0,0,0,16"/>
     <StackPanel Orientation="Horizontal" Margin="0,0,0,10"><TextBlock x:Name="RetentionLabel" Width="90" VerticalAlignment="Center"/><TextBox x:Name="Retention" Width="64" Height="27" Text="7" TextAlignment="Center" VerticalContentAlignment="Center"/><TextBlock x:Name="RetentionUnit" Margin="6,0,0,0" VerticalAlignment="Center"/><CheckBox x:Name="Never" Content="永不清理" Margin="18,0,0,0" VerticalAlignment="Center"/></StackPanel>

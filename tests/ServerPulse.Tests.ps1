@@ -712,6 +712,7 @@ $historyUserWindow.Close()
 
 $collectorSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\Collect-Metrics.ps1') -Raw
 $mainSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw
+$historySource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1') -Raw
 $launcherSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Start Server Pulse.vbs') -Raw
 $hostSourcePath = Join-Path $PSScriptRoot '..\src\ServerPulse.Host.cs'
 $hostExecutablePath = Join-Path $PSScriptRoot '..\ServerPulse.exe'
@@ -720,6 +721,7 @@ Assert-Equal ([bool]($collectorSource -match 'CreateRunspacePool')) $true '长�
 Assert-Equal ([bool]($collectorSource -match '\[Console\]::In\.ReadLine\(\)')) $true '长期采集器以逐行协议复用标准输入'
 Assert-Equal ([bool]($collectorSource -match 'Invoke-ServerPulsePersistentCollection')) $true 'Worker 使用每服务器长期 SSH 会话而非逐轮启动 ssh.exe'
 Assert-Equal ([bool]($mainSource -match '\$info\.Arguments=.*?-Worker')) $true '主窗口启动长期采集器而非逐轮采集进程'
+Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="540"')) $true '首次记录配置弹窗声明 WPF x 命名空间'
 Assert-Equal ([bool]($launcherSource -match 'ServerPulse\.exe')) $true '兼容启动器优先启动 EXE 宿主'
 Assert-Equal (Test-Path -LiteralPath $hostSourcePath) $true '仓库包含可重复构建的 EXE 宿主源码'
 Assert-Equal (Test-Path -LiteralPath $hostExecutablePath) $true '仓库包含 ServerPulse.exe 宿主'
