@@ -1300,20 +1300,27 @@ function Show-ServerPulseHistorySetupDialog {
     $dialog.FindName('Title').Text=Get-ServerPulseText 'history.setupTitle';$dialog.FindName('Message').Text=Get-ServerPulseText 'history.setupMessage';$dialog.FindName('RetentionLabel').Text=Get-ServerPulseText 'history.retention';$dialog.FindName('RetentionUnit').Text=Get-ServerPulseText 'history.retentionUnit';$dialog.FindName('Never').Content=Get-ServerPulseText 'history.neverCleanup';$dialog.FindName('PathLabel').Text=Get-ServerPulseText 'history.dataRoot';$dialog.FindName('Browse').Content=Get-ServerPulseText 'history.browse';$dialog.FindName('Save').Content=Get-ServerPulseText 'history.setupSave';$dialog.FindName('Cancel').Content=Get-ServerPulseText 'history.setupCancel'
     $dialog.FindName('Path').Text=[string](Get-HistoryStorageContextValue $Context 'ActiveRoot')
     $result=[PSCustomObject]@{Saved=$false;Cancelled=$true;RetentionDays=7;NeverCleanup=$false;Root=$null}
+    # Event handlers created with GetNewClosure do not reliably resolve helper
+    # functions from this script's scope. Resolve the two error templates before
+    # registering the handler and capture plain strings instead.
+    $setupInvalidPathTemplate = 'Invalid data directory: {0}'
+    $setupMigrationCancelText = 'Migration cancelled.'
+    try { $setupInvalidPathTemplate = [string](Get-ServerPulseText 'history.settingsPathInvalid' @('{0}')) } catch { }
+    try { $setupMigrationCancelText = [string](Get-ServerPulseText 'history.migrationCancel') } catch { }
     $dialog.FindName('Never').Add_Checked({$dialog.FindName('Retention').Text='';$dialog.FindName('Retention').IsEnabled=$false}.GetNewClosure());$dialog.FindName('Never').Add_Unchecked({$dialog.FindName('Retention').Text='7';$dialog.FindName('Retention').IsEnabled=$true}.GetNewClosure())
     $dialog.FindName('Browse').Add_Click({$picker=[Windows.Forms.FolderBrowserDialog]::new();$picker.SelectedPath=$dialog.FindName('Path').Text;if($picker.ShowDialog() -eq [Windows.Forms.DialogResult]::OK){$dialog.FindName('Path').Text=$picker.SelectedPath};$picker.Dispose()}.GetNewClosure())
     $dialog.FindName('Save').Add_Click({
         try {
             $ret=ConvertTo-ServerPulseRetentionSettings -Days $dialog.FindName('Retention').Text -NeverCleanup:([bool]$dialog.FindName('Never').IsChecked) -LastRetentionDays 7 -Configured $true
             $path=Test-ServerPulseDataRootPath -Path $dialog.FindName('Path').Text -Create
-            if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{Get-HistorySetupText 'history.settingsPathInvalid' @($path.Reason)};return}
+            if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{($setupInvalidPathTemplate -f [string]$path.Reason)};return}
             $applied=Invoke-HistoryStorageContextApply -Context $Context -TargetRoot $path.Path -Retention $ret -CleanupAction 'none' -Owner $Owner
-            if($null -eq $applied -or -not [bool]$applied.Applied){$dialog.FindName('Error').Text=Get-HistorySetupText 'history.migrationCancel';return}
+            if($null -eq $applied -or -not [bool]$applied.Applied){$dialog.FindName('Error').Text=$setupMigrationCancelText;return}
             $result.Saved=$true;$result.Cancelled=$false;$result.RetentionDays=$ret.RetentionDays;$result.NeverCleanup=$ret.NeverCleanup;$result.Root=$path.Path;$dialog.Close()
         } catch {
             $message=[string]$_.Exception.Message
             if($message.Length -gt 220){$message=$message.Substring(0,217)+'...'}
-            $dialog.FindName('Error').Text=Get-HistorySetupText 'history.settingsPathInvalid' @($message)
+            $dialog.FindName('Error').Text=$setupInvalidPathTemplate -f $message
         }
     }.GetNewClosure())
     Update-ServerPulseThemeVisualTree $dialog;[void]$dialog.ShowDialog()
