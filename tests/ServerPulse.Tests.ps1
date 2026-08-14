@@ -726,7 +726,10 @@ Assert-Equal ([bool]($mainSource -match '& \$historyJsonWriterCommand -Path \$sc
 Assert-Equal ([bool]($mainSource -match '\$historyAskPassCommand = Get-Command Ensure-ServerPulseAskPassHelper')) $true '历史目录切换回调预先捕获 SSH 辅助函数'
 Assert-Equal ([bool]($mainSource -match '& \$historyAskPassCommand -Directory')) $true '历史目录切换回调使用已捕获的 SSH 辅助函数'
 Assert-Equal ([bool]($mainSource -match '\$historyContextSetterCommand = Get-Command Set-HistoryStorageContextValue')) $true '历史目录切换回调预先捕获上下文属性函数'
-Assert-Equal ([bool]($mainSource -match '& \$historyContextSetterCommand -Context \$script:historyStorageContext')) $true '历史目录切换回调使用安全上下文属性写入'
+Assert-Equal ([bool]($mainSource -match '\$historyStorageContext = \[PSCustomObject\]@\{')) $true '历史上下文先完成对象初始化'
+Assert-Equal ([bool]($mainSource -match '\$historyStorageContext\.ApplyRoot\s*=')) $true '历史目录切换回调在对象初始化后注册'
+Assert-Equal ([bool]($mainSource -match '& \$historyContextSetterCommand -Context \$historyStorageContext')) $true '历史目录切换回调捕获稳定上下文对象'
+Assert-Equal ([bool]($mainSource -notmatch 'ApplyRoot=.*-Context \$script:historyStorageContext')) $true '历史目录切换回调不捕获尚未赋值的脚本上下文'
 Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="540"')) $true '首次记录配置弹窗声明 WPF x 命名空间'
 Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="450"')) $true '清理确认弹窗声明 WPF x 命名空间'
 Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="470"')) $true '迁移冲突弹窗声明 WPF x 命名空间'
@@ -882,6 +885,11 @@ try {
     $incompleteApply=Invoke-HistoryStorageContextApply -Context $incompleteContext -TargetRoot $contextRecorderRoot -Retention $incompleteRetention
     Assert-Equal $incompleteApply.Applied $true '缺少活动目录字段的上下文仍可应用记录设置'
     Assert-Equal ([string]$incompleteContext.ActiveRoot) ([string]$contextRecorderRoot) '应用记录设置后补齐活动目录字段'
+    $capturedContext=$incompleteContext
+    $contextCallback={param($root);[void](Set-HistoryStorageContextValue -Context $capturedContext -Name 'ActiveRoot' -Value $root)}.GetNewClosure()
+    $capturedContext=$null
+    & $contextCallback $contextRecorderRoot
+    Assert-Equal ([string]$incompleteContext.ActiveRoot) ([string]$contextRecorderRoot) '历史目录回调闭包持有稳定上下文而非空脚本变量'
 } finally { if(Test-Path -LiteralPath $contextRecorderRoot){Remove-Item -LiteralPath $contextRecorderRoot -Recurse -Force -ErrorAction SilentlyContinue} }
 $cutoff=Get-ServerPulseRetentionCutoffDate -Now ([datetime]'2026-08-14T12:34:00') -RetentionDays 7
 Assert-Equal $cutoff.ToString('yyyy-MM-dd') '2026-08-08' '保留天数按自然日计算截止日期'
