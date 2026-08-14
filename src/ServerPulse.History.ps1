@@ -1,5 +1,13 @@
 ﻿Set-StrictMode -Version Latest
 
+# History can also be loaded by older launchers or a copied script bundle.  Make
+# the storage policy helpers available here as well, so the first-run setup
+# dialog never depends on load order in the host script.
+$historyStorageModulePath = Join-Path $PSScriptRoot 'ServerPulse.Storage.ps1'
+if ($null -eq (Get-Command ConvertTo-ServerPulseRetentionSettings -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $historyStorageModulePath)) {
+    . $historyStorageModulePath
+}
+
 function Get-HistoryObjectValue {
     param($InputObject, [string[]]$Path)
 
@@ -1250,7 +1258,7 @@ function Show-ServerPulseHistorySetupDialog {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="540" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True" Background="#F2131714" Foreground="#E7EBE8">
   <Border BorderBrush="#3A423D" BorderThickness="1" CornerRadius="10" Padding="18"><StackPanel>
     <TextBlock x:Name="Title" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/><TextBlock x:Name="Message" TextWrapping="Wrap" FontSize="10" Foreground="#AEB9B1" Margin="0,0,0,16"/>
-    <StackPanel Orientation="Horizontal" Margin="0,0,0,10"><TextBlock x:Name="RetentionLabel" Width="90" VerticalAlignment="Center"/><TextBox x:Name="Retention" Width="64" Height="27" Text="7" TextAlignment="Center" VerticalContentAlignment="Center"/><TextBlock x:Name="RetentionUnit" Margin="6,0,0,0" VerticalAlignment="Center"/><CheckBox x:Name="Never" Content="永不清理" Margin="18,0,0,0" VerticalAlignment="Center"/></StackPanel>
+    <StackPanel Orientation="Horizontal" Margin="0,0,0,10"><TextBlock x:Name="RetentionLabel" Width="90" VerticalAlignment="Center"/><TextBox x:Name="Retention" Width="64" Height="27" Text="7" TextAlignment="Center" VerticalContentAlignment="Center"/><TextBlock x:Name="RetentionUnit" Margin="6,0,0,0" VerticalAlignment="Center"/><CheckBox x:Name="Never" Content="永不清理" Foreground="#DCE3DE" FontWeight="SemiBold" Margin="18,0,0,0" VerticalAlignment="Center"/></StackPanel>
     <StackPanel Orientation="Horizontal" Margin="0,0,0,4"><TextBlock x:Name="PathLabel" Width="90" VerticalAlignment="Center"/><TextBox x:Name="Path" Width="330" Height="27" VerticalContentAlignment="Center" Padding="6,0"/><Button x:Name="Browse" Content="浏览" Width="64" Height="27" Margin="8,0,0,0"/></StackPanel>
     <TextBlock x:Name="Error" Foreground="#FF8A80" TextWrapping="Wrap" MinHeight="20" Margin="90,0,0,7"/>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="Save" Width="92" Height="29" Margin="0,0,8,0"/><Button x:Name="Cancel" Width="76" Height="29" IsCancel="True"/></StackPanel>
@@ -1264,13 +1272,20 @@ function Show-ServerPulseHistorySetupDialog {
     $dialog.FindName('Never').Add_Checked({$dialog.FindName('Retention').Text='';$dialog.FindName('Retention').IsEnabled=$false}.GetNewClosure());$dialog.FindName('Never').Add_Unchecked({$dialog.FindName('Retention').Text='7';$dialog.FindName('Retention').IsEnabled=$true}.GetNewClosure())
     $dialog.FindName('Browse').Add_Click({$picker=[Windows.Forms.FolderBrowserDialog]::new();$picker.SelectedPath=$dialog.FindName('Path').Text;if($picker.ShowDialog() -eq [Windows.Forms.DialogResult]::OK){$dialog.FindName('Path').Text=$picker.SelectedPath};$picker.Dispose()}.GetNewClosure())
     $dialog.FindName('Save').Add_Click({
-        $ret=ConvertTo-ServerPulseRetentionSettings -Days $dialog.FindName('Retention').Text -NeverCleanup:([bool]$dialog.FindName('Never').IsChecked) -LastRetentionDays 7 -Configured $true
-        $path=Test-ServerPulseDataRootPath -Path $dialog.FindName('Path').Text -Create
-        if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{Get-ServerPulseText 'history.settingsPathInvalid' @($path.Reason)};return}
-        $result.Saved=$true;$result.Cancelled=$false;$result.RetentionDays=$ret.RetentionDays;$result.NeverCleanup=$ret.NeverCleanup;$result.Root=$path.Path;$dialog.Close()
+        try {
+            $ret=ConvertTo-ServerPulseRetentionSettings -Days $dialog.FindName('Retention').Text -NeverCleanup:([bool]$dialog.FindName('Never').IsChecked) -LastRetentionDays 7 -Configured $true
+            $path=Test-ServerPulseDataRootPath -Path $dialog.FindName('Path').Text -Create
+            if(-not$ret.IsValid -or -not$path.IsValid){$dialog.FindName('Error').Text=if(-not$ret.IsValid){$ret.Error}else{Get-ServerPulseText 'history.settingsPathInvalid' @($path.Reason)};return}
+            $applied=Invoke-HistoryStorageContextApply -Context $Context -TargetRoot $path.Path -Retention $ret -CleanupAction 'none' -Owner $Owner
+            if($null -eq $applied -or -not [bool]$applied.Applied){$dialog.FindName('Error').Text=Get-ServerPulseText 'history.migrationCancel';return}
+            $result.Saved=$true;$result.Cancelled=$false;$result.RetentionDays=$ret.RetentionDays;$result.NeverCleanup=$ret.NeverCleanup;$result.Root=$path.Path;$dialog.Close()
+        } catch {
+            $message=[string]$_.Exception.Message
+            if($message.Length -gt 220){$message=$message.Substring(0,217)+'...'}
+            $dialog.FindName('Error').Text=Get-ServerPulseText 'history.settingsPathInvalid' @($message)
+        }
     }.GetNewClosure())
     Update-ServerPulseThemeVisualTree $dialog;[void]$dialog.ShowDialog()
-    if($result.Saved){$ret=ConvertTo-ServerPulseRetentionSettings -Days $result.RetentionDays -NeverCleanup:$result.NeverCleanup -LastRetentionDays 7 -Configured $true;try{Invoke-HistoryStorageContextApply -Context $Context -TargetRoot $result.Root -Retention $ret -CleanupAction 'none' -Owner $Owner|Out-Null}catch{$result.Saved=$false;$result.Cancelled=$true}}
     return $result
 }
 
