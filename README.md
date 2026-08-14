@@ -224,4 +224,4 @@ Architecture, collection protocol, history format, building, testing, security b
 
 ## License
 
-This repository does not currently include a formal license. Add a license before public release if you want to grant rights to copy, modify, or redistribute the project; until then, no such rights are granted by default.
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE) for the complete text.
