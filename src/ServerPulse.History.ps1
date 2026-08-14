@@ -1143,6 +1143,21 @@ function Get-HistoryStorageContextValue {
     return $Default
 }
 
+function Set-HistoryStorageContextValue {
+    param($Context,[Parameter(Mandatory)][string]$Name,$Value)
+    if ($null -eq $Context) { throw 'History storage context is unavailable.' }
+    if ($Context -is [Collections.IDictionary]) {
+        $Context[$Name]=$Value
+        return
+    }
+    $property=$Context.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        $Context | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+    } else {
+        $property.Value=$Value
+    }
+}
+
 function Get-HistoryStorageSettingsObject {
     param($Context)
     $settings = Get-HistoryStorageContextValue $Context 'Settings' $null
@@ -1260,8 +1275,8 @@ function Invoke-HistoryStorageContextApply {
         } finally {if($Context.PSObject.Properties.Name -contains 'HistoryWritePaused'){$Context.HistoryWritePaused=$false}}
     }
     $keepFallback=$wasFallback -and [string]::Equals($currentRoot,$target,[StringComparison]::OrdinalIgnoreCase)
-    if($keepFallback){$Context.ActiveRoot=$target;$Context.PreferredRoot=$preferredBefore;$Context.IsFallback=$true;$Context.PendingSync=$true}
-    else{$Context.ActiveRoot=$target;$Context.PreferredRoot=$target;$Context.IsFallback=$false;$Context.PendingSync=$false}
+    if($keepFallback){[void](Set-HistoryStorageContextValue $Context 'ActiveRoot' $target);[void](Set-HistoryStorageContextValue $Context 'PreferredRoot' $preferredBefore);[void](Set-HistoryStorageContextValue $Context 'IsFallback' $true);[void](Set-HistoryStorageContextValue $Context 'PendingSync' $true)}
+    else{[void](Set-HistoryStorageContextValue $Context 'ActiveRoot' $target);[void](Set-HistoryStorageContextValue $Context 'PreferredRoot' $target);[void](Set-HistoryStorageContextValue $Context 'IsFallback' $false);[void](Set-HistoryStorageContextValue $Context 'PendingSync' $false)}
     $rec=Get-HistoryStorageContextValue $Context 'Recorder' $null
     if($null -ne $rec){$rec.Directory=Join-Path $target 'history';[void](Set-ServerPulseHistoryRetention -Recorder $rec -Days $Retention.RetentionDays -NeverCleanup:$Retention.NeverCleanup -CleanupPaused:([bool]$Retention.CleanupPaused) -StorageConfigured:$true)}
     $settings=Get-HistoryStorageContextValue $Context 'Settings' $null
@@ -1276,7 +1291,7 @@ function Invoke-HistoryStorageContextApply {
     if($pointerPath){$pointerPreferred=if($keepFallback){$preferredBefore}else{$target};Write-ServerPulseLocationPointer -Path $pointerPath -Pointer (New-ServerPulseLocationPointer -PreferredDataRootPath $pointerPreferred -PendingSync:$keepFallback -ActiveDataRootPath $target)}
     $save=Get-HistoryStorageContextValue $Context 'SaveSettings' $null;if($null -ne $save){& $save $settings $target}
     $apply=Get-HistoryStorageContextValue $Context 'ApplyRoot' $null;if($null -ne $apply){& $apply $target $settings}
-    if($keepFallback){$Context.ActiveRoot=$target;$Context.PreferredRoot=$preferredBefore;$Context.IsFallback=$true;$Context.PendingSync=$true}
+    if($keepFallback){[void](Set-HistoryStorageContextValue $Context 'ActiveRoot' $target);[void](Set-HistoryStorageContextValue $Context 'PreferredRoot' $preferredBefore);[void](Set-HistoryStorageContextValue $Context 'IsFallback' $true);[void](Set-HistoryStorageContextValue $Context 'PendingSync' $true)}
     $requery=Get-HistoryStorageContextValue $Context 'OnRequery' $null;if($null -ne $requery){& $requery}
     if($CleanupAction -eq 'immediate' -and $null -ne $rec){[void](Remove-ExpiredServerPulseHistory $rec)}
     return [PSCustomObject]@{Applied=$true;Cancelled=$false;Migration=$migration;Root=$target;Settings=$settings}

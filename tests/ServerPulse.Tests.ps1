@@ -725,9 +725,13 @@ Assert-Equal ([bool]($mainSource -match '\$historyJsonWriterCommand = Get-Comman
 Assert-Equal ([bool]($mainSource -match '& \$historyJsonWriterCommand -Path \$script:settingsPath')) $true '历史设置回调使用已捕获的 JSON 写入函数'
 Assert-Equal ([bool]($mainSource -match '\$historyAskPassCommand = Get-Command Ensure-ServerPulseAskPassHelper')) $true '历史目录切换回调预先捕获 SSH 辅助函数'
 Assert-Equal ([bool]($mainSource -match '& \$historyAskPassCommand -Directory')) $true '历史目录切换回调使用已捕获的 SSH 辅助函数'
+Assert-Equal ([bool]($mainSource -match '\$historyContextSetterCommand = Get-Command Set-HistoryStorageContextValue')) $true '历史目录切换回调预先捕获上下文属性函数'
+Assert-Equal ([bool]($mainSource -match '& \$historyContextSetterCommand -Context \$script:historyStorageContext')) $true '历史目录切换回调使用安全上下文属性写入'
 Assert-Equal ([bool]($historySource -match '<Window[^>]+xmlns:x="http://schemas\.microsoft\.com/winfx/2006/xaml"[^>]+Width="540"')) $true '首次记录配置弹窗声明 WPF x 命名空间'
 Assert-Equal ([bool]($historySource -match 'Get-Command Get-ServerPulseText')) $true '历史模块可自补载本地化函数'
 Assert-Equal ([bool]($historySource -match 'function Get-HistorySetupText')) $true '首次记录配置错误提示具有本地化兜底'
+Assert-Equal ([bool]($historySource -match 'function Set-HistoryStorageContextValue')) $true '历史上下文支持补齐缺失属性'
+Assert-Equal ([bool]($historySource -notmatch '\$Context\.ActiveRoot=')) $true '历史上下文不直接写入可能缺失的属性'
 Assert-Equal ([bool]($historySource -match '\$setupInvalidPathTemplate')) $true '首次记录配置点击事件捕获错误文案'
 Assert-Equal ([bool]($historySource -notmatch "Save'.*Get-HistorySetupText")) $true '首次记录配置点击事件不依赖动态本地化函数'
 Assert-Equal ([bool]($historySource -match 'Get-Command ConvertTo-ServerPulseRetentionSettings')) $true '历史模块可自补载存储策略函数'
@@ -856,6 +860,12 @@ Assert-Equal (ConvertTo-ServerPulseRetentionSettings -Days 0).IsValid $false '�
 Assert-Equal (ConvertTo-ServerPulseRetentionSettings -Days 3651).IsValid $false '历史保留拒绝超过 3650 天'
 $neverRetention=ConvertTo-ServerPulseRetentionSettings -Days $null -NeverCleanup $true -LastRetentionDays 42
 Assert-Equal "$($neverRetention.NeverCleanup):$($neverRetention.RetentionDays)" 'True:42' '永不清理保留上一次有效天数'
+$missingHistoryContext=[pscustomobject]@{}
+Set-HistoryStorageContextValue -Context $missingHistoryContext -Name 'ActiveRoot' -Value 'C:\ServerPulse'
+Assert-Equal $missingHistoryContext.ActiveRoot 'C:\ServerPulse' '历史上下文缺少 ActiveRoot 时可安全补齐'
+$historyContextMap=@{}
+Set-HistoryStorageContextValue -Context $historyContextMap -Name 'ActiveRoot' -Value 'C:\ServerPulse'
+Assert-Equal $historyContextMap['ActiveRoot'] 'C:\ServerPulse' '哈希表历史上下文可安全写入'
 $cutoff=Get-ServerPulseRetentionCutoffDate -Now ([datetime]'2026-08-14T12:34:00') -RetentionDays 7
 Assert-Equal $cutoff.ToString('yyyy-MM-dd') '2026-08-08' '保留天数按自然日计算截止日期'
 Assert-Equal (Get-ServerPulseCleanupDecision -PreviousDays 30 -NewDays 7) 'prompt' '缩短保留时长需要清理确认'
