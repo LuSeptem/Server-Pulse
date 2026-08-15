@@ -199,7 +199,7 @@ server_monitoring/
 ├─ assets/                  # SVG/ICO icons
 ├─ config/                  # first-run seed configuration
 ├─ scripts/                 # build scripts
-├─ src/                     # collector, history, storage, SSH, theme, and host code
+├─ src/                     # collector, history, storage, SSH, agent, theme, and host code
 ├─ tests/                   # automation and mock SSH
 ├─ docs/DEVELOPMENT.md      # contributor/developer documentation
 ├─ README.md                # English user manual

@@ -1,4 +1,4 @@
-﻿Set-StrictMode -Version Latest
+Set-StrictMode -Version Latest
 
 <#+
     Storage policy helpers are intentionally independent from WPF.  The main
@@ -290,5 +290,30 @@ function Invoke-ServerPulseDataRootMigration {
             if($null -ne $sourceBackup -and (Test-Path -LiteralPath $sourceBackup) -and -not (Test-Path -LiteralPath $source)){Move-Item -LiteralPath $sourceBackup -Destination $source -Force}
         } catch { }
         throw
+    }
+}
+
+# History day files are appended by the minute recorder and rewritten in place
+# by the server-side agent merge.  A named mutex keeps both writers serialized
+# across runspaces (and across processes of the same session); each scope
+# creates or attaches to the same named mutex on first use.
+function Enter-ServerPulseHistoryWriteLock {
+    param([int]$TimeoutMs = 30000)
+    $mutex = $null
+    try { $mutex = [Threading.Mutex]::new($false, 'Local\ServerPulse.HistoryWrite') } catch { $mutex = $null }
+    if ($null -eq $mutex) {
+        try { $mutex = [Threading.Mutex]::OpenExisting('Local\ServerPulse.HistoryWrite') } catch { $mutex = $null }
+    }
+    if ($null -ne $mutex) {
+        try { [void]$mutex.WaitOne($TimeoutMs) } catch [Threading.AbandonedMutexException] { }
+        $script:ServerPulseHistoryWriteMutex = $mutex
+    }
+}
+
+function Exit-ServerPulseHistoryWriteLock {
+    if ($null -ne $script:ServerPulseHistoryWriteMutex) {
+        try { $script:ServerPulseHistoryWriteMutex.ReleaseMutex() } catch { }
+        try { $script:ServerPulseHistoryWriteMutex.Dispose() } catch { }
+        $script:ServerPulseHistoryWriteMutex = $null
     }
 }

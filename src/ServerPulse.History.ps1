@@ -1,4 +1,4 @@
-﻿Set-StrictMode -Version Latest
+Set-StrictMode -Version Latest
 
 # History can also be loaded by an older launcher or a copied script bundle.
 # Load localization here when the host did not load the normal module chain, so
@@ -352,7 +352,11 @@ function Save-HistoryMinuteRecord {
     $path = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.v2.jsonl')
     # JSONL is append-only: a later entry for the same minute supersedes or is merged with earlier entries at read time.
     $line=[PSCustomObject]@{Version=2;Record=$Record} | ConvertTo-Json -Depth 16 -Compress
-    Add-Content -LiteralPath $path -Value $line -Encoding UTF8
+    # The server-side agent merge rewrites day files in place; serialize with it.
+    $lockAvailable = $null -ne (Get-Command Enter-ServerPulseHistoryWriteLock -ErrorAction SilentlyContinue)
+    if ($lockAvailable) { Enter-ServerPulseHistoryWriteLock }
+    try { Add-Content -LiteralPath $path -Value $line -Encoding UTF8 }
+    finally { if ($lockAvailable) { Exit-ServerPulseHistoryWriteLock } }
 }
 
 function Flush-ServerPulseHistoryRecorder {
