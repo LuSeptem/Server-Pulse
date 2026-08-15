@@ -1,4 +1,4 @@
-use serverpulse_core::{merge_jsonl_lines, read_history_jsonl, HistoryEntry, ServerPulseError};
+use serverpulse_core::{merge_jsonl_lines, parse_server_configs, read_history_jsonl, HistoryEntry, ServerConfig, ServerPulseError};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -253,7 +253,7 @@ fn merge_server_files(existing: &str, incoming: &str) -> Result<String, ServerPu
     Ok(serde_json::to_string_pretty(&target)?)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ServerPulseError> {
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ServerPulseError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -297,6 +297,40 @@ impl Drop for FileLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
+}
+
+pub fn read_server_configs(data_root: &Path) -> Result<Option<Vec<ServerConfig>>, ServerPulseError> {
+    let path = data_root.join("servers.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path)?;
+    Ok(Some(parse_server_configs(&text)?))
+}
+
+pub fn write_server_configs(data_root: &Path, servers: &[ServerConfig]) -> Result<(), ServerPulseError> {
+    fs::create_dir_all(data_root)?;
+    for server in servers {
+        server.validate()?;
+    }
+    let path = data_root.join("servers.json");
+    let lock = FileLock::acquire(data_root.join(".servers.lock"), Duration::from_secs(10))?;
+    let mut document = if path.exists() {
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path)?)?
+    } else {
+        serde_json::json!({})
+    };
+    if !document.is_object() {
+        document = serde_json::json!({});
+    }
+    if let Some(object) = document.as_object_mut() {
+        object.remove("Servers");
+    }
+    document["servers"] = serde_json::to_value(servers)?;
+    let bytes = serde_json::to_vec_pretty(&document)?;
+    atomic_write(&path, &bytes)?;
+    drop(lock);
+    Ok(())
 }
 
 pub trait CredentialStore: Send + Sync {
@@ -416,6 +450,22 @@ mod tests {
         let store = JsonHistoryStore::new(&root);
         store.append_jsonl("2026-08-15", r#"{"Version":2,"Record":{}}"#).expect("append");
         assert_eq!(store.read_jsonl("2026-08-15").expect("read").len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn server_config_store_round_trip() {
+        let root = std::env::temp_dir().join(format!("serverpulse-servers-{}", unique_suffix()));
+        let servers = vec![ServerConfig {
+            id: "demo".to_owned(),
+            label: "Demo".to_owned(),
+            host: "demo".to_owned(),
+            user: Some("alice".to_owned()),
+            port: Some(2222),
+            monitored: true,
+        }];
+        write_server_configs(&root, &servers).expect("write servers");
+        assert_eq!(read_server_configs(&root).expect("read servers"), Some(servers));
         let _ = fs::remove_dir_all(root);
     }
 }

@@ -78,6 +78,8 @@ Rust `serde` 结构是 IPC 的单一数据源。正式合并前应从 Rust 类�
 
 ```text
 list_servers()
+save_server(server)
+delete_server(server_id)
 start_monitoring(server, interval_seconds)
 stop_monitoring(server_id)
 recheck_monitoring(server)
@@ -148,7 +150,7 @@ DataRootManager
 └─ apply_import()
 ```
 
-当前实现已经落地 `CredentialStore`、`DataRootManager`、JSONL store、核心解析/错误/退避和 OpenSSH short command；`CollectorManager`、完整 `SshTransport` 长连接/指纹接口和深度历史聚合仍需在 M2–M4 收口。
+当前实现已经落地 `CredentialStore`、`DataRootManager`、JSONL store、核心解析/错误/退避、旧 Windows `Servers` 配置兼容、SSH config 别名发现、服务器新增/删除和 OpenSSH short command；`CollectorManager`、完整 `SshTransport` 长连接/指纹接口和深度历史聚合仍需在 M2–M4 收口。
 
 ## 6. SSH 与安全边界
 
@@ -158,7 +160,7 @@ DataRootManager
 - 参数只放目标、端口、超时和 OpenSSH 选项；密码不得进入命令行、普通环境变量、配置、日志或历史。
 - `SSH_ASKPASS` 只指向当前应用的 askpass 入口，环境中最多传递非秘密 credential identity。
 - 使用 LF 版本的 `assets/serverpulse-sample.sh` 通过 stdin 发送远端 shell。
-- Windows 使用新进程组，Unix 使用 process group，结合超时和取消清理本地 SSH 子进程。
+- Windows 使用无控制台的新进程组，Unix 使用 process group，结合超时和取消清理本地 SSH 子进程；Release 桌面进程使用 GUI subsystem，避免启动时弹出终端。
 
 ### 6.2 主机指纹
 
@@ -196,13 +198,13 @@ DataRootManager
 - 不导入凭据、窗口位置和平台设置；
 - 失败时保留备份并回滚 pointer，不阻塞实时监控。
 
-当前 `serverpulse-platform` 已提供路径验证、pointer、预览、备份、原子复制、JSONL 去重合并和服务器配置合并基础；按分钟有效样本加权、旧 JSON 深度混读、完整 UI 向导和回滚验收仍需补充。
+当前 `serverpulse-platform` 已提供路径验证、pointer、预览、备份、原子复制、JSONL 去重合并、服务器配置读写和旧 Windows `Servers` schema 迁移基础；按分钟有效样本加权、旧 JSON 深度混读、完整 UI 向导和回滚验收仍需补充。
 
 ## 8. 前端与窗口
 
 主窗口为透明、无装饰、置顶的监控浮窗；管理窗口和历史窗口使用独立 Tauri Webview 窗口。Pinia 管理服务器列表、snapshot/status、历史查询、数据根目录、主题和语言。ECharts 负责历史曲线、缺口、tooltip 和固定详情。
 
-行为目标是对齐而不是 WPF 像素复制：保留置顶、透明、拖拽、缩放、托盘、贴边收起、主题和语言；允许 Web UI 重新设计布局。Preview 当前已提供主浮窗、管理/历史窗口、托盘菜单、状态卡片和基础历史图表；贴边、透明度、拖拽、主题语言设置、多服务器细节面板和 macOS 窗口行为仍需实机验收。
+行为目标是对齐而不是 WPF 像素复制：保留置顶、透明、拖拽、缩放、托盘、贴边收起、主题和语言；允许 Web UI 重新设计布局。Preview 当前已提供主浮窗、管理/历史窗口、托盘菜单、状态卡片、SSH config 发现、服务器新增/删除和基础历史图表；贴边、透明度、拖拽、主题语言设置、多服务器细节面板和 macOS 窗口行为仍需实机验收。
 
 官方 Tauri 插件仅用于通用文件、对话框、shell 和窗口状态；SSH、凭据、历史和窗口策略继续走最小权限的自定义 Rust command。
 
@@ -212,8 +214,8 @@ DataRootManager
 | --- | --- | --- |
 | M0 基线冻结 | 分支、tag、canonical sampler、黄金样例、配置/schema 固定 | 已完成 |
 | M1 Rust 核心 | 协议 v1/v2、CSV、缺失/partial、历史 JSON/JSONL、保留/迁移、错误模型、差分测试 | 基础能力已完成；加权聚合与完整差分待补 |
-| M2 SSH 垂直闭环 | OpenSSH、指纹、keyring/askpass、长期会话、退避、进程清理、单服务器 event→浮窗 | 基础闭环已完成；指纹、会话密码、长连接待补 |
-| M3 桌面 UI | 主浮窗、托盘、管理/历史窗口、多服务器、主题语言、ECharts、生命周期 | Preview 基础 UI 已完成；行为细节待补 |
+| M2 SSH 垂直闭环 | OpenSSH、指纹、keyring/askpass、长期会话、退避、进程清理、单服务器 event→浮窗 | 基础闭环已完成；SSH config/旧配置读取已补；指纹、会话密码、长连接待补 |
+| M3 桌面 UI | 主浮窗、托盘、管理/历史窗口、多服务器、主题语言、ECharts、生命周期 | 主浮窗、管理新增/删除和基础历史 UI 已完成；行为细节待补 |
 | M4 迁移稳定性 | 自定义根目录、导入向导、加权合并、异常回退、Windows 10/11 验证 | API 基础已完成；向导和 Windows 实机验收待补 |
 | M5 CI/Preview | Rust/Vitest/Playwright、Windows 构建、macOS Intel/ARM 构建、Preview 包 | workflow 已提交；macOS 与完整桌面测试待验证 |
 | v1.1 Agent | 保留 POSIX Agent、状态/注入/控制/拉取/合并/游标 | 不阻塞 Preview，但尚未迁移 |

@@ -139,6 +139,62 @@ impl ServerConfig {
     }
 }
 
+pub fn parse_server_configs(text: &str) -> Result<Vec<ServerConfig>, ServerPulseError> {
+    let value: serde_json::Value = serde_json::from_str(text)?;
+    let items = value
+        .get("servers")
+        .or_else(|| value.get("Servers"))
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut servers = Vec::with_capacity(items.len());
+    for item in items {
+        let server = if let Ok(server) = serde_json::from_value::<ServerConfig>(item.clone()) {
+            server
+        } else {
+            let id = string_field(&item, &["id", "Id"])
+                .or_else(|| string_field(&item, &["sshTarget", "SshTarget"]))
+                .ok_or_else(|| ServerPulseError::InvalidConfig("server id is missing".to_owned()))?;
+            let host = string_field(&item, &["host", "Host"])
+                .or_else(|| string_field(&item, &["sshTarget", "SshTarget"]))
+                .or_else(|| string_field(&item, &["hostname", "HostName"]))
+                .ok_or_else(|| ServerPulseError::InvalidConfig("server host is missing".to_owned()))?;
+            ServerConfig {
+                label: string_field(&item, &["label", "Label"]).unwrap_or_else(|| id.clone()),
+                id,
+                host,
+                user: string_field(&item, &["user", "User"]),
+                port: number_field(&item, &["port", "Port"]).and_then(|value| u16::try_from(value).ok()),
+                monitored: bool_field(&item, &["monitored", "Monitored"]).unwrap_or(true),
+            }
+        };
+        server.validate()?;
+        servers.push(server);
+    }
+    Ok(servers)
+}
+
+fn string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn number_field(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        })
+    })
+}
+
+fn bool_field(value: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| value.get(*key).and_then(serde_json::Value::as_bool))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum UserUsageStatus {
@@ -608,5 +664,17 @@ GPU_USER_STATUS=unavailable"#;
         let detail = error.public_error().detail.expect("detail");
         assert!(!detail.contains("top-secret"));
         assert!(detail.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn reads_legacy_windows_server_config() {
+        let servers = parse_server_configs(
+            r#"{"Version":1,"Servers":[{"Id":"3090","Label":"RTX 3090","SshTarget":"3090","HostName":"10.0.0.2","Port":22,"User":"alice","Monitored":true}]}"#,
+        )
+        .expect("legacy config should parse");
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].host, "3090");
+        assert_eq!(servers[0].user.as_deref(), Some("alice"));
+        assert_eq!(servers[0].port, Some(22));
     }
 }

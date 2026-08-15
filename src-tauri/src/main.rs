@@ -1,6 +1,11 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use chrono::{NaiveDate, SecondsFormat, Utc};
 use serverpulse_core::{history_day, AppError, MetricSnapshot, RetryState, ServerConfig};
-use serverpulse_platform::{ConflictMode, CredentialStore, DataRootManager, JsonHistoryStore, KeyringCredentialStore};
+use serverpulse_platform::{
+    read_server_configs, write_server_configs, ConflictMode, CredentialStore, DataRootManager,
+    JsonHistoryStore, KeyringCredentialStore,
+};
 use serverpulse_ssh::{SshTarget, SshTransport, SystemOpenSsh};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -59,36 +64,64 @@ fn to_command_error(error: impl std::fmt::Display) -> String {
 }
 
 fn parse_servers(text: &str) -> Result<Vec<ServerConfig>, String> {
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(to_command_error)?;
-    let servers = value
-        .get("servers")
-        .and_then(|items| items.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let mut result = Vec::new();
-    for value in servers {
-        let server: ServerConfig = serde_json::from_value(value).map_err(to_command_error)?;
-        server.validate().map_err(to_command_error)?;
-        result.push(server);
+    serverpulse_core::parse_server_configs(text).map_err(to_command_error)
+}
+
+fn discovered_servers() -> Vec<ServerConfig> {
+    SystemOpenSsh::default()
+        .discover_config_aliases()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|alias| ServerConfig {
+            id: alias.clone(),
+            label: alias.clone(),
+            host: alias,
+            user: None,
+            port: None,
+            monitored: true,
+        })
+        .collect()
+}
+
+fn merge_discovered_servers(servers: &mut Vec<ServerConfig>, discovered: Vec<ServerConfig>) {
+    for candidate in discovered {
+        if servers.iter().any(|server| {
+            server.id.eq_ignore_ascii_case(&candidate.id)
+                || server.host.eq_ignore_ascii_case(&candidate.host)
+        }) {
+            continue;
+        }
+        servers.push(candidate);
     }
-    Ok(result)
 }
 
 fn load_servers() -> Result<Vec<ServerConfig>, String> {
     let manager = DataRootManager::default();
     if let Ok(root) = manager.resolve() {
-        let path = root.join("servers.json");
-        if path.exists() {
-            return parse_servers(&fs::read_to_string(path).map_err(to_command_error)?);
+        if let Some(mut servers) = read_server_configs(&root).map_err(to_command_error)? {
+            merge_discovered_servers(&mut servers, discovered_servers());
+            return Ok(servers);
         }
     }
-    let repository_seed = std::env::current_dir()
-        .map_err(to_command_error)?
-        .join("config/servers.json");
+
+    let discovered = discovered_servers();
+    if !discovered.is_empty() {
+        return Ok(discovered);
+    }
+
+    let repository_seed = std::env::current_dir().map_err(to_command_error)?.join("config/servers.json");
     if repository_seed.exists() {
         return parse_servers(&fs::read_to_string(repository_seed).map_err(to_command_error)?);
     }
     parse_servers(SEED_SERVERS)
+}
+
+fn writable_servers() -> Result<(std::path::PathBuf, Vec<ServerConfig>), String> {
+    let root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let servers = read_server_configs(&root)
+        .map_err(to_command_error)?
+        .unwrap_or_else(discovered_servers);
+    Ok((root, servers))
 }
 
 fn history_line(server: &ServerConfig, timestamp: &str, snapshot: &MetricSnapshot) -> Result<String, String> {
@@ -259,6 +292,30 @@ async fn start_task(
 #[tauri::command]
 async fn list_servers() -> Result<Vec<ServerConfig>, String> {
     load_servers()
+}
+
+#[tauri::command]
+async fn save_server(server: ServerConfig) -> Result<Vec<ServerConfig>, String> {
+    server.validate().map_err(to_command_error)?;
+    let (root, mut servers) = writable_servers()?;
+    if let Some(existing) = servers.iter_mut().find(|existing| {
+        existing.id.eq_ignore_ascii_case(&server.id)
+            || existing.host.eq_ignore_ascii_case(&server.host)
+    }) {
+        *existing = server;
+    } else {
+        servers.push(server);
+    }
+    write_server_configs(&root, &servers).map_err(to_command_error)?;
+    Ok(servers)
+}
+
+#[tauri::command]
+async fn delete_server(server_id: String) -> Result<Vec<ServerConfig>, String> {
+    let (root, mut servers) = writable_servers()?;
+    servers.retain(|server| !server.id.eq_ignore_ascii_case(&server_id));
+    write_server_configs(&root, &servers).map_err(to_command_error)?;
+    Ok(servers)
 }
 
 #[tauri::command]
@@ -458,6 +515,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_servers,
+            save_server,
+            delete_server,
             start_monitoring,
             stop_monitoring,
             recheck_monitoring,

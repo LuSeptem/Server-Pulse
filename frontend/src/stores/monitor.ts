@@ -85,6 +85,24 @@ export const useMonitorStore = defineStore('monitor', {
       await invoke('stop_monitoring', { serverId })
       this.statuses[serverId] = 'stopped'
     },
+    async saveServer(server: ServerConfig, password = '', savePassword = false) {
+      this.servers = await invoke<ServerConfig[]>('save_server', { server })
+      if (savePassword && password) {
+        await invoke('save_credential', { server, password })
+      }
+      if (server.monitored) {
+        await this.start(server)
+      } else {
+        await this.stop(server.id)
+      }
+    },
+    async deleteServer(serverId: string) {
+      await this.stop(serverId).catch(() => undefined)
+      this.servers = await invoke<ServerConfig[]>('delete_server', { serverId })
+      delete this.snapshots[serverId]
+      delete this.statuses[serverId]
+      delete this.errors[serverId]
+    },
     async recheck(server: ServerConfig) {
       await invoke('recheck_monitoring', { server })
       this.statuses[server.id] = 'rechecking'

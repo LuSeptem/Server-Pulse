@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use serverpulse_core::{parse_metric_output, MetricSnapshot, ServerPulseError};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -80,6 +82,20 @@ impl Default for SystemOpenSsh {
 }
 
 impl SystemOpenSsh {
+    pub fn discover_config_aliases(&self) -> Result<Vec<String>, ServerPulseError> {
+        let Some(path) = default_config_path() else {
+            return Ok(Vec::new());
+        };
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut aliases = Vec::new();
+        let mut visited = HashSet::new();
+        read_config_file(&path, &mut visited, &mut aliases)?;
+        Ok(aliases)
+    }
+
     pub fn build_arguments(&self, target: &SshTarget) -> Vec<String> {
         let batch_mode = if target.credential_identity.is_some() { "no" } else { "yes" };
         let mut args = vec![
@@ -114,7 +130,9 @@ impl SystemOpenSsh {
         }
         #[cfg(windows)]
         {
-            command.creation_flags(0x0000_0200);
+            // Keep ssh.exe and the askpass helper from opening a console when
+            // the desktop application is launched from Explorer.
+            command.creation_flags(0x0800_0000 | 0x0000_0200);
         }
     }
 
@@ -170,6 +188,133 @@ impl SystemOpenSsh {
             credential_identity: None,
         })
     }
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    let home = if cfg!(windows) {
+        std::env::var_os("USERPROFILE")
+    } else {
+        std::env::var_os("HOME")
+    }?;
+    Some(PathBuf::from(home).join(".ssh").join("config"))
+}
+
+fn read_config_file(
+    path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    aliases: &mut Vec<String>,
+) -> Result<(), ServerPulseError> {
+    let identity = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(identity) {
+        return Ok(());
+    }
+    let text = fs::read_to_string(path)?;
+    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    for raw_line in text.lines() {
+        let line = raw_line.split('#').next().unwrap_or_default().trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let Some(directive) = fields.next() else {
+            continue;
+        };
+        if directive.eq_ignore_ascii_case("host") {
+            for pattern in fields {
+                let pattern = pattern.trim_matches(['"', '\'']);
+                if is_literal_alias(pattern) && !aliases.iter().any(|value| value == pattern) {
+                    aliases.push(pattern.to_owned());
+                }
+            }
+        } else if directive.eq_ignore_ascii_case("include") {
+            for include in fields {
+                let include = include.trim_matches(['"', '\'']);
+                for candidate in expand_include_path(include, base) {
+                    if candidate.is_file() {
+                        read_config_file(&candidate, visited, aliases)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expand_include_path(value: &str, base: &Path) -> Vec<PathBuf> {
+    let value = if value == "~" {
+        default_config_path()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from(value))
+    } else if let Some(rest) = value.strip_prefix("~/") {
+        default_config_path()
+            .and_then(|path| path.parent().map(|parent| parent.join(rest)))
+            .unwrap_or_else(|| PathBuf::from(value))
+    } else {
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            path
+        } else {
+            base.join(path)
+        }
+    };
+
+    if !value.to_string_lossy().contains(['*', '?']) {
+        return vec![value];
+    }
+    let Some(parent) = value.parent() else {
+        return Vec::new();
+    };
+    let Some(file_pattern) = value.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            wildcard_match(file_pattern, name).then_some(entry.path())
+        })
+        .collect()
+}
+
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let value = value.as_bytes();
+    let mut p = 0;
+    let mut v = 0;
+    let mut star = None;
+    let mut mark = 0;
+    while v < value.len() {
+        if p < pattern.len() && (pattern[p] == value[v] || pattern[p] == b'?') {
+            p += 1;
+            v += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star = Some(p);
+            p += 1;
+            mark = v;
+        } else if let Some(star) = star {
+            p = star + 1;
+            mark += 1;
+            v = mark;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+fn is_literal_alias(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains(['*', '?', '!'])
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
 }
 
 #[async_trait]
@@ -243,5 +388,33 @@ mod tests {
         assert!(args.contains("BatchMode=no"));
         assert!(args.contains("alice@server"));
         assert!(!args.contains("alice@server:22"));
+    }
+
+    #[test]
+    fn discovers_literal_host_aliases_and_skips_patterns() {
+        let mut aliases = Vec::new();
+        let mut visited = HashSet::new();
+        let root = std::env::temp_dir().join("serverpulse-ssh-config-test");
+        fs::create_dir_all(&root).expect("config root");
+        let path = root.join("config");
+        fs::write(
+            &path,
+            "Host *\n  User default\nHost gpu-01 gpu-02\nHost !excluded *-backup\n",
+        )
+        .expect("config file");
+        read_config_file(&path, &mut visited, &mut aliases).expect("read config");
+        assert_eq!(aliases, vec!["gpu-01", "gpu-02"]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn expands_simple_include_globs() {
+        let root = std::env::temp_dir().join("serverpulse-ssh-include-test");
+        fs::create_dir_all(root.join("conf.d")).expect("config root");
+        fs::write(root.join("conf.d/one"), "Host one\n").expect("include one");
+        fs::write(root.join("conf.d/two"), "Host two\n").expect("include two");
+        let matches = expand_include_path("conf.d/*", &root);
+        assert_eq!(matches.len(), 2);
+        let _ = fs::remove_dir_all(root);
     }
 }

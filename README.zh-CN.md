@@ -12,7 +12,7 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 `codex/tauri-port` 分支包含跨平台重写版本。现有 PowerShell/WPF 版本通过 `port-baseline-v1.1.0` 标签保留，新版本在同一仓库中独立开发。Preview 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不纳入 v1。
 
-当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、系统凭据库接入、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，服务器端 Agent 控制属于 v1.1，主机指纹确认和仅本次会话密码交互仍需在合并前补齐。
+当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现、旧版 Windows 服务器配置兼容、系统凭据库接入、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，服务器端 Agent 控制属于 v1.1，主机指纹确认和仅本次会话密码交互仍需在合并前补齐。
 
 在仓库根目录执行：
 
@@ -87,7 +87,9 @@ ssh -o BatchMode=yes a6000 hostname
 
 ## SSH 服务器与认证
 
-点击主窗口在线统计右侧的“管理”，或右键托盘图标选择“SSH 服务器”。候选服务器来自仓库 `config/servers.json`、当前用户 `~/.ssh/config` 中不含通配符的 `Host`，以及管理窗口手动添加的服务器。
+点击主窗口在线统计右侧的“管理”，或右键托盘图标选择“SSH 服务器”。候选服务器来自数据根目录中的 `servers.json`（兼容旧版 Windows 的 `Servers` / `SshTarget` / `HostName` 格式）、当前用户 `~/.ssh/config` 中不含通配符的 `Host` 及简单 `Include` 文件，以及管理窗口手动添加的服务器。
+
+管理窗口现在提供“添加服务器”表单，可填写 SSH 别名或主机名、可选用户/端口；明确勾选保存时，密码只写入 Windows 凭据管理器，不会写入 `servers.json`。
 
 “监视”复选框决定服务器是否生成实时卡片。缺少认证的服务器保持暂停，不会阻塞其他服务器。
 
@@ -266,6 +268,8 @@ server_monitoring/
 **保存的密码会被终端 ssh 使用吗？** 不会。它只供 Server Pulse 使用，终端 `ssh` 仍按自己的密钥、agent 或手动密码流程工作。
 
 **窗口找不到了？** 触碰启用的贴边位置或点击托盘图标；若位置不可用，删除 `%LOCALAPPDATA%\\ServerPulse\\settings.json` 恢复默认位置。
+
+**启动 Preview 时为什么有终端窗口？** 请从资源管理器或快捷方式启动生成的 `serverpulse-tauri.exe`；Release 版本使用 GUI 子系统，不会主动创建控制台。如果从 Windows Terminal 中输入命令启动，父终端按设计会继续保持打开。
 
 **如何报告问题？** 请附版本、Windows 版本、EXE/脚本模式、复现步骤和脱敏后的 `error.log`。不要上传历史目录、密码、私钥、真实主机地址或用户列表。
 

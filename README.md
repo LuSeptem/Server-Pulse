@@ -12,7 +12,7 @@ Current release: **v1.1.0** · [Bilingual release notes](CHANGELOG.md)
 
 The `codex/tauri-port` branch contains the cross-platform rewrite. It keeps the existing PowerShell/WPF release as the `port-baseline-v1.1.0` tag while the new application is developed in the same repository. The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop is out of scope for v1.
 
-The current vertical slice includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OS keyring integration, retry backoff, and redacted error events. The Preview is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac, server-side Agent control remains v1.1 work, and host-key confirmation/session-only password UX still needs completion before merge.
+The current vertical slice includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OpenSSH config discovery, legacy Windows server-config migration, OS keyring integration, retry backoff, and redacted error events. The Preview is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac, server-side Agent control remains v1.1 work, and host-key confirmation/session-only password UX still needs completion before merge.
 
 From the repository root:
 
@@ -91,9 +91,11 @@ Open **Manage** beside the online count in the main window, or choose **SSH serv
 
 Candidates are merged from:
 
-1. `config/servers.json` in this repository;
-2. concrete, non-wildcard `Host` entries in the current Windows user's `~/.ssh/config`;
+1. the existing data-root `servers.json` (including the legacy Windows `Servers` / `SshTarget` / `HostName` schema);
+2. concrete, non-wildcard `Host` entries in the current Windows user's `~/.ssh/config` and simple `Include` files;
 3. servers added manually in the manager.
+
+The manager now has an **Add server** form. It accepts an SSH alias or hostname, optional user/port, and can save an explicitly supplied password in Windows Credential Manager without writing it to `servers.json`.
 
 The **Monitor** checkbox controls whether a server produces a live card. A server that is not authenticated remains paused and does not block other servers.
 
@@ -275,6 +277,8 @@ server_monitoring/
 **Will a saved password be used by terminal SSH?** No. It is available only to Server Pulse; terminal `ssh` continues to use its own keys, agent, or interactive password flow.
 
 **The window is hidden.** Touch the enabled edge or click the tray icon. If its position is unusable, remove `%LOCALAPPDATA%\\ServerPulse\\settings.json` to restore defaults.
+
+**A terminal window appears when launching the Preview.** Use the generated `serverpulse-tauri.exe` from Explorer or a shortcut; the release build is a GUI-subsystem application and does not create a console. If it was started by typing the command in Windows Terminal, that parent terminal remains open by design.
 
 **How should I report a problem?** Include the app version, Windows version, EXE/script mode, reproduction steps, and a sanitized `error.log`. Never upload history, passwords, private keys, real host addresses, or user lists.
 
