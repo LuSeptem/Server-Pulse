@@ -1,0 +1,87 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e7ebe8;
+  background: transparent;
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: transparent;
+}
+
+button, input { font: inherit; }
+
+button {
+  border: 1px solid #3b4840;
+  border-radius: 7px;
+  color: #e7ebe8;
+  background: #18201b;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+button:hover { border-color: #8fd3a8; }
+button:active { transform: translateY(1px); }
+
+.app-shell { min-height: 100vh; padding: 12px; }
+.widget-window, .page-window {
+  min-height: calc(100vh - 24px);
+  border: 1px solid rgba(143, 211, 168, 0.25);
+  border-radius: 12px;
+  background: rgba(13, 16, 14, 0.94);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  padding: 16px;
+}
+
+.window-header, .page-header, .card-header, .summary-row, .card-actions, .manage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.window-header h1, .page-header h1 { margin: 2px 0 0; font-size: 20px; }
+.eyebrow { color: #8fd3a8; font-size: 10px; letter-spacing: 0.16em; }
+.header-actions { display: flex; gap: 5px; }
+.drag-region { -webkit-app-region: drag; }
+.no-drag, button, input { -webkit-app-region: no-drag; }
+
+.summary-row { margin: 14px 0; font-size: 12px; }
+.muted { color: #8c9991; font-size: 12px; }
+.server-list, .manage-list { display: grid; gap: 10px; }
+.server-card, .manage-row {
+  border: 1px solid #2a362e;
+  border-radius: 10px;
+  background: rgba(25, 34, 28, 0.84);
+  padding: 12px;
+}
+.server-card { display: grid; gap: 10px; }
+.card-header { align-items: flex-start; }
+.card-header strong, .manage-row strong { display: block; }
+.metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.metric { border-radius: 7px; padding: 8px; background: #111812; }
+.metric span, .metric strong { display: block; }
+.metric span { color: #8c9991; font-size: 11px; }
+.metric strong { margin-top: 3px; font-size: 16px; }
+.status-pill { border-radius: 999px; padding: 3px 8px; font-size: 11px; }
+.status-online { color: #b9f2c7; background: #164b2a; }
+.status-connecting, .status-rechecking { color: #ffe3a3; background: #57441c; }
+.status-offline { color: #ffb0a8; background: #57231f; }
+.status-stopped { color: #b5beb8; background: #313b34; }
+.card-actions { justify-content: flex-end; }
+.error-text { margin: 0; color: #ff9a91; font-size: 12px; }
+.page-window { background: #111712; }
+.page-header { margin-bottom: 16px; }
+.field { display: grid; gap: 6px; max-width: 220px; margin-bottom: 14px; }
+.field span { color: #9eaaa2; font-size: 12px; }
+input { border: 1px solid #3b4840; border-radius: 7px; padding: 8px; color: #e7ebe8; background: #18201b; }
+.history-chart { height: 360px; width: 100%; }
+.empty-state { display: grid; place-items: center; min-height: 180px; text-align: center; color: #9eaaa2; }
+@media (max-width: 600px) {
+  .app-shell { padding: 8px; }
+  .widget-window, .page-window { padding: 12px; }
+}

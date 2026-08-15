@@ -8,6 +8,25 @@ The repository seed configuration contains two SSH aliases, `3090` and `a6000`. 
 
 Current release: **v1.1.0** · [Bilingual release notes](CHANGELOG.md)
 
+## Tauri 2.0 Preview
+
+The `codex/tauri-port` branch contains the cross-platform rewrite. It keeps the existing PowerShell/WPF release as the `port-baseline-v1.1.0` tag while the new application is developed in the same repository. The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop is out of scope for v1.
+
+The current vertical slice includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OS keyring integration, retry backoff, and redacted error events. The Preview is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac, server-side Agent control remains v1.1 work, and host-key confirmation/session-only password UX still needs completion before merge.
+
+From the repository root:
+
+```powershell
+npm ci --prefix frontend
+npm --prefix frontend run typecheck
+npm --prefix frontend run test:unit
+npm --prefix frontend run build
+cargo test --workspace --manifest-path src-tauri/Cargo.toml
+npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
+```
+
+The complete scope, milestones, CI matrix, migration rules, and acceptance gates are documented in [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md). Do not treat this branch as a stable public release.
+
 ## What you can do
 
 - Watch several SSH servers in one compact, always-on-top floating window.
@@ -233,6 +252,10 @@ server_monitoring/
 ├─ config/                  # first-run seed configuration
 ├─ scripts/                 # build scripts
 ├─ src/                     # collector, history, storage, SSH, agent, theme, and host code
+├─ frontend/                # Vue 3 + TypeScript Preview UI
+├─ src-tauri/               # Tauri shell and platform-independent Rust crates
+├─ assets/serverpulse-sample.sh # canonical LF-only remote sampler
+├─ tests/fixtures/          # protocol and history golden fixtures
 ├─ tests/                   # automation and mock SSH
 ├─ docs/DEVELOPMENT.md      # contributor/developer documentation
 ├─ docs/TAURI-PORT-PLAN.md  # Tauri cross-platform port plan

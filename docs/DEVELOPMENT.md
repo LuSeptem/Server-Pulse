@@ -267,3 +267,36 @@ git status --short
 ## 10. 贡献约定
 
 保持单一主题提交；每次代码、配置或文档修改都同步更新 README，运行与改动匹配的测试，检查 diff 和工作区后再提交。提交信息应说明改动目的，不要把生成的用户数据或本机路径加入仓库。
+
+## 11. Tauri 2.0 Preview
+
+跨平台重写位于 `codex/tauri-port` 分支。`port-baseline-v1.1.0` 标签固定当前 Windows 版本，旧 PowerShell 实现继续作为迁移参考；Preview 合并前不得把两套实现混称为同一个发行版。
+
+### 工程边界
+
+- `frontend/` 是 Vue 3 + TypeScript + Pinia + ECharts UI，使用 npm 和 Vitest；`frontend/dist/index.html` 是允许 Rust 编译在未先构建前端时使用的最小占位入口，正式构建会被 Vite 产物覆盖。
+- `src-tauri/crates/serverpulse-core` 不依赖 Tauri，负责 v2 采样协议、指标模型、JSON/JSONL 读取、错误模型和重试状态。
+- `src-tauri/crates/serverpulse-ssh` 通过系统 OpenSSH 执行 LF 采样脚本，使用进程组、超时和 `kill_on_drop` 清理本地 SSH 子进程；已保存密码通过系统 keyring + askpass 入口读取，密码不进入参数或环境变量。
+- `src-tauri/crates/serverpulse-platform` 负责 Windows/macOS 数据根目录、location pointer、原子写入、跨平台文件锁、JSONL 合并和 `keyring` 凭据抽象。
+- `assets/serverpulse-sample.sh` 是唯一 canonical 远端脚本，必须保持 POSIX `sh` 兼容和 LF 行尾；`tests/fixtures/` 保存协议与历史黄金样例。
+
+### 本地命令
+
+从仓库根目录执行：
+
+```powershell
+npm ci --prefix frontend
+npm --prefix frontend run typecheck
+npm --prefix frontend run test:unit
+npm --prefix frontend run build
+cargo test --workspace --manifest-path src-tauri/Cargo.toml
+npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
+```
+
+Tauri CLI 必须从仓库根目录解析 `src-tauri/tauri.conf.json`；直接在 `frontend/` 中运行 CLI 会找不到同仓库的 Tauri 项目。构建当前需要 Windows WebView2 与本机 OpenSSH；macOS 产物由 GitHub Actions 生成。
+
+### Preview 边界
+
+当前代码已经覆盖单服务器 SSH→采样→Rust snapshot→Tauri event→浮窗、多个服务器任务、托盘/管理/历史窗口、JSONL 单样本落盘、数据根目录与迁移 API 基础、重试退避和错误脱敏。以下内容仍是 Preview 合并前的明确工作项，而不是已验证能力：主机指纹首次确认与变更阻断的完整 UX、仅本次会话密码的安全通道、按分钟加权聚合与旧 JSON 深度混读、完整服务器配置编辑、贴边/拖拽/透明度/主题语言设置、POSIX Agent 注入/控制/增量合并，以及 macOS 真实机器上的透明窗口、托盘、贴边和睡眠恢复验证。
+
+CI 由 `.github/workflows/tauri-preview.yml` 定义：Windows runner 执行 Rust/Vitest/类型检查和 Windows 构建；macOS matrix 生成 Intel 与 Apple Silicon 构建。没有真实 Mac 验证时，任何发布说明必须保留“macOS UI 未实机验证”的风险标记。Preview 不签名、不公证、不面向公开分发。

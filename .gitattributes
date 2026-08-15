@@ -1,0 +1,3 @@
+* text=auto
+*.sh text eol=lf
+assets/serverpulse-sample.sh text eol=lf

@@ -1,0 +1,11 @@
+[package]
+name = "serverpulse-ssh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+serverpulse-core = { path = "../serverpulse-core" }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["io-util", "process", "time"] }
+thiserror = "2"

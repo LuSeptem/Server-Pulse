@@ -1,0 +1,78 @@
+name: Server Pulse Tauri Preview
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags:
+      - "tauri-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Rust core and frontend tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: npm ci --prefix frontend
+      - run: npm --prefix frontend run typecheck
+      - run: npm --prefix frontend run test:unit
+      - run: npm --prefix frontend exec -- playwright install chromium
+      - run: npm --prefix frontend run test:e2e
+      - run: cargo test --workspace --manifest-path src-tauri/Cargo.toml
+
+  windows-build:
+    name: Windows x64 Tauri build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci --prefix frontend
+      - uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: .
+          tauriScript: npm --prefix frontend exec -- tauri
+          args: --config src-tauri/tauri.conf.json --ci
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/tauri-v') }}
+          workflowArtifactNamePattern: server-pulse-windows-x64
+
+  macos-build:
+    name: macOS ${{ matrix.arch }} Tauri build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - arch: apple-silicon
+            runner: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: npm ci --prefix frontend
+      - uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: .
+          tauriScript: npm --prefix frontend exec -- tauri
+          args: --config src-tauri/tauri.conf.json --ci --target ${{ matrix.target }}
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/tauri-v') }}
+          workflowArtifactNamePattern: server-pulse-macos-${{ matrix.arch }}

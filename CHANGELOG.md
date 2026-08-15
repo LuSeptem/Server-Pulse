@@ -1,5 +1,43 @@
 # Changelog
 
+## Tauri 2.0 Preview — Unreleased
+
+### 中文
+
+#### 新增
+
+- 新增 `codex/tauri-port` 同仓库重写分支、`port-baseline-v1.1.0` 基线标签，以及 Vue 3 + TypeScript + Pinia + ECharts 前端骨架。
+- 新增 Tauri 2 Rust workspace：协议/历史核心、系统 OpenSSH、跨平台数据根目录、文件锁和 `keyring` 凭据抽象。
+- 新增 canonical LF-only POSIX 采样脚本、协议/历史黄金样例、Rust/Vitest 测试和 Windows/macOS CI 构建矩阵。
+- 新增实时 snapshot/status 事件、Tokio 采集任务、JSONL 历史写入、迁移预览/应用、数据根目录命令和托盘/管理/历史窗口。
+
+#### 变更
+
+- Preview 目标改为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端和服务器 Agent 控制移至 v1.1。
+- Preview 为未签名内部版本；macOS 透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验证。
+
+#### 未完成
+
+- 主机指纹确认/变更阻断的完整界面、仅本次会话密码通道、按分钟加权聚合、完整服务器编辑、Agent 注入控制和 macOS 实机验收仍需在 Preview 合并前完成。
+
+### English
+
+#### Added
+
+- Added the `codex/tauri-port` same-repository rewrite branch, the `port-baseline-v1.1.0` baseline tag, and the Vue 3 + TypeScript + Pinia + ECharts frontend scaffold.
+- Added a Tauri 2 Rust workspace for protocol/history core logic, system OpenSSH, cross-platform data roots, file locks, and the `keyring` credential abstraction.
+- Added the canonical LF-only POSIX sampler, protocol/history golden fixtures, Rust/Vitest tests, and a Windows/macOS CI build matrix.
+- Added Tokio collectors, typed snapshot/status events, JSONL history writes, migration preview/apply commands, data-root commands, and tray/manage/history windows.
+
+#### Changed
+
+- The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop and server Agent control move to v1.1.
+- The Preview is unsigned and for internal testing; macOS transparency, tray, edge docking, and sleep/resume remain unverified on physical hardware.
+
+#### Remaining
+
+- Full host-key confirmation/change blocking UX, the session-only password channel, minute-weighted aggregation, complete server editing, Agent injection/control, and physical Mac acceptance remain required before Preview merge.
+
 ## v1.1.0 — 2026-08-15
 
 ### 中文

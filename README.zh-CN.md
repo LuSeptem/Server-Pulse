@@ -8,6 +8,25 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 当前版本：**v1.1.0** · [中英双语更新说明](CHANGELOG.md)
 
+## Tauri 2.0 Preview
+
+`codex/tauri-port` 分支包含跨平台重写版本。现有 PowerShell/WPF 版本通过 `port-baseline-v1.1.0` 标签保留，新版本在同一仓库中独立开发。Preview 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不纳入 v1。
+
+当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、系统凭据库接入、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，服务器端 Agent 控制属于 v1.1，主机指纹确认和仅本次会话密码交互仍需在合并前补齐。
+
+在仓库根目录执行：
+
+```powershell
+npm ci --prefix frontend
+npm --prefix frontend run typecheck
+npm --prefix frontend run test:unit
+npm --prefix frontend run build
+cargo test --workspace --manifest-path src-tauri/Cargo.toml
+npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
+```
+
+完整范围、里程碑、CI 矩阵、迁移规则和验收门槛见 [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md)。该分支不应视为稳定公开发行版。
+
 ## 功能概览
 
 - 在一个紧凑、可置顶的浮窗中同时查看多台 SSH 服务器。
@@ -224,6 +243,10 @@ server_monitoring/
 ├─ config/                  # 首次运行种子配置
 ├─ scripts/                 # 构建脚本
 ├─ src/                     # 采集、历史、存储、SSH、主题和宿主源码
+├─ frontend/                # Vue 3 + TypeScript Preview 界面
+├─ src-tauri/               # Tauri 宿主与平台无关 Rust crate
+├─ assets/serverpulse-sample.sh # canonical、仅 LF 的远端采样脚本
+├─ tests/fixtures/           # 协议与历史黄金样例
 ├─ tests/                   # 自动化测试和模拟 SSH
 ├─ docs/DEVELOPMENT.md      # 开发者文档
 ├─ docs/TAURI-PORT-PLAN.md  # Tauri 跨平台移植方案
