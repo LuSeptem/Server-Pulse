@@ -289,6 +289,10 @@ function Get-HistoryStoredUsageState {
 function Merge-HistoryStoredUserUsage {
     param([object[]]$Usages,[ValidateSet('Cpu','Memory','GpuMemory')][string]$Kind)
     $states=@($Usages|ForEach-Object{Get-HistoryStoredUsageState $_ $Kind}|Where-Object{$_.ValidSamples -gt 0})
+    # Windows PowerShell 5.1: Measure-Object over an empty input yields $null,
+    # so $null.Sum would throw under StrictMode for minutes whose only records
+    # are all-unavailable (e.g. merged agent records from a failed period).
+    if($states.Count -eq 0){return [PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@()}}
     $total=($states|Measure-Object ValidSamples -Sum).Sum
     if($null -eq $total -or $total -le 0){return [PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@()}}
     $identities=@{}

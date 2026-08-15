@@ -1161,4 +1161,16 @@ $agentClean=Merge-ServerPulseAgentRecords -Server $mockAgentServer -HistoryDirec
 Assert-Equal $agentClean.CleanedFiles 1 '合并后清理服务器端旧记录文件'
 $agentCleanTemp=Join-Path ([IO.Path]::GetTempPath()) 'serverpulse-agent-clean-check';if(Test-Path -LiteralPath $agentCleanTemp){Remove-Item -LiteralPath $agentCleanTemp -Recurse -Force -ErrorAction SilentlyContinue}
 
+# merged agent records from a failed period (all-unavailable user usage)
+# must merge to 'unavailable', not throw: Windows PowerShell 5.1 returns
+# $null from Measure-Object over empty input, so $null.Sum used to break.
+$emptyUsageState=Merge-HistoryStoredUserUsage -Usages @([PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@()}) -Kind Cpu
+Assert-Equal $emptyUsageState.Status 'unavailable' '全不可用用户样本合并返回不可用而非抛异常'
+$emptyUsageState2=Merge-HistoryStoredUserUsage -Usages @() -Kind Memory
+Assert-Equal $emptyUsageState2.Status 'unavailable' '空用户样本合并返回不可用而非抛异常'
+$emptyMinuteRecord=[PSCustomObject]@{Timestamp='2026-08-12T23:22:00';SampleCount=18;Servers=@([PSCustomObject]@{Id='a6000';Label='A';Host='h';OnlineSamples=0;TotalSamples=18;LatencyMs=$null;Hostname='';CpuPercent=$null;CpuUserUsage=[PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@()};MemoryUsedMiB=$null;MemoryTotalMiB=$null;MemoryPercent=$null;MemoryUserUsage=[PSCustomObject]@{Status='unavailable';ValidSamples=0;Users=@()};LoadOne=$null;LoadFive=$null;LoadFifteen=$null;UptimeSeconds=$null;Gpus=@()})}
+$dupEmptyMerge=Merge-HistoryMinuteRecords -Records @($emptyMinuteRecord,$emptyMinuteRecord)
+Assert-Equal $dupEmptyMerge.Servers[0].CpuUserUsage.Status 'unavailable' '重复全空分钟合并返回不可用而非抛异常'
+Assert-Equal $dupEmptyMerge.Servers[0].CpuPercent $null '重复全空分钟合并不产生虚假数值'
+
 Write-Output "PASS: $passed assertions"
