@@ -1037,6 +1037,9 @@ $agentAwkOpen=$agentScript.IndexOf([char]39,$agentAwkStart)
 $agentAwkClose=$agentScript.IndexOf("' `"`$sp_state",$agentAwkStart)
 $agentAwkBody=$agentScript.Substring($agentAwkOpen+1,$agentAwkClose-$agentAwkOpen-1)
 Assert-Equal ([bool]($agentAwkBody.Contains([char]39))) $false '代理聚合 awk 不含单引号'
+$agentAwkGpuEndIndex=$script:ServerPulseAgentAwk.IndexOf('if ($0 == "GPUS_END")')
+$agentAwkGpuSectionIndex=$script:ServerPulseAgentAwk.IndexOf('if (in_gpus)')
+Assert-Equal ($agentAwkGpuEndIndex -ge 0 -and $agentAwkGpuEndIndex -lt $agentAwkGpuSectionIndex) $true '代理聚合 awk 先退出 GPU 区段再解析 GPU 行'
 $agentConfig=New-ServerPulseAgentConfigText -ServerId 'agent-test-1' -Label 'L' -ServerHost 'h' -IntervalSeconds 7 -RetentionDays 40
 Assert-Equal ([bool]($agentConfig -match "interval=7`n")) $true '代理配置包含采样间隔'
 Assert-Equal ([bool]($agentConfig -match "retention_days=40`n")) $true '代理配置包含保留天数'

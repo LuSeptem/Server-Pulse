@@ -379,6 +379,7 @@ BEGIN {
   next
 }
 {
+  if ($0 == "GPUS_END") { in_gpus = 0; next }
   if (in_gpus) {
     if ($0 != "") {
       nf = csvsplit($0, gfields)
@@ -410,7 +411,6 @@ BEGIN {
     next
   }
   if ($0 == "GPUS_BEGIN") { in_gpus = 1; next }
-  if ($0 == "GPUS_END") { in_gpus = 0; next }
   eq = index($0, "=")
   if (eq <= 0) next
   key = substr($0, 1, eq - 1)

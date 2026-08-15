@@ -197,12 +197,13 @@ Open **Manage** and use the server-side monitoring row under each server:
 - **Inject** writes the agent and starts it detached from the SSH session; it keeps running when the app exits or the connection drops. Injecting again while it is running is a no-op.
 - **Stop** sends TERM (KILL after a grace period); **Restart** rewrites and restarts the agent; **Uninstall** stops it and removes `~/.serverpulse` (records included — merge them first if you still need them).
 - **Configure** sets the sample interval (1–3600 s), server-side retention in days (1–3650), and whether a stopped agent is re-injected automatically when the app starts.
-- **Merge records** pulls the server-side records, converts their UTC minutes to local time, and merges them into local history. For a minute that exists on both sides, the record with more online samples wins; a tie keeps the local record. An incremental cursor avoids re-pulling merged minutes, and **Merge all** does this for every configured server. The merge dialog can also delete the merged server-side files afterwards (off by default; the agent itself prunes records older than the configured retention).
+- **Merge records** pulls the server-side records, converts their UTC minutes to local time, and merges them into local history. Per-user CPU, memory, and per-GPU VRAM attribution is preserved whenever the server sample contains it; unavailable or partial collection remains explicit. For a minute that exists on both sides, the record with more online samples wins; a tie keeps the local record. An incremental cursor avoids re-pulling merged minutes, and **Merge all** does this for every configured server. The merge dialog can also delete the merged server-side files afterwards (off by default; the agent itself prunes records older than the configured retention).
 - The History settings panel has **Auto-merge server records on startup** (off by default).
 
 Notes and limits:
 
 - The agent writes UTC minute timestamps and the merge converts them to your local timezone, so timezone differences between the server and your machine are handled.
+- After updating Server Pulse, use **Restart** or **Inject** once for an existing server-side agent so it receives the current aggregation script; previously generated records cannot be retroactively reconstructed with user details.
 - A server reboot stops the agent (it is a plain user process). The badge shows Stopped; re-inject manually or enable auto-restore in Configure.
 - Records contain the same data as local history — UIDs, usernames, and minute aggregates — never PIDs, process names, command lines, or passwords.
 - The server needs POSIX `sh`, `awk`, `/proc`, and optionally `nvidia-smi` — the same requirements as live monitoring.
