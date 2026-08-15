@@ -984,6 +984,23 @@ $serverManagerSourceText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..
 Assert-Equal ([bool]($serverManagerSourceText -match '\. \$CoreModulePath')) $true '管理窗口代理后台任务显式加载 Core 模块'
 $mainSourceText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw
 Assert-Equal ([bool]($mainSourceText -match '\. \$CoreModulePath')) $true '启动后台任务显式加载 Core 模块'
+
+# A server already running an agent without a local config entry must be
+# adopted on the next status probe; a bare server stays 'not configured'.
+$adoptBadge=[Windows.Controls.TextBlock]::new()
+function New-AdoptRow([string]$Id) {
+    return [PSCustomObject]@{Server=[PSCustomObject]@{Id=$Id;Label='A';Source='sshConfig';SshTarget='a';HostName='a';Port=22;User='u';Identity="u@a:22";Monitored=$false};AgentStatus='unknown';AgentBusy=$false;AgentBadge=$adoptBadge;AgentInjectButton=$null;AgentStopButton=$null;AgentRestartButton=$null;AgentConfigButton=$null;AgentMergeButton=$null;AgentUninstallButton=$null}
+}
+$adoptContext=[PSCustomObject]@{Window=$null;AgentState=New-ServerPulseAgentState;AgentStatePath='';Rows=@()}
+$adoptRow=New-AdoptRow 'adopt-1'
+Complete-ServerManagerAgentOperation $adoptContext ([PSCustomObject]@{RowState=$adoptRow;Action='status'}) ([PSCustomObject]@{Status='running';Error='';Pid='1';HeartbeatAgeSeconds=2})
+Assert-Equal ($null -ne (Get-ServerPulseAgentServerEntry $adoptContext.AgentState 'adopt-1')) $true '检测到运行中代理时为无配置服务器建立本地条目'
+Assert-Equal $adoptRow.AgentStatus 'running' '收养后徽标显示运行中'
+$adoptContext2=[PSCustomObject]@{Window=$null;AgentState=New-ServerPulseAgentState;AgentStatePath='';Rows=@()}
+$adoptRow2=New-AdoptRow 'adopt-2'
+Complete-ServerManagerAgentOperation $adoptContext2 ([PSCustomObject]@{RowState=$adoptRow2;Action='status'}) ([PSCustomObject]@{Status='not_installed';Error='';Pid=$null;HeartbeatAgeSeconds=$null})
+Assert-Equal ($null -eq (Get-ServerPulseAgentServerEntry $adoptContext2.AgentState 'adopt-2')) $true '未检测到代理时不建立本地条目'
+Assert-Equal $adoptRow2.AgentStatus 'not_configured' '未检测到代理时保持未配置'
 $agentLoopScript = New-ServerPulseRemoteLoopScript -SampleScript $agentSample -IntervalSeconds 5
 Assert-Equal ([bool]($agentLoopScript -match "`r")) $false '长期会话循环脚本保持 LF 行尾'
 $agentScript = New-ServerPulseAgentScript -ServerId 'agent-test-1' -Label 'Label "X"' -ServerHost 'host1' -SampleScript $agentSample -IntervalSeconds 7 -RetentionDays 40

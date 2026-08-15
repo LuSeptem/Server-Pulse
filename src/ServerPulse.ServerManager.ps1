@@ -434,6 +434,11 @@ function Invoke-ServerManagerAgentOperation {
     $serverJson=$RowState.Server|ConvertTo-Json -Compress
     $password=Get-ServerPulseAuthenticationPassword $RowState $Context.SessionSecrets
     $entry=Get-ServerPulseAgentServerEntry $Context.AgentState ([string]$RowState.Server.Id)
+    # Every non-status operation works with local config defaults; record the
+    # entry so an injected agent survives reopening the manager.
+    if($null-eq$entry-and$Action-ne'status'){
+        $entry=Set-ServerPulseAgentServerEntry -State $Context.AgentState -Id ([string]$RowState.Server.Id)
+    }
     $interval=if($null-ne$entry){[int]$entry.IntervalSeconds}else{5}
     $retention=if($null-ne$entry){[int]$entry.RetentionDays}else{30}
     $cursor=if($null-ne$entry){[string]$entry.MergeCursorUtc}else{$null}
@@ -478,10 +483,25 @@ function Complete-ServerManagerAgentOperation {
     switch($Op.Action){
         'status'{
             $status=[string]$Payload.Status
-            if($status-eq'error'){Set-ServerManagerAgentStatus $row error ([string]$Payload.Error)}
+            if($status-eq'error'){
+                if($null-ne$entry){Update-ServerPulseAgentStatusState $entry $Payload;Set-ServerManagerAgentStatus $row error ([string]$Payload.Error)}
+                else{Set-ServerManagerAgentStatus $row not_configured}
+            }
+            elseif($null-eq$entry){
+                # A server can already run an agent without a local config
+                # entry (e.g. injected before the entry was written). Adopt
+                # it so the status survives reopening the manager.
+                if($status-in@('running','stale','stopped')){
+                    $entry=Set-ServerPulseAgentServerEntry -State $Context.AgentState -Id ([string]$row.Server.Id)
+                    Update-ServerPulseAgentStatusState $entry $Payload
+                    Set-ServerManagerAgentStatus $row $status
+                }else{
+                    Set-ServerManagerAgentStatus $row not_configured
+                }
+            }
             else{
+                Update-ServerPulseAgentStatusState $entry $Payload
                 Set-ServerManagerAgentStatus $row $status
-                if($null-ne$entry){Update-ServerPulseAgentStatusState $entry $Payload}
             }
         }
         'merge'{
@@ -624,7 +644,13 @@ function Show-ServerPulseServerManager {
     $context=[PSCustomObject]@{Window=$window;Panel=$panel;Intro=$intro;AddButton=$add;ApplyButton=$apply;CancelButton=$cancel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;ValidationStates=$ValidationStates;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryState='waiting';DiscoveryCount=0;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied;AgentStatePath=$AgentStatePath;HistoryDirectory=$HistoryDirectory;AgentModulePath=$AgentModulePath;SampleModulePath=$SampleModulePath;StorageModulePath=$StorageModulePath;CoreModulePath=$CoreModulePath;AgentState=$(if(-not[string]::IsNullOrWhiteSpace($AgentStatePath)){Read-ServerPulseAgentState $AgentStatePath}else{New-ServerPulseAgentState});AgentOps=[Collections.ArrayList]::new();AgentOpTimer=$null;MergeAllButton=$mergeAll}
     foreach($server in @($Store.Servers)){ $copy=Copy-ServerPulseManagedServer $server;$row=New-ServerManagerRow $context $copy;[void]$context.Rows.Add($row);[void]$panel.Children.Add($row.Surface) }
     Start-ServerManagerCandidateDiscovery $context
-    foreach($row in @($context.Rows)){if($null-ne(Get-ServerPulseAgentServerEntry $context.AgentState ([string]$row.Server.Id))){Invoke-ServerManagerAgentOperation $context $row status}}
+    # Probe every row once the window is shown: rows with a local entry
+    # refresh their badge, and rows without one adopt an agent that is
+    # already running on the server (see Complete-ServerManagerAgentOperation).
+    # Deferred so construction and smoke tests never depend on SSH state.
+    if(-not$SmokeTest){
+        $window.Add_Loaded({param($sender,$eventArgs);$ctx=$sender.Tag;foreach($row in @($ctx.Rows)){try{Invoke-ServerManagerAgentOperation $ctx $row status}catch{}}})
+    }
     $mergeAll.Tag=$context;$mergeAll.Add_Click({param($sender,$eventArgs);$ctx=$sender.Tag;foreach($row in @($ctx.Rows)){if($null-ne(Get-ServerPulseAgentServerEntry $ctx.AgentState ([string]$row.Server.Id))){Invoke-ServerManagerAgentOperation $ctx $row merge}}})
     $add.Tag=$context;$add.Add_Click({param($sender,$eventArgs);$ctx=$sender.Tag;$result=Show-ServerPulseManualServerDialog $ctx.Window;if($null-ne$result){$row=New-ServerManagerRow $ctx $result.Server;[void]$ctx.Rows.Add($row);[void]$ctx.Panel.Children.Add($row.Surface);Invoke-ServerManagerRowTest $row}})
     $cancel.Tag=$window;$cancel.Add_Click({param($sender,$eventArgs);$sender.Tag.Close()})
