@@ -226,6 +226,7 @@ server_monitoring/
 ├─ src/                     # 采集、历史、存储、SSH、主题和宿主源码
 ├─ tests/                   # 自动化测试和模拟 SSH
 ├─ docs/DEVELOPMENT.md      # 开发者文档
+├─ docs/TAURI-PORT-PLAN.md  # Tauri 跨平台移植方案
 ├─ CHANGELOG.md             # 中英双语版本历史和发布说明
 ├─ README.md                # 英文说明书
 └─ README.zh-CN.md         # 中文说明书
@@ -248,6 +249,8 @@ server_monitoring/
 ## 开发者文档
 
 架构、采集协议、历史格式、构建、测试、安全边界和发布检查清单位于 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。普通用户只需要阅读本文。
+
+跨平台移植（Tauri）的规划见 [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md)。
 
 本地协作说明文件 `AGENTS.md` 仅保留在本地版本控制之外，不会包含在公开源码快照中。
 

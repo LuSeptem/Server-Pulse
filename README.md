@@ -235,6 +235,7 @@ server_monitoring/
 ├─ src/                     # collector, history, storage, SSH, agent, theme, and host code
 ├─ tests/                   # automation and mock SSH
 ├─ docs/DEVELOPMENT.md      # contributor/developer documentation
+├─ docs/TAURI-PORT-PLAN.md  # Tauri cross-platform port plan
 ├─ CHANGELOG.md             # bilingual version history and release notes
 ├─ README.md                # English user manual
 └─ README.zh-CN.md          # Chinese user manual
@@ -257,6 +258,8 @@ server_monitoring/
 ## Development
 
 Architecture, collection protocol, history format, building, testing, security boundaries, and the release checklist are in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). End users only need this manual.
+
+The cross-platform (Tauri) port plan is in [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md).
 
 Local agent instructions in `AGENTS.md` are kept outside version control and are not included in published source snapshots.
 
