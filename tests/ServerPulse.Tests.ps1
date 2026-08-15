@@ -1085,6 +1085,12 @@ $agentPulled=ConvertFrom-ServerPulseAgentPull -Output $agentPullOutput -KnownSer
 Assert-Equal "$($agentPulled.PulledLines):$($agentPulled.Entries.Count):$($agentPulled.DroppedUnknown):$($agentPulled.CorruptLines)" '3:1:1:1' '合并拉取解析统计正确'
 $agentPulledCursor=ConvertFrom-ServerPulseAgentPull -Output $agentPullOutput -KnownServerIds @('agent-test-1') -CursorUtc '2026-08-11T04:05'
 Assert-Equal $agentPulledCursor.Entries.Count 0 '合并游标跳过已合并分钟'
+$agentPullFlag=@('SP_AGENT_RECORD_FILES=0','__SP_DONE__') -join "`n"
+$agentPulledFlag=ConvertFrom-ServerPulseAgentPull -Output $agentPullFlag -KnownServerIds @('agent-test-1') -CursorUtc $null
+Assert-Equal "$($agentPulledFlag.PulledLines):$($agentPulledFlag.RecordFiles):$($agentPulledFlag.CorruptLines)" '0:0:0' '拉取输出识别无记录文件标记'
+$agentPullFlag2=@('SP_AGENT_RECORD_FILES=2','__SP_FILE__2026-08-11','{"Version":2,"Record":{"Timestamp":"2026-08-11T04:05:00","SampleCount":10,"Servers":[{"Id":"agent-test-1","OnlineSamples":10,"Gpus":[]}]}}','__SP_DONE__') -join "`n"
+$agentPulledFlag2=ConvertFrom-ServerPulseAgentPull -Output $agentPullFlag2 -KnownServerIds @('agent-test-1') -CursorUtc $null
+Assert-Equal "$($agentPulledFlag2.PulledLines):$($agentPulledFlag2.RecordFiles):$($agentPulledFlag2.CorruptLines)" '1:2:0' '拉取输出识别记录文件数'
 Assert-Equal (Resolve-ServerPulseAgentConflict ([PSCustomObject]@{Id='x';OnlineSamples=5}) ([PSCustomObject]@{Id='x';OnlineSamples=8})) 'server' '冲突规则样本多者胜'
 Assert-Equal (Resolve-ServerPulseAgentConflict ([PSCustomObject]@{Id='x';OnlineSamples=5}) ([PSCustomObject]@{Id='x';OnlineSamples=5})) 'local' '冲突规则平局保留本地'
 

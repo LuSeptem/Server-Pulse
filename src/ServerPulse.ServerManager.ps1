@@ -512,7 +512,7 @@ function Complete-ServerManagerAgentOperation {
                     $entry.LastMergeAt=[DateTime]::UtcNow.ToString('o')
                     $entry.LastMergeSummary=$summary|Select-Object PulledLines,Added,Updated,Skipped,DroppedUnknown,CorruptLines,CleanedFiles,DurationMs
                 }
-                $text=Get-ServerPulseText 'agent.mergeSummary' @([int]$summary.PulledLines,[int]$summary.Added,[int]$summary.Updated,[int]$summary.Skipped,[int]$summary.DroppedUnknown,[int]$summary.CorruptLines,[int]$summary.CleanedFiles,[int]$summary.DurationMs)
+                $text=if([int]$summary.PulledLines -eq 0 -and [int]$summary.RecordFiles -eq 0){Get-ServerPulseText 'agent.mergeEmpty'}else{Get-ServerPulseText 'agent.mergeSummary' @([int]$summary.PulledLines,[int]$summary.Added,[int]$summary.Updated,[int]$summary.Skipped,[int]$summary.DroppedUnknown,[int]$summary.CorruptLines,[int]$summary.CleanedFiles,[int]$summary.DurationMs)}
                 [Windows.MessageBox]::Show($Context.Window,$text,(Get-ServerPulseText 'agent.mergeResult'),'OK','Information')|Out-Null
                 Invoke-ServerManagerAgentOperation $Context $row status
             }else{
