@@ -6,6 +6,8 @@
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.History.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.Persistent.ps1')
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.Sample.ps1')
+. (Join-Path $PSScriptRoot '..\src\ServerPulse.Agent.ps1')
 . (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1')
 
 $passed = 0
@@ -952,5 +954,131 @@ try {
     if(Test-Path -LiteralPath $storageRoot){Remove-Item -LiteralPath $storageRoot -Recurse -Force -ErrorAction SilentlyContinue}
     $envTest=Join-Path $env:TEMP 'ServerPulse-storage-env-test';if(Test-Path -LiteralPath $envTest){Remove-Item -LiteralPath $envTest -Recurse -Force -ErrorAction SilentlyContinue}
 }
+
+# --- server-side agent module ---
+
+$agentSample = Get-ServerPulseSampleScript
+Assert-Equal ([bool]($agentSample -match 'GPU_USER_STATUS')) $true '共享采样脚本包含 GPU 用户状态'
+$agentScript = New-ServerPulseAgentScript -ServerId 'agent-test-1' -Label 'Label "X"' -ServerHost 'host1' -SampleScript $agentSample -IntervalSeconds 7 -RetentionDays 40
+Assert-Equal ([bool]($agentScript -match 'sp_interval=7')) $true '代理脚本注入采样间隔'
+Assert-Equal ([bool]($agentScript -match 'sp_retention_days=40')) $true '代理脚本注入保留天数'
+Assert-Equal ([bool]($agentScript -match 'Label  X')) $true '代理脚本消毒引号标签'
+Assert-Equal ([bool]($agentScript -match '__SP_SAMPLE__')) $true '代理脚本包含采样标记'
+Assert-Equal ([bool]($agentScript -match 'trap .sp_finish. TERM INT')) $true '代理脚本安装退出清理陷阱'
+$agentAwkStart=$agentScript.IndexOf('awk -v sp_minute')
+$agentAwkOpen=$agentScript.IndexOf([char]39,$agentAwkStart)
+$agentAwkClose=$agentScript.IndexOf("' `"`$sp_state",$agentAwkStart)
+$agentAwkBody=$agentScript.Substring($agentAwkOpen+1,$agentAwkClose-$agentAwkOpen-1)
+Assert-Equal ([bool]($agentAwkBody.Contains([char]39))) $false '代理聚合 awk 不含单引号'
+$agentConfig=New-ServerPulseAgentConfigText -ServerId 'agent-test-1' -Label 'L' -ServerHost 'h' -IntervalSeconds 7 -RetentionDays 40
+Assert-Equal ([bool]($agentConfig -match "interval=7`n")) $true '代理配置包含采样间隔'
+Assert-Equal ([bool]($agentConfig -match "retention_days=40`n")) $true '代理配置包含保留天数'
+Assert-Equal (Get-ServerPulseAgentFolder) '.serverpulse' '代理目录固定为隐藏目录'
+
+# status detection and control via a mocked SSH connection
+# The mock is installed here, after all earlier tests that use the real one;
+# the remaining agent tests are the last section of the suite.
+function Invoke-ServerPulseServerConnection {
+    param($Server,[string]$Script,[string]$AuthMode='auto',[string]$Password,[int]$TimeoutMs=8000,[string]$AskPassPath,[string]$SshPath='ssh.exe')
+    if ($Script -match 'SP_AGENT_INSTALLED=1') { return [PSCustomObject]@{Status='online';AuthMode='passwordless';Output=$script:ServerPulseTestStatusOutput;Error=$null} }
+    if ($Script -match 'rm -rf "\$sp"') { return [PSCustomObject]@{Status='online';AuthMode='passwordless';Output='SP_AGENT_RESULT=uninstalled';Error=$null} }
+    if ($Script -match 'SERVERPULSE_AGENT_EOF') { return [PSCustomObject]@{Status='online';AuthMode='passwordless';Output='SP_AGENT_RESULT=started';Error=$null} }
+    if ($Script -match 'kill -TERM') { return [PSCustomObject]@{Status='online';AuthMode='passwordless';Output='SP_AGENT_RESULT=stopped';Error=$null} }
+    if ($Script -match 'SP_AGENT_RUNNING=') { return [PSCustomObject]@{Status='online';AuthMode='passwordless';Output="SP_AGENT_RESULT=config_updated`nSP_AGENT_RUNNING=1";Error=$null} }
+    if ($Script -match 'SP_AGENT_CLEANED=') { return [PSCustomObject]@{Status='online';AuthMode='passwordless';Output="SP_AGENT_CLEANED=2026-08-10`n__SP_DONE__";Error=$null} }
+    if ($Script -match '__SP_FILE__') { return [PSCustomObject]@{Status='online';AuthMode='passwordless';Output=$script:ServerPulseTestPullOutput;Error=$null} }
+    return [PSCustomObject]@{Status='offline';AuthMode='passwordless';Output='';Error='mock connection not matched'}
+}
+$mockAgentServer=[PSCustomObject]@{Id='agent-test-1';Label='Agent';Source='manual';SshTarget='mock-agent';HostName='mock-agent';Port=22;User='alice';Identity='alice@mock-agent:22'}
+$script:ServerPulseTestStatusOutput="SP_AGENT_INSTALLED=1`nSP_AGENT_STATUS=running`nSP_AGENT_PID=1234`nSP_AGENT_HB_AGE=5"
+$agentStatus=Get-ServerPulseAgentStatus -Server $mockAgentServer -IntervalSeconds 5
+Assert-Equal $agentStatus.Status 'running' '代理状态检测识别运行中'
+$script:ServerPulseTestStatusOutput="SP_AGENT_INSTALLED=1`nSP_AGENT_STATUS=running`nSP_AGENT_PID=1234`nSP_AGENT_HB_AGE=200"
+$agentStatus=Get-ServerPulseAgentStatus -Server $mockAgentServer -IntervalSeconds 5
+Assert-Equal $agentStatus.Status 'stale' '心跳过期识别为卡顿'
+$script:ServerPulseTestStatusOutput="SP_AGENT_INSTALLED=0`nSP_AGENT_STATUS=stopped"
+$agentStatus=Get-ServerPulseAgentStatus -Server $mockAgentServer -IntervalSeconds 5
+Assert-Equal $agentStatus.Status 'not_installed' '未注入状态识别'
+$script:ServerPulseTestStatusOutput="SP_AGENT_INSTALLED=1`nSP_AGENT_STATUS=stopped"
+$agentStatus=Get-ServerPulseAgentStatus -Server $mockAgentServer -IntervalSeconds 5
+Assert-Equal $agentStatus.Status 'stopped' '已停止状态识别'
+$agentControl=Invoke-ServerPulseAgentControl -Server $mockAgentServer -Action inject -IntervalSeconds 7 -RetentionDays 40
+Assert-Equal "$($agentControl.Status):$($agentControl.Result)" 'ok:started' '代理注入返回已启动'
+$agentControl=Invoke-ServerPulseAgentControl -Server $mockAgentServer -Action stop
+Assert-Equal "$($agentControl.Status):$($agentControl.Result)" 'ok:stopped' '代理停止返回已停止'
+$agentControl=Invoke-ServerPulseAgentControl -Server $mockAgentServer -Action update-config
+Assert-Equal "$($agentControl.Status):$($agentControl.Result)" 'ok:config_updated' '代理配置更新成功'
+$agentControl=Invoke-ServerPulseAgentControl -Server $mockAgentServer -Action uninstall
+Assert-Equal "$($agentControl.Status):$($agentControl.Result)" 'ok:uninstalled' '代理卸载成功'
+
+# UTC to local minute conversion
+$agentUtcMinute=ConvertTo-ServerPulseLocalMinute '2026-08-11T04:05:00'
+$agentExpectedLocal=([datetime]::ParseExact('2026-08-11T04:05:00','yyyy-MM-ddTHH:mm:ss',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal)).ToLocalTime()
+Assert-Equal $agentUtcMinute.ToString('yyyy-MM-ddTHH:mm') $agentExpectedLocal.ToString('yyyy-MM-ddTHH:mm') 'UTC 分钟转换本地时区'
+
+# merge pull parsing
+$agentPullOutput=@(
+'__SP_FILE__2026-08-11'
+'{"Version":2,"Record":{"Timestamp":"2026-08-11T04:05:00","SampleCount":10,"Servers":[{"Id":"agent-test-1","Label":"A","Host":"h","OnlineSamples":10,"CpuPercent":12.3,"Gpus":[]}]}}'
+'{"Version":2,"Record":{"Timestamp":"2026-08-11T04:06:00","SampleCount":10,"Servers":[{"Id":"unknown","OnlineSamples":10}]}}'
+'not json'
+'__SP_DONE__'
+) -join "`n"
+$agentPulled=ConvertFrom-ServerPulseAgentPull -Output $agentPullOutput -KnownServerIds @('agent-test-1') -CursorUtc $null
+Assert-Equal "$($agentPulled.PulledLines):$($agentPulled.Entries.Count):$($agentPulled.DroppedUnknown):$($agentPulled.CorruptLines)" '3:1:1:1' '合并拉取解析统计正确'
+$agentPulledCursor=ConvertFrom-ServerPulseAgentPull -Output $agentPullOutput -KnownServerIds @('agent-test-1') -CursorUtc '2026-08-11T04:05'
+Assert-Equal $agentPulledCursor.Entries.Count 0 '合并游标跳过已合并分钟'
+Assert-Equal (Resolve-ServerPulseAgentConflict ([PSCustomObject]@{Id='x';OnlineSamples=5}) ([PSCustomObject]@{Id='x';OnlineSamples=8})) 'server' '冲突规则样本多者胜'
+Assert-Equal (Resolve-ServerPulseAgentConflict ([PSCustomObject]@{Id='x';OnlineSamples=5}) ([PSCustomObject]@{Id='x';OnlineSamples=5})) 'local' '冲突规则平局保留本地'
+
+# merge into local history through the mocked connection
+$agentMergeRoot=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-agent-merge-'+[guid]::NewGuid().ToString('N'))
+$agentMergeHistory=Join-Path $agentMergeRoot 'history'
+try {
+    $script:ServerPulseTestPullOutput=$agentPullOutput
+    $agentMerge=Merge-ServerPulseAgentRecords -Server $mockAgentServer -HistoryDirectory $agentMergeHistory -KnownServerIds @('agent-test-1') -CursorUtc $null -TimeoutMs 3000
+    Assert-Equal "$($agentMerge.Added):$($agentMerge.DroppedUnknown):$($agentMerge.CorruptLines)" '1:1:1' '合并引擎写入历史目录'
+    $agentMergeDayFile=Join-Path $agentMergeHistory '2026-08-11.v2.jsonl'
+    Assert-Equal (Test-Path -LiteralPath $agentMergeDayFile) $true '合并创建本地日文件'
+    $agentMergeLine=(Get-Content -LiteralPath $agentMergeDayFile -First 1)|ConvertFrom-Json
+    Assert-Equal ([string]$agentMergeLine.Record.Servers[0].Id) 'agent-test-1' '合并记录包含服务器条目'
+    Assert-Equal ([string]$agentMergeLine.Record.SampleCount) '10' '合并记录保留服务器端样本数'
+    $agentMerge2=Merge-ServerPulseAgentRecords -Server $mockAgentServer -HistoryDirectory $agentMergeHistory -KnownServerIds @('agent-test-1') -CursorUtc $agentMerge.MaxUtcMinute.ToString('yyyy-MM-ddTHH:mm') -TimeoutMs 3000
+    Assert-Equal $agentMerge2.Added 0 '增量合并不重复写入'
+} finally { if(Test-Path -LiteralPath $agentMergeRoot){Remove-Item -LiteralPath $agentMergeRoot -Recurse -Force -ErrorAction SilentlyContinue} }
+
+# agent state round trip and startup tasks
+$agentStateRoot=Join-Path ([IO.Path]::GetTempPath()) ('serverpulse-agent-state-'+[guid]::NewGuid().ToString('N'))
+try {
+    [void](New-Item -ItemType Directory -Path $agentStateRoot -Force)
+    $agentStatePath=Join-Path $agentStateRoot 'agent-state.json'
+    $agentState=New-ServerPulseAgentState
+    Set-ServerPulseAgentServerEntry -State $agentState -Id 'agent-test-1' -IntervalSeconds 9 -RetentionDays 33 -AutoRestoreOnStartup $true
+    Save-ServerPulseAgentState $agentStatePath $agentState
+    $agentState2=Read-ServerPulseAgentState $agentStatePath
+    $agentEntry2=Get-ServerPulseAgentServerEntry $agentState2 'agent-test-1'
+    Assert-Equal "$($agentEntry2.IntervalSeconds):$($agentEntry2.RetentionDays):$($agentEntry2.AutoRestoreOnStartup)" '9:33:True' '代理状态文件往返'
+    $script:ServerPulseTestStatusOutput="SP_AGENT_INSTALLED=1`nSP_AGENT_STATUS=stopped"
+    $script:ServerPulseTestPullOutput=$agentPullOutput
+    $agentStartupStore=[PSCustomObject]@{Servers=@($mockAgentServer)}
+    $agentStartup=Invoke-ServerPulseStartupAgentTasks -AgentStatePath $agentStatePath -HistoryDirectory (Join-Path $agentStateRoot 'history') -ServerStore $agentStartupStore -SessionSecrets @{} -TimeoutMs 3000 -AutoMergeOnStartup $true
+    $agentRestoreTask=@($agentStartup.Tasks|Where-Object{$_.Task-eq'restore'})[0]
+    $agentMergeTask=@($agentStartup.Tasks|Where-Object{$_.Task-eq'merge'})[0]
+    Assert-Equal $agentRestoreTask.Result 'started' '启动自动恢复注入已停止代理'
+    Assert-Equal $agentMergeTask.Result 'ok' '启动自动合并成功'
+    $agentState3=Read-ServerPulseAgentState $agentStatePath
+    $agentEntry3=Get-ServerPulseAgentServerEntry $agentState3 'agent-test-1'
+    Assert-Equal ([bool]$agentEntry3.MergeCursorUtc) $true '启动自动合并推进游标'
+    Assert-Equal (Test-Path -LiteralPath (Join-Path $agentStateRoot 'history\2026-08-11.v2.jsonl')) $true '启动自动合并写入历史目录'
+} finally { if(Test-Path -LiteralPath $agentStateRoot){Remove-Item -LiteralPath $agentStateRoot -Recurse -Force -ErrorAction SilentlyContinue} }
+
+$agentBomBytes=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..\src\ServerPulse.Agent.ps1'))
+Assert-Equal ("{0},{1},{2}" -f $agentBomBytes[0],$agentBomBytes[1],$agentBomBytes[2]) '239,187,191' '代理模块保持 UTF-8 BOM'
+$sampleBomBytes=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..\src\ServerPulse.Sample.ps1'))
+Assert-Equal ("{0},{1},{2}" -f $sampleBomBytes[0],$sampleBomBytes[1],$sampleBomBytes[2]) '239,187,191' '采样脚本模块保持 UTF-8 BOM'
+
+$agentClean=Merge-ServerPulseAgentRecords -Server $mockAgentServer -HistoryDirectory (Join-Path ([IO.Path]::GetTempPath()) 'serverpulse-agent-clean-check') -KnownServerIds @('agent-test-1') -CursorUtc '2026-08-11T04:05' -TimeoutMs 3000 -CleanMerged
+Assert-Equal $agentClean.CleanedFiles 1 '合并后清理服务器端旧记录文件'
+$agentCleanTemp=Join-Path ([IO.Path]::GetTempPath()) 'serverpulse-agent-clean-check';if(Test-Path -LiteralPath $agentCleanTemp){Remove-Item -LiteralPath $agentCleanTemp -Recurse -Force -ErrorAction SilentlyContinue}
 
 Write-Output "PASS: $passed assertions"

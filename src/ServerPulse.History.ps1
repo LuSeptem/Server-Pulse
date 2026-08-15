@@ -352,7 +352,11 @@ function Save-HistoryMinuteRecord {
     $path = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.v2.jsonl')
     # JSONL is append-only: a later entry for the same minute supersedes or is merged with earlier entries at read time.
     $line=[PSCustomObject]@{Version=2;Record=$Record} | ConvertTo-Json -Depth 16 -Compress
-    Add-Content -LiteralPath $path -Value $line -Encoding UTF8
+    # The server-side agent merge rewrites day files in place; serialize with it.
+    $lockAvailable = $null -ne (Get-Command Enter-ServerPulseHistoryWriteLock -ErrorAction SilentlyContinue)
+    if ($lockAvailable) { Enter-ServerPulseHistoryWriteLock }
+    try { Add-Content -LiteralPath $path -Value $line -Encoding UTF8 }
+    finally { if ($lockAvailable) { Exit-ServerPulseHistoryWriteLock } }
 }
 
 function Flush-ServerPulseHistoryRecorder {
@@ -713,7 +717,7 @@ function Update-HistoryWindowLanguage {
         if ($node -is [Windows.DependencyObject]) { foreach ($child in [Windows.LogicalTreeHelper]::GetChildren($node)) { if ($child -is [Windows.DependencyObject]) { $pending.Push($child) } } }
     }
     $uiByName=@{}
-    foreach($name in @('HistorySettingsTitle','HistoryRetentionLabel','HistoryRetentionUnit','HistoryRetentionTip','HistoryDataRootLabel','HistorySettingsApplyButton','HistoryBrowseButton','HistoryNeverCleanupBox')){$uiByName[$name]=$Window.FindName($name)}
+    foreach($name in @('HistorySettingsTitle','HistoryRetentionLabel','HistoryRetentionUnit','HistoryRetentionTip','HistoryDataRootLabel','HistorySettingsApplyButton','HistoryBrowseButton','HistoryNeverCleanupBox','HistoryAutoMergeBox')){$uiByName[$name]=$Window.FindName($name)}
     if($null -ne $uiByName.HistorySettingsTitle){$uiByName.HistorySettingsTitle.Text=Get-ServerPulseText 'history.settings'}
     if($null -ne $uiByName.HistoryRetentionLabel){$uiByName.HistoryRetentionLabel.Text=Get-ServerPulseText 'history.retention'}
     if($null -ne $uiByName.HistoryRetentionUnit){$uiByName.HistoryRetentionUnit.Text=Get-ServerPulseText 'history.retentionUnit'}
@@ -722,6 +726,7 @@ function Update-HistoryWindowLanguage {
     if($null -ne $uiByName.HistorySettingsApplyButton){$uiByName.HistorySettingsApplyButton.Content=Get-ServerPulseText 'history.settingsApply'}
     if($null -ne $uiByName.HistoryBrowseButton){$uiByName.HistoryBrowseButton.Content=Get-ServerPulseText 'history.browse'}
     if($null -ne $uiByName.HistoryNeverCleanupBox){$uiByName.HistoryNeverCleanupBox.Content=Get-ServerPulseText 'history.neverCleanup'}
+    if($null -ne $uiByName.HistoryAutoMergeBox){$uiByName.HistoryAutoMergeBox.Content=Get-ServerPulseText 'agent.autoMerge'}
     if ($null -ne $Window.Tag -and $Window.Tag.PSObject.Properties.Name -contains 'Renderer') { try { [void](& $Window.Tag.Renderer -State $Window.Tag) } catch { } }
 }
 
@@ -1536,7 +1541,7 @@ function Show-ServerPulseHistoryWindow {
         </Grid>
         <Border x:Name="HistorySettingsPanel" Visibility="Collapsed" Background="#101512" BorderBrush="#2E3831" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
           <Grid>
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock x:Name="HistorySettingsTitle" Text="记录设置" FontSize="10" FontWeight="SemiBold" Foreground="#DCE3DE" Grid.ColumnSpan="4" Margin="0,0,0,8"/>
             <TextBlock x:Name="HistoryRetentionLabel" Text="保留时长" FontSize="9" Foreground="#9AA59E" Grid.Row="1" VerticalAlignment="Center"/>
@@ -1551,8 +1556,9 @@ function Show-ServerPulseHistoryWindow {
             <TextBox x:Name="HistoryDataRootBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource HistoryInput}" TextAlignment="Left" Padding="7,0" Margin="12,8,0,0"/>
             <TextBlock x:Name="HistoryDataRootError" Grid.Row="2" Grid.Column="2" Text="!" Foreground="#FF5E5E" FontWeight="Bold" FontSize="11" Visibility="Collapsed" VerticalAlignment="Center" Margin="5,8,0,0"/>
             <Button x:Name="HistoryBrowseButton" Grid.Row="2" Grid.Column="3" Content="浏览" Style="{StaticResource HistoryButton}" Margin="8,8,0,0"/>
-            <TextBlock x:Name="HistorySettingsStatus" Grid.Row="3" Grid.ColumnSpan="3" Text="" FontSize="8" Foreground="#7F8B83" TextWrapping="Wrap" Margin="0,9,12,0"/>
-            <Button x:Name="HistorySettingsApplyButton" Grid.Row="3" Grid.Column="3" Content="保存并应用" Style="{StaticResource HistoryButton}" Margin="8,8,0,0"/>
+            <CheckBox x:Name="HistoryAutoMergeBox" Grid.Row="3" Grid.ColumnSpan="4" Content="启动时自动合并服务器端记录" Foreground="#C7D0CA" FontSize="9" VerticalAlignment="Center" Margin="0,8,0,0"/>
+            <TextBlock x:Name="HistorySettingsStatus" Grid.Row="4" Grid.ColumnSpan="3" Text="" FontSize="8" Foreground="#7F8B83" TextWrapping="Wrap" Margin="0,9,12,0"/>
+            <Button x:Name="HistorySettingsApplyButton" Grid.Row="4" Grid.Column="3" Content="保存并应用" Style="{StaticResource HistoryButton}" Margin="8,8,0,0"/>
           </Grid>
         </Border>
         </StackPanel>
@@ -1572,7 +1578,7 @@ function Show-ServerPulseHistoryWindow {
     $historyWindow = [Windows.Markup.XamlReader]::Load($reader)
     Update-ServerPulseThemeVisualTree $historyWindow
     $historyWindow.Owner = $Owner; $historyWindow.Topmost = $Owner.Topmost
-    $names = @('HistoryDragArea','HistoryCloseButton','HistoryQueryButton','HistoryHourButton','HistorySettingsButton','HistoryRangeStatus','HistoryPanel','HistoryFooterText','HistorySettingsPanel','HistorySettingsTitle','HistoryRetentionLabel','HistoryRetentionBox','HistoryRetentionUnit','HistoryRetentionTip','HistoryRetentionError','HistoryNeverCleanupBox','HistoryDataRootLabel','HistoryDataRootBox','HistoryDataRootError','HistoryBrowseButton','HistorySettingsStatus','HistorySettingsApplyButton')
+    $names = @('HistoryDragArea','HistoryCloseButton','HistoryQueryButton','HistoryHourButton','HistorySettingsButton','HistoryRangeStatus','HistoryPanel','HistoryFooterText','HistorySettingsPanel','HistorySettingsTitle','HistoryRetentionLabel','HistoryRetentionBox','HistoryRetentionUnit','HistoryRetentionTip','HistoryRetentionError','HistoryNeverCleanupBox','HistoryAutoMergeBox','HistoryDataRootLabel','HistoryDataRootBox','HistoryDataRootError','HistoryBrowseButton','HistorySettingsStatus','HistorySettingsApplyButton')
     foreach ($prefix in @('HistoryStart','HistoryEnd')) {
         foreach ($field in @('Year','Month','Day','Hour','Minute')) { $names += "${prefix}${field}Box"; $names += "${prefix}${field}Error" }
     }
@@ -1588,6 +1594,7 @@ function Show-ServerPulseHistoryWindow {
     Set-HistoryDateFields -Ui $historyUi -Prefix 'HistoryEnd' -Value $end
     $historyUi.HistoryRetentionBox.Text=if($storageSettings.NeverCleanup){''}else{[string]$storageSettings.RetentionDays}
     $historyUi.HistoryNeverCleanupBox.IsChecked=[bool]$storageSettings.NeverCleanup
+    $historyUi.HistoryAutoMergeBox.IsChecked=[bool](Get-HistoryStorageContextValue $StorageContext 'AutoMergeOnStartup' $false)
     $displayRoot=if([bool](Get-HistoryStorageContextValue $StorageContext 'IsFallback' $false)){Get-HistoryStorageContextValue $StorageContext 'ActiveRoot' (Get-HistoryStorageContextValue $StorageContext 'PreferredRoot')}else{Get-HistoryStorageContextValue $StorageContext 'PreferredRoot' (Get-HistoryStorageContextValue $StorageContext 'ActiveRoot')}
     $historyUi.HistoryDataRootBox.Text=[string]$displayRoot
     [void](Set-HistoryStorageInputValidation -Ui $historyUi)
@@ -1639,7 +1646,7 @@ function Show-ServerPulseHistoryWindow {
             $action='none';if($cleanup -eq 'prompt' -and -not $valid.Retention.NeverCleanup){$action=Show-HistoryCleanupChoiceDialog -Owner $tag.Owner}
             $valid.Retention.CleanupPaused=if($cleanup -eq 'prompt'){($action -eq 'none')}elseif($old.CleanupPaused -and -not $valid.Retention.NeverCleanup){$true}else{$false}
             $applied=Invoke-HistoryStorageContextApply -Context $context -TargetRoot $valid.Path.Path -Retention $valid.Retention -CleanupAction $action -Owner $tag.Owner
-            if($applied.Applied){$state.Ui.HistorySettingsStatus.Text=if($action -eq 'none' -and $cleanup -eq 'prompt'){Get-ServerPulseText 'history.settingsStatusPaused'}elseif($valid.Retention.NeverCleanup){Get-ServerPulseText 'history.settingsStatusNever'}else{Get-ServerPulseText 'history.settingsSaved' @($valid.Path.Path)};$state.Ui.HistorySettingsPanel.Visibility='Collapsed';$state.Ui.HistorySettingsButton.Content=Get-ServerPulseText 'history.settingsExpand';[void](& $state.Renderer -State $state)}
+            if($applied.Applied){$state.Ui.HistorySettingsStatus.Text=if($action -eq 'none' -and $cleanup -eq 'prompt'){Get-ServerPulseText 'history.settingsStatusPaused'}elseif($valid.Retention.NeverCleanup){Get-ServerPulseText 'history.settingsStatusNever'}else{Get-ServerPulseText 'history.settingsSaved' @($valid.Path.Path)};$state.Ui.HistorySettingsPanel.Visibility='Collapsed';$state.Ui.HistorySettingsButton.Content=Get-ServerPulseText 'history.settingsExpand';[void](& $state.Renderer -State $state);if($context.PSObject.Properties.Name -contains 'Settings' -and $null -ne $context.Settings){$context.Settings.AutoMergeOnStartup=[bool]$state.Ui.HistoryAutoMergeBox.IsChecked;if($context.PSObject.Properties.Name -contains 'SaveSettings' -and $null -ne $context.SaveSettings){try{[void](& $context.SaveSettings $context.Settings $null)}catch{}}}}
         } catch {$state.Ui.HistorySettingsStatus.Text=Get-ServerPulseText 'history.settingsPathInvalid' @($_.Exception.Message);$state.Ui.HistorySettingsStatus.Foreground=New-HistoryBrush '#FF8A80'}
         $event.Handled=$true
     })

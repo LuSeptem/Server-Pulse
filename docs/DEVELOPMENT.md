@@ -40,7 +40,9 @@ ServerPulse.exe
 | `src/ServerPulse.Persistent.ps1` | 长期 SSH 会话、帧读取、退避和熔断 |
 | `src/ServerPulse.Core.ps1` | 配置校验、指标解析、GPU 型号格式化、协议对象 |
 | `src/ServerPulse.Ssh.ps1` | SSH 目标解析、凭据键、主机指纹和 ASKPASS 通道 |
-| `src/ServerPulse.ServerManager.ps1` | 服务器发现、认证验证、密码和管理窗口 |
+| `src/ServerPulse.ServerManager.ps1` | 服务器发现、认证验证、密码、服务器端监控行和管理窗口 |
+| `src/ServerPulse.Agent.ps1` | 服务器端代理脚本生成、状态/控制、agent-state 与合并引擎 |
+| `src/ServerPulse.Sample.ps1` | 共享远端采样脚本（本地采集器与服务器端代理共用） |
 | `src/ServerPulse.History.ps1` | 分钟聚合、JSON/JSONL 混读、历史曲线和用户曲线 |
 | `src/ServerPulse.Storage.ps1` | 数据根目录指针、保留策略、路径校验、清理决策和迁移事务 |
 | `src/ServerPulse.Theme.ps1` | 亮/暗/系统主题和可复用画刷缓存 |
@@ -151,6 +153,59 @@ Windows 凭据管理器属于操作系统安全存储，不在迁移范围内；
 主机密钥验证使用隔离临时 `known_hosts`。首次未知主机必须展示算法和 SHA256 指纹并经用户确认；已知指纹变化严格阻断，禁止自动覆盖真实 `known_hosts`。
 
 认证失败只暂停该服务器并发一次托盘通知；网络错误和超时仍按退避策略重试。实现或测试中不得向真实服务器写入密码、修改全局 SSH 配置或使用真实主机指纹样本。
+
+## 6.1 服务器端监控代理（Server Pulse Agent）
+
+`src/ServerPulse.Agent.ps1` 提供服务器端常驻监控：注入、状态检测、控制和合并。采样脚本本体收敛在 `src/ServerPulse.Sample.ps1`，本地采集器与代理共用同一份文本，保证字段兼容。
+
+### 服务器端布局与生命周期
+
+```text
+~/.serverpulse/            # umask 077，由注入命令创建
+├─ agent.sh                # 自包含 POSIX sh 代理（cat 写入，heredoc 分隔符唯一）
+├─ config                  # interval / retention_days / server_id / server_label / server_host
+├─ state/pid               # 代理启动时写入 $$，停止时删除
+├─ state/heartbeat         # 每轮循环 touch，状态检测用
+├─ records/yyyy-MM-dd.v2.jsonl   # 分钟记录，UTC 时间戳，与本地 JSONL 同 schema
+└─ agent.log               # 启动时 nohup 重定向
+```
+
+注入用 `cat` + 带引号的 heredoc 写入脚本，再以 `nohup setsid sh agent.sh >>agent.log 2>&1 </dev/null &` 脱离会话启动；`setsid` 不可用时回退 `nohup`（`-T` 无 TTY 场景）。无 root、无 systemd、无 crontab：服务器重启后代理必然停止，由本地状态徽标如实显示，用户手动重新注入或开启启动时自动恢复。
+
+### 代理主循环与 awk 聚合
+
+代理每轮：重读 `config`（改间隔/保留天数无需重启）→ 子 shell 运行内嵌采样脚本并追加到 `state/samples-<UTC分钟>` → UTC 分钟变化时对上一分钟文件运行一次内嵌 awk 聚合，追加一条 JSONL 到 `records/<UTC日期>.v2.jsonl` → touch 心跳 → 按保留天数清理旧文件 → sleep。TERM/INT 陷阱先聚合当前分钟再删除 pid 退出。
+
+awk 聚合器与本地 `ConvertTo-HistoryMinuteRecord` 语义对齐：CPU/MEM/负载/GPU 逐值平均（缺失值不进分母）、用户归因按有效样本数平均（缺席样本计 0、`unavailable` 排除分母）、Hostname/Uptime 取最后值、GPU 按 Index 输出并带 UserMemory 合并；JSON 输出转义 `"` `\` 与控制字符。awk 程序以内嵌单引号字符串写入 agent.sh，因此聚合器本身**不得包含单引号**（有专门断言）。时间戳一律 UTC，合并时换算本地时区，避免服务器与电脑时区/夏令时错位。数值舍入与本地 `[Math]::Round(,2)` 存在 0.005 级差异，属可接受偏差。
+
+### 状态检测与控制协议
+
+单次短连接执行一段 `sh` 脚本，输出 `SP_AGENT_*` 键值行由 `ConvertFrom-ServerPulseAgentOutput` 解析：
+
+- 状态：`SP_AGENT_INSTALLED`、`SP_AGENT_STATUS`（running/stopped）、`SP_AGENT_PID`、`SP_AGENT_HB_AGE`。本地按 `心跳年龄 > 3×间隔+30s` 判定 `stale`；连接失败归为 `error`。
+- 控制：`inject`（幂等，已运行返回 `already_running`）、`stop`（TERM → 10s 宽限 → KILL，删除 pid）、`restart`（stop+inject）、`update-config`（重写 config，代理下轮生效）、`uninstall`（stop + `rm -rf ~/.serverpulse`）。结果行 `SP_AGENT_RESULT`。
+
+所有操作走现有认证链（BatchMode → 凭据管理器 → 会话密码），短连接、带超时；UI 在后台 runspace 执行并用 DispatcherTimer 轮询，避免阻塞管理窗口。
+
+### 本地状态与合并
+
+`agent-state.json`（数据根目录，Version=1）保存每台服务器的间隔、保留天数、启动自动恢复、合并游标（`MergeCursorUtc`，UTC 分钟）、最近状态与最近合并摘要。`servers.json` 保持原 schema 不变。
+
+合并流程（`Merge-ServerPulseAgentRecords`）：
+
+1. 拉取：单次连接按游标日期过滤 `cat` 全部 `records/*.v2.jsonl`，行间以 `__SP_FILE__<日期>` 分隔。
+2. 解析：`ConvertFrom-ServerPulseAgentPull` 处理 Windows PowerShell 5.1 `ConvertFrom-Json` 把 ISO 时间戳转成 `[datetime]` 的行为，按已知服务器 ID 过滤、按游标跳过、统计损坏/未知行。
+3. 落盘：UTC → 本地分钟；对每个本地日文件按（分钟, 服务器 ID）合并——本地无该分钟则追加新行，已有分钟则并入服务器条目；双方都有时 `Resolve-ServerPulseAgentConflict` 取有效样本多者、平局保留本地。日文件以 temp + `[IO.File]::Replace` 原子重写。
+4. 并发：分钟 flush 追加与合并重写通过 `Storage.ps1` 的命名互斥量（`Local\ServerPulse.HistoryWrite`）串行化，跨 runspace/进程生效。
+5. 可选清理：`CleanMerged` 删除游标已完整覆盖的旧日期文件，保留当天文件。
+
+### 启动任务
+
+窗口加载 3 秒后启动一次性后台任务：按 `agent-state.json` 对开启自动恢复且状态为 stopped/not_installed 的服务器重新注入；若开启“启动时自动合并”则逐服务器增量合并。错误写入 `error.log`，不阻塞主流程。
+
+### 测试
+
+单元/集成测试在 `tests/ServerPulse.Tests.ps1` 末尾用 mock 的 `Invoke-ServerPulseServerConnection` 覆盖：脚本生成（间隔/保留注入、标签消毒、awk 无单引号）、三态状态、控制操作、UTC→本地换算、拉取解析统计与游标、冲突规则、合并落盘与增量游标、状态文件往返、启动任务、合并后清理、UTF-8 BOM。代理 awk 的逐字段一致性建议在真实 Linux 主机上人工验证（采样脚本与本地采集器共用，输入同构）。
 
 ## 7. 主题、语言和 WPF 事件
 
