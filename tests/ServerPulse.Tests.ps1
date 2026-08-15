@@ -1007,6 +1007,21 @@ $adoptRow2=New-AdoptRow 'adopt-2'
 Complete-ServerManagerAgentOperation $adoptContext2 ([PSCustomObject]@{RowState=$adoptRow2;Action='status'}) ([PSCustomObject]@{Status='not_installed';Error='';Pid=$null;HeartbeatAgeSeconds=$null})
 Assert-Equal ($null -eq (Get-ServerPulseAgentServerEntry $adoptContext2.AgentState 'adopt-2')) $true '未检测到代理时不建立本地条目'
 Assert-Equal $adoptRow2.AgentStatus 'not_configured' '未检测到代理时保持未配置'
+
+# regression for 拉取N 未知N: the merge op script must pass known server ids
+# as a plain string[]; @(json | ConvertFrom-Json) wraps arrays on Windows
+# PowerShell 5.1 (count=1), so -notin rejected every record id.
+$opFakeLines=[Collections.Generic.List[string]]::new()
+$opFakeBase=[datetime]::ParseExact('2026-08-15T08:20:00','yyyy-MM-ddTHH:mm:ss',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal)
+for($i=0;$i -lt 48;$i++){
+    $opFakeTs=$opFakeBase.AddMinutes($i).ToString('yyyy-MM-ddTHH:mm:00')
+    $opFakeLines.Add('{"Version":2,"Record":{"Timestamp":"'+$opFakeTs+'","SampleCount":12,"Servers":[{"Id":"3090","Label":"RTX 3090","Host":"3090","OnlineSamples":12,"TotalSamples":12,"LatencyMs":null,"Hostname":"x","CpuPercent":10.0,"CpuUserUsage":{"Status":"ok","ValidSamples":12,"Users":[]},"MemoryUsedMiB":100.0,"MemoryTotalMiB":1024.0,"MemoryPercent":9.8,"MemoryUserUsage":{"Status":"ok","ValidSamples":12,"Users":[]},"LoadOne":0.1,"LoadFive":0.2,"LoadFifteen":0.3,"UptimeSeconds":100,"Gpus":[]}]}}')
+}
+$opFakeOutput=('SP_AGENT_RECORD_FILES=1'+"`n"+'__SP_FILE__2026-08-15'+"`n"+($opFakeLines -join "`n")+"`n"+'__SP_DONE__')
+$opParsed=ConvertFrom-ServerPulseAgentPull -Output $opFakeOutput -KnownServerIds ([string[]]@('3090','a6000')) -CursorUtc $null
+Assert-Equal $opParsed.DroppedUnknown 0 '直传 string[] 的已知服务器集合不产生未知丢弃'
+Assert-Equal $opParsed.Entries.Count 48 '直传 string[] 的合并记录全部入库'
+Assert-Equal ([bool]($serverManagerSourceText -match '\[string\[\]\]\$KnownIds')) $true '代理后台任务以 string[] 直传已知服务器集合'
 $agentLoopScript = New-ServerPulseRemoteLoopScript -SampleScript $agentSample -IntervalSeconds 5
 Assert-Equal ([bool]($agentLoopScript -match "`r")) $false '长期会话循环脚本保持 LF 行尾'
 $agentScript = New-ServerPulseAgentScript -ServerId 'agent-test-1' -Label 'Label "X"' -ServerHost 'host1' -SampleScript $agentSample -IntervalSeconds 7 -RetentionDays 40

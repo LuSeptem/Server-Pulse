@@ -375,7 +375,7 @@ function Stop-ServerManagerCandidateDiscovery {
 # runspace with the agent/SSH/sample modules dot-sourced; returns a uniform
 # envelope consumed by Complete-ServerManagerAgentOperation.
 $script:ServerManagerAgentOpScript = @'
-param($ServerJson,$Action,$Password,$IntervalSeconds,$RetentionDays,$CursorUtc,$CleanMerged,$KnownIdsJson,$HistoryDirectory,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$CoreModulePath,$AskPassPath,$TimeoutMs)
+param($ServerJson,$Action,$Password,$IntervalSeconds,$RetentionDays,$CursorUtc,$CleanMerged,[string[]]$KnownIds,$HistoryDirectory,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$CoreModulePath,$AskPassPath,$TimeoutMs)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 . $CoreModulePath
@@ -390,8 +390,11 @@ switch ($Action) {
         return [PSCustomObject]@{ Kind='status'; Status=$result.Status; Error=$result.Error; Pid=$result.Pid; HeartbeatAgeSeconds=$result.HeartbeatAgeSeconds }
     }
     'merge' {
-        $knownIds = @($KnownIdsJson | ConvertFrom-Json)
-        $result = Merge-ServerPulseAgentRecords -Server $server -HistoryDirectory $HistoryDirectory -KnownServerIds $knownIds -CursorUtc $CursorUtc -Password $Password -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath -CleanMerged:$CleanMerged
+        # Known server ids arrive as a real string[] parameter. Do NOT
+        # round-trip them through ConvertFrom-Json: on Windows PowerShell
+        # 5.1 an array JSON string arrives wrapped (count=1), so -notin
+        # rejects every record id and the merge shows 拉取N 未知N.
+        $result = Merge-ServerPulseAgentRecords -Server $server -HistoryDirectory $HistoryDirectory -KnownServerIds $KnownIds -CursorUtc $CursorUtc -Password $Password -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath -CleanMerged:$CleanMerged
         return [PSCustomObject]@{ Kind='merge'; Summary=$result }
     }
     default {
@@ -443,10 +446,9 @@ function Invoke-ServerManagerAgentOperation {
     $retention=if($null-ne$entry){[int]$entry.RetentionDays}else{30}
     $cursor=if($null-ne$entry){[string]$entry.MergeCursorUtc}else{$null}
     $knownIds=@($Context.Rows|ForEach-Object{[string]$_.Server.Id}|Sort-Object -Unique)
-    $knownIdsJson=$knownIds|ConvertTo-Json -Compress
     $shell=[PowerShell]::Create()
     [void]$shell.AddScript($script:ServerManagerAgentOpScript)
-    [void]$shell.AddArgument($serverJson).AddArgument($Action).AddArgument($password).AddArgument($interval).AddArgument($retention).AddArgument($cursor).AddArgument($CleanMerged).AddArgument($knownIdsJson).AddArgument($Context.HistoryDirectory).AddArgument($Context.AgentModulePath).AddArgument($Context.ModulePath).AddArgument($Context.SampleModulePath).AddArgument($Context.StorageModulePath).AddArgument($Context.CoreModulePath).AddArgument($Context.AskPassPath).AddArgument($Context.TimeoutMs)
+    [void]$shell.AddArgument($serverJson).AddArgument($Action).AddArgument($password).AddArgument($interval).AddArgument($retention).AddArgument($cursor).AddArgument($CleanMerged).AddArgument([string[]]$knownIds).AddArgument($Context.HistoryDirectory).AddArgument($Context.AgentModulePath).AddArgument($Context.ModulePath).AddArgument($Context.SampleModulePath).AddArgument($Context.StorageModulePath).AddArgument($Context.CoreModulePath).AddArgument($Context.AskPassPath).AddArgument($Context.TimeoutMs)
     $async=$shell.BeginInvoke()
     $Context.AgentOps.Add([PSCustomObject]@{RowState=$RowState;Shell=$shell;Async=$async;Action=$Action})
     if($Action-ne'status'){Set-ServerManagerAgentBusy $RowState $true}

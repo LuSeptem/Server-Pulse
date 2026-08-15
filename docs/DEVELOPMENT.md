@@ -209,6 +209,8 @@ awk 聚合器与本地 `ConvertTo-HistoryMinuteRecord` 语义对齐：CPU/MEM/�
 
 单元/集成测试在 `tests/ServerPulse.Tests.ps1` 末尾用 mock 的 `Invoke-ServerPulseServerConnection` 覆盖：脚本生成（间隔/保留注入、标签消毒、awk 无单引号）、三态状态、控制操作、UTC→本地换算、拉取解析统计与游标、冲突规则、合并落盘与增量游标、状态文件往返、启动任务、合并后清理、UTF-8 BOM。代理 awk 的逐字段一致性建议在真实 Linux 主机上人工验证（采样脚本与本地采集器共用，输入同构）。
 
+跨 runspace 传递**数组**参数（如合并的已知服务器 ID 集合）必须用真实的 `string[]` 参数直传，不要经 `ConvertTo-Json`/`ConvertFrom-Json` 往返：Windows PowerShell 5.1 会把数组 JSON 包裹成 `count=1` 的嵌套数组，`-notin` 会拒绝全部元素（表现为"拉取 N 行、未知 N 行"且零合并）。
+
 ## 7. 主题、语言和 WPF 事件
 
 主题模式 `dark`、`light`、`system` 和语言模式 `zh`、`en`、`system` 都由设置模块规范化。切换只重绘已有视觉树，不在每轮刷新创建不可回收的画刷；动态画刷必须通过主题缓存按源颜色、透明度和语义键复用。
