@@ -1085,6 +1085,7 @@ $agentPulled=ConvertFrom-ServerPulseAgentPull -Output $agentPullOutput -KnownSer
 Assert-Equal "$($agentPulled.PulledLines):$($agentPulled.Entries.Count):$($agentPulled.DroppedUnknown):$($agentPulled.CorruptLines)" '3:1:1:1' '合并拉取解析统计正确'
 $agentPulledCursor=ConvertFrom-ServerPulseAgentPull -Output $agentPullOutput -KnownServerIds @('agent-test-1') -CursorUtc '2026-08-11T04:05'
 Assert-Equal $agentPulledCursor.Entries.Count 0 '合并游标跳过已合并分钟'
+Assert-Equal $agentPulledCursor.SkippedByCursor 1 '合并游标跳过行数统计正确'
 $agentPullFlag=@('SP_AGENT_RECORD_FILES=0','__SP_DONE__') -join "`n"
 $agentPulledFlag=ConvertFrom-ServerPulseAgentPull -Output $agentPullFlag -KnownServerIds @('agent-test-1') -CursorUtc $null
 Assert-Equal "$($agentPulledFlag.PulledLines):$($agentPulledFlag.RecordFiles):$($agentPulledFlag.CorruptLines)" '0:0:0' '拉取输出识别无记录文件标记'
@@ -1108,6 +1109,7 @@ try {
     Assert-Equal ([string]$agentMergeLine.Record.SampleCount) '10' '合并记录保留服务器端样本数'
     $agentMerge2=Merge-ServerPulseAgentRecords -Server $mockAgentServer -HistoryDirectory $agentMergeHistory -KnownServerIds @('agent-test-1') -CursorUtc $agentMerge.MaxUtcMinute.ToString('yyyy-MM-ddTHH:mm') -TimeoutMs 3000
     Assert-Equal $agentMerge2.Added 0 '增量合并不重复写入'
+    Assert-Equal $agentMerge2.SkippedByCursor 2 '增量合并统计游标跳过行数'
 } finally { if(Test-Path -LiteralPath $agentMergeRoot){Remove-Item -LiteralPath $agentMergeRoot -Recurse -Force -ErrorAction SilentlyContinue} }
 
 # agent state round trip and startup tasks

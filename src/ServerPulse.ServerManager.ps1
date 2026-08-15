@@ -510,9 +510,13 @@ function Complete-ServerManagerAgentOperation {
                 if($null-ne$entry){
                     $entry.MergeCursorUtc=if($null-ne$summary.MaxUtcMinute){$summary.MaxUtcMinute.ToString('yyyy-MM-ddTHH:mm')}else{$entry.MergeCursorUtc}
                     $entry.LastMergeAt=[DateTime]::UtcNow.ToString('o')
-                    $entry.LastMergeSummary=$summary|Select-Object PulledLines,Added,Updated,Skipped,DroppedUnknown,CorruptLines,CleanedFiles,DurationMs
+                    $entry.LastMergeSummary=$summary|Select-Object PulledLines,Added,Updated,Skipped,DroppedUnknown,CorruptLines,CleanedFiles,DurationMs,RecordFiles,SkippedByCursor,MaxUtcMinute
                 }
-                $text=if([int]$summary.PulledLines -eq 0 -and [int]$summary.RecordFiles -eq 0){Get-ServerPulseText 'agent.mergeEmpty'}else{Get-ServerPulseText 'agent.mergeSummary' @([int]$summary.PulledLines,[int]$summary.Added,[int]$summary.Updated,[int]$summary.Skipped,[int]$summary.DroppedUnknown,[int]$summary.CorruptLines,[int]$summary.CleanedFiles,[int]$summary.DurationMs)}
+                $pulled=[int]$summary.PulledLines
+                $byCursor=[int]$summary.SkippedByCursor
+                $text=if($pulled -eq 0 -and [int]$summary.RecordFiles -eq 0){Get-ServerPulseText 'agent.mergeEmpty'}
+                elseif($pulled -gt 0 -and $byCursor -eq $pulled){Get-ServerPulseText 'agent.mergeUpToDate' @($byCursor)}
+                else{Get-ServerPulseText 'agent.mergeSummary' @($pulled,[int]$summary.Added,[int]$summary.Updated,[int]$summary.Skipped,[int]$summary.DroppedUnknown,[int]$summary.CorruptLines,[int]$summary.CleanedFiles,[int]$summary.DurationMs)}
                 [Windows.MessageBox]::Show($Context.Window,$text,(Get-ServerPulseText 'agent.mergeResult'),'OK','Information')|Out-Null
                 Invoke-ServerManagerAgentOperation $Context $row status
             }else{

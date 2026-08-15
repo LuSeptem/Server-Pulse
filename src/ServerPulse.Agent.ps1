@@ -984,7 +984,7 @@ function ConvertFrom-ServerPulseAgentPull {
     # Returns entries grouped by local minute plus statistics and the maximum
     # merged UTC minute. Pure function; no SSH or file access.
     $entries = [Collections.Generic.List[object]]::new()
-    $pulledLines = 0; $corruptLines = 0; $droppedUnknown = 0; $recordFiles = 0
+    $pulledLines = 0; $corruptLines = 0; $droppedUnknown = 0; $recordFiles = 0; $skippedByCursor = 0
     $maxUtcMinute = $null
     foreach ($line in ($Output -split "`r?`n")) {
         $clean = $line.Trim()
@@ -1005,7 +1005,7 @@ function ConvertFrom-ServerPulseAgentPull {
             if (-not [string]::IsNullOrWhiteSpace($CursorUtc)) {
                 $cursorMinute = [datetime]::MinValue
                 if ([datetime]::TryParseExact($CursorUtc.Trim(), 'yyyy-MM-ddTHH:mm', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$cursorMinute)) {
-                    if ($utcMinute -le $cursorMinute) { continue }
+                    if ($utcMinute -le $cursorMinute) { $skippedByCursor++; continue }
                 }
             }
             if ($null -eq $maxUtcMinute -or $utcMinute -gt $maxUtcMinute) { $maxUtcMinute = $utcMinute }
@@ -1020,7 +1020,7 @@ function ConvertFrom-ServerPulseAgentPull {
             }
         } catch { $corruptLines++ }
     }
-    return [PSCustomObject]@{ Entries=@($entries); PulledLines=$pulledLines; CorruptLines=$corruptLines; DroppedUnknown=$droppedUnknown; RecordFiles=$recordFiles; MaxUtcMinute=$maxUtcMinute }
+    return [PSCustomObject]@{ Entries=@($entries); PulledLines=$pulledLines; CorruptLines=$corruptLines; DroppedUnknown=$droppedUnknown; RecordFiles=$recordFiles; SkippedByCursor=$skippedByCursor; MaxUtcMinute=$maxUtcMinute }
 }
 
 function Get-ServerPulseAgentDayPath {
@@ -1142,7 +1142,7 @@ function Merge-ServerPulseAgentRecords {
     if ($connection.Status -ne 'online') {
         return [PSCustomObject]@{
             ServerId=[string]$Server.Id; ServerLabel=[string]$Server.Label; Error=[string]$connection.Error; AuthMode=[string]$connection.AuthMode
-            PulledLines=0; Added=0; Updated=0; Skipped=0; DroppedUnknown=0; CorruptLines=0; CleanedFiles=0; DurationMs=0; RecordFiles=0; MaxUtcMinute=$null
+            PulledLines=0; Added=0; Updated=0; Skipped=0; DroppedUnknown=0; CorruptLines=0; CleanedFiles=0; DurationMs=0; RecordFiles=0; SkippedByCursor=0; MaxUtcMinute=$null
         }
     }
     $parsed = ConvertFrom-ServerPulseAgentPull -Output $connection.Output -KnownServerIds $KnownServerIds -CursorUtc $CursorUtc
@@ -1173,7 +1173,7 @@ function Merge-ServerPulseAgentRecords {
         ServerId=[string]$Server.Id; ServerLabel=[string]$Server.Label; Error=''; AuthMode=[string]$connection.AuthMode
         PulledLines=[int]$parsed.PulledLines; Added=$added; Updated=$updated; Skipped=$skipped
         DroppedUnknown=[int]$parsed.DroppedUnknown; CorruptLines=[int]$parsed.CorruptLines; CleanedFiles=$cleaned
-        DurationMs=[int]$stopwatch.ElapsedMilliseconds; RecordFiles=[int]$parsed.RecordFiles; MaxUtcMinute=$parsed.MaxUtcMinute
+        DurationMs=[int]$stopwatch.ElapsedMilliseconds; RecordFiles=[int]$parsed.RecordFiles; SkippedByCursor=[int]$parsed.SkippedByCursor; MaxUtcMinute=$parsed.MaxUtcMinute
     }
 }
 
