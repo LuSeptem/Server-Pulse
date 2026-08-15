@@ -322,7 +322,11 @@ function Get-HistoryNumberSum {
 
 function Merge-HistoryMinuteRecords {
     param([Parameter(Mandatory)][object[]]$Records)
-    if($Records.Count -eq 1){$Records[0].Timestamp=(ConvertTo-HistoryRecordTime $Records[0]).ToString('yyyy-MM-ddTHH:mm:ss');return $Records[0]}
+    if($Records.Count -eq 1){
+        $singleTimestamp=$Records[0].Timestamp
+        if($singleTimestamp -is [string] -and $singleTimestamp.Length -eq 19 -and $singleTimestamp[10] -eq 'T'){return $Records[0]}
+        $Records[0].Timestamp=(ConvertTo-HistoryRecordTime $Records[0]).ToString('yyyy-MM-ddTHH:mm:ss');return $Records[0]
+    }
     $servers=foreach($serverGroup in (@($Records|ForEach-Object{@($_.Servers)})|Group-Object{[string]$_.Id})){
         $rows=@($serverGroup.Group);$last=$rows[-1]
         $gpuRows=@($rows|ForEach-Object{@($_.Gpus)})
@@ -447,37 +451,86 @@ function Get-ServerPulseHistoryRecords {
     )
 
     if ($End -lt $Start) { throw '结束时间不能早于开始时间' }
+    $startText = $Start.ToString('yyyy-MM-ddTHH:mm')
+    $endText = $End.ToString('yyyy-MM-ddTHH:mm')
+    $timestampPattern = [regex]'"Timestamp":"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})'
     $byMinute = @{}
     for ($date = $Start.Date; $date -le $End.Date; $date = $date.AddDays(1)) {
         $legacyPath = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.json')
         if (Test-Path -LiteralPath $legacyPath) {
-            $saved = Get-Content -LiteralPath $legacyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $saved = [IO.File]::ReadAllText($legacyPath) | ConvertFrom-Json
             foreach ($record in @($saved.Records)) {
+                # 窗口外的分钟不参与合并，避免为窄查询处理全天旧记录
+                $recordTime = ConvertTo-HistoryRecordTime $record
+                if ($recordTime -lt $Start -or $recordTime -gt $End) { continue }
                 $key=[string]$record.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($record)
             }
         }
         $jsonlPath = Join-Path $Recorder.Directory ($date.ToString('yyyy-MM-dd') + '.v2.jsonl')
         if (Test-Path -LiteralPath $jsonlPath) {
-            $lines=@(Get-Content -LiteralPath $jsonlPath -Encoding UTF8)
+            $lines = [IO.File]::ReadAllLines($jsonlPath)
             $lastNonBlank=-1;for($lineIndex=0;$lineIndex -lt $lines.Count;$lineIndex++){if(-not [string]::IsNullOrWhiteSpace($lines[$lineIndex])){$lastNonBlank=$lineIndex}}
+            if($lastNonBlank -lt 0){continue}
+            # 先用字符串比较按分钟窗口预过滤，只解析窗口内的行
+            $selected=[Collections.Generic.List[int]]::new()
             for($lineIndex=0;$lineIndex -lt $lines.Count;$lineIndex++){
                 if([string]::IsNullOrWhiteSpace($lines[$lineIndex])){continue}
-                try{$entry=$lines[$lineIndex]|ConvertFrom-Json -ErrorAction Stop;$record=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry};if($null -eq $record.Timestamp){throw '缺少 Timestamp'};$key=[string]$record.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($record)}
-                catch{if($lineIndex -eq $lastNonBlank){Write-HistoryReadError $Recorder ("忽略损坏的 JSONL 末行：{0} 第 {1} 行：{2}" -f $jsonlPath,($lineIndex+1),$_.Exception.Message);continue};throw}
+                $match=$timestampPattern.Match($lines[$lineIndex])
+                if($match.Success){
+                    $stamp=$match.Groups[1].Value
+                    if([string]::CompareOrdinal($stamp,$startText) -lt 0 -or [string]::CompareOrdinal($stamp,$endText) -gt 0){continue}
+                }
+                $selected.Add($lineIndex)
+            }
+            if($selected.Count -eq 0){continue}
+            $batchFailed=$false
+            $batchEntries=[Collections.Generic.List[object]]::new()
+            try {
+                # 批量解析：把窗口内的行拼接为单个 JSON 数组，避免逐行 ConvertFrom-Json。
+                # PS 5.1 对数组输出带 NoEnumerate 标记，必须先把结果赋给变量再展开，
+                # 否则 @() 只得到整个数组本身。
+                $batch='[' + ((@($selected|ForEach-Object{$lines[$_]}) ) -join ',') + ']'
+                $batchResult=ConvertFrom-Json -InputObject $batch -ErrorAction Stop
+                foreach($entry in @($batchResult)){$batchEntries.Add($entry)}
+                foreach($entry in $batchEntries){$entryRecord=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry};if($null -eq $entryRecord.Timestamp){throw '缺少 Timestamp'}}
+            } catch {
+                # 批量解析失败（通常是损坏行）时退回逐行解析，保留“忽略损坏末行”语义
+                $batchFailed=$true
+            }
+            if($batchFailed){
+                foreach($lineIndex in $selected){
+                    try{$entry=$lines[$lineIndex]|ConvertFrom-Json -ErrorAction Stop;$record=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry};if($null -eq $record.Timestamp){throw '缺少 Timestamp'};$key=[string]$record.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($record)}
+                    catch{if($lineIndex -eq $lastNonBlank){Write-HistoryReadError $Recorder ("忽略损坏的 JSONL 末行：{0} 第 {1} 行：{2}" -f $jsonlPath,($lineIndex+1),$_.Exception.Message);continue};throw}
+                }
+            } else {
+                foreach($entry in $batchEntries){
+                    $record=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry}
+                    $key=[string]$record.Timestamp
+                    if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()}
+                    $byMinute[$key].Add($record)
+                }
             }
         }
     }
     $current = Get-CurrentHistoryMinuteRecord $Recorder
     if ($null -ne $current) {$key=[string]$current.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($current)}
     $merged=[Collections.Generic.List[object]]::new()
-    foreach($minuteKey in @($byMinute.Keys)) {
+    # 键为 yyyy-MM-ddTHH:mm:ss 固定格式，字符串排序即时间排序；窗口过滤用序数比较，
+    # 避免对每条合并结果做 datetime 解析
+    foreach($minuteKey in @($byMinute.Keys | Sort-Object)) {
         $minuteRecords=[object[]]$byMinute[$minuteKey].ToArray()
-        $merged.Add((Merge-HistoryMinuteRecords -Records $minuteRecords))
+        $mergedRecord=Merge-HistoryMinuteRecords -Records $minuteRecords
+        $mergedText=[string]$mergedRecord.Timestamp
+        if($mergedText.Length -lt 16){
+            $mergedTime=ConvertTo-HistoryRecordTime $mergedRecord
+            if($mergedTime -lt $Start -or $mergedTime -gt $End){continue}
+        } else {
+            $mergedPrefix=$mergedText.Substring(0,16)
+            if([string]::CompareOrdinal($mergedPrefix,$startText) -lt 0 -or [string]::CompareOrdinal($mergedPrefix,$endText) -gt 0){continue}
+        }
+        $merged.Add($mergedRecord)
     }
-    return @($merged | Where-Object {
-        $timestamp = ConvertTo-HistoryRecordTime $_
-        $timestamp -ge $Start -and $timestamp -le $End
-    } | Sort-Object Timestamp)
+    return @($merged)
 }
 
 function New-HistoryBrush {
@@ -936,28 +989,16 @@ function New-HistoryChartCard {
     $card.Child = $layout; return $card
 }
 
-function Get-HistoryServerFromRecord {
-    param($Record, [string]$ServerId)
-    $matches = @($Record.Servers | Where-Object { [string]$_.Id -eq $ServerId } | Select-Object -First 1)
-    if ($matches.Count -eq 0) { return $null }
-    return $matches[0]
-}
-
 function Add-HistoryServerSection {
     param(
         [Parameter(Mandatory)]$Panel,
-        [Parameter(Mandatory)][object[]]$Records,
-        [Parameter(Mandatory)][string]$ServerId,
+        [Parameter(Mandatory)][object[]]$ServerRecords,
         [Parameter(Mandatory)][datetime]$Start,
         [Parameter(Mandatory)][datetime]$End,
         $SelectionStore
     )
 
-    $serverRecords = foreach ($record in $Records) {
-        $server = Get-HistoryServerFromRecord $record $ServerId
-        if ($null -ne $server) { [PSCustomObject]@{Time=(ConvertTo-HistoryRecordTime $record);Server=$server} }
-    }
-    $serverRecords = @($serverRecords)
+    $serverRecords = @($ServerRecords)
     if ($serverRecords.Count -eq 0) { return }
     $latest = $serverRecords[-1].Server
 
@@ -1107,8 +1148,18 @@ function Invoke-ServerPulseHistoryRender {
             $empty = New-HistoryText (Get-ServerPulseText $emptyKey) 14 '#7B867F'; $empty.HorizontalAlignment='Center'; $empty.Margin=[Windows.Thickness]::new(0,90,0,0)
             [void]$historyUi.HistoryPanel.Children.Add($empty)
         } else {
-            $serverIds = @($records | ForEach-Object { @($_.Servers) } | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
-            foreach ($serverId in $serverIds) { Add-HistoryServerSection -Panel $historyUi.HistoryPanel -Records $records -ServerId $serverId -Start $rangeStart -End $rangeEnd -SelectionStore $State.SelectionStore }
+            $recordsByServer = @{}
+            foreach ($record in $records) {
+                $recordTime = ConvertTo-HistoryRecordTime $record
+                foreach ($server in @($record.Servers)) {
+                    $serverId = [string]$server.Id
+                    if (-not $recordsByServer.ContainsKey($serverId)) { $recordsByServer[$serverId] = [Collections.Generic.List[object]]::new() }
+                    $recordsByServer[$serverId].Add([PSCustomObject]@{Time=$recordTime;Server=$server})
+                }
+            }
+            foreach ($serverId in @($recordsByServer.Keys | Sort-Object)) {
+                Add-HistoryServerSection -Panel $historyUi.HistoryPanel -ServerRecords $recordsByServer[$serverId] -Start $rangeStart -End $rangeEnd -SelectionStore $State.SelectionStore
+            }
         }
         $minutes = [Math]::Max(0,[int][Math]::Round(($rangeEnd-$rangeStart).TotalMinutes))
         $historyUi.HistoryRangeStatus.Text=Get-ServerPulseText 'history.range.count' @($records.Count,$minutes); $historyUi.HistoryRangeStatus.Foreground=New-HistoryBrush '#78837C'
@@ -1616,8 +1667,8 @@ function Show-ServerPulseHistoryWindow {
         }
     }
     Update-HistoryWindowLanguage -Window $historyWindow
-    [void](Invoke-ServerPulseHistoryRender -State $historyState)
     if ($SmokeTest) {
+        [void](Invoke-ServerPulseHistoryRender -State $historyState)
         $historyWindow.Show(); $historyWindow.UpdateLayout()
         $originalHistoryDirectory=$Recorder.Directory
         $invalidHistoryDirectory=Join-Path ([IO.Path]::GetTempPath()) ("serverpulse-invalid-history-{0}" -f [guid]::NewGuid().ToString('N'))
@@ -1718,5 +1769,7 @@ function Show-ServerPulseHistoryWindow {
         $result=[PSCustomObject]@{PanelCount=$historyUi.HistoryPanel.Children.Count;Status=[string]$historyUi.HistoryRangeStatus.Text;Start=$startValue.ToString('yyyy-MM-dd HH:mm');End=$endValue.ToString('yyyy-MM-dd HH:mm');ValidationPassed=$validationPassed;QueryClickPassed=$queryClickPassed;QueryClickError=$queryClickError;QueryFailureContained=$queryFailureContained;ChangedRangeQueryPassed=$changedRangeQueryPassed;ChangedRangeQueryError=$changedQueryState.Error;NormalRenderPassed=$normalRenderPassed;HoverInteractionPassed=$hoverInteractionPassed;HoverInteractionError=$hoverInteractionError;CloseButtonPassed=$closeButtonPassed;CloseButtonError=$closeButtonError;CloseHitTestPassed=$closeHitTestPassed;CloseHitElement=$closeHitElement;CloseSeparatedFromDragArea=$closeSeparatedFromDragArea;ThemeBackgroundR=[int]$historyWindow.Content.Background.Color.R}
         return $result
     }
+    # 非冒烟路径：先显示窗口，再以后台优先级异步执行首次查询，避免点击“记录”后窗口迟迟不出现
+    [void]$historyWindow.Dispatcher.BeginInvoke([Action]{ [void](Invoke-ServerPulseHistoryRender -State $historyState) }.GetNewClosure(),[Windows.Threading.DispatcherPriority]::Background)
     [void]$historyWindow.ShowDialog()
 }

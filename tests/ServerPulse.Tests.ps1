@@ -294,6 +294,17 @@ try {
     $mixedLegacyCpuUsage = Get-HistoryStoredUsageState (Get-HistoryObjectValue $mixedRecords[1].Servers[0] @('CpuUserUsage')) Cpu
     Assert-Equal $mixedLegacyCpuUsage.Status 'unavailable' '旧格式缺少用户字段读为 unavailable'
 
+    # 窄窗口查询只解析窗口内的 JSONL 分钟，预过滤不引入额外分钟
+    for ($h = 0; $h -lt 12; $h++) {
+        $windowRecord = $storedRecords[0] | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+        $windowRecord.Timestamp = '2026-08-12T{0:00}:00:00' -f $h
+        Save-HistoryMinuteRecord -Recorder $recorder -Record $windowRecord
+    }
+    $readErrorsBefore = $recorder.ReadErrors.Count
+    $windowedRecords = @(Get-ServerPulseHistoryRecords -Recorder $recorder -Start ([datetime]'2026-08-12 03:00') -End ([datetime]'2026-08-12 04:59'))
+    Assert-Equal ($windowedRecords.Timestamp -join ',') '2026-08-12T03:00:00,2026-08-12T04:00:00' '窄窗口查询只返回窗口内分钟且按序'
+    Assert-Equal ($recorder.ReadErrors.Count -eq $readErrorsBefore) $true '窄窗口预过滤不产生新的读取错误'
+
     Set-Content -LiteralPath (Join-Path $historyTestDirectory '2026-06-01.json') -Value '{"Records":[]}' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $historyTestDirectory '2026-06-01.v2.jsonl') -Value '' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $historyTestDirectory '2026-08-10.json') -Value '{"Records":[]}' -Encoding UTF8

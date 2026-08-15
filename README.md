@@ -137,6 +137,8 @@ History supports:
 - Gaps for missing monitoring data instead of connecting points across the gap;
 - Mixed reading of legacy JSON and the append-only JSONL format on the same date.
 
+The window appears immediately; the initial query runs at background priority after the window is shown. Queries parse only the requested minute window instead of the whole day files, so opening History and switching time ranges stay responsive even with long retention.
+
 ### Local history layout
 
 History stays on the current Windows user's machine. The default data root is `%LOCALAPPDATA%\\ServerPulse\\`. The first visit to History asks you to save a policy, preselecting 7 days. The query range has no separate maximum; an interval earlier than retained data simply reports that no records are available.
