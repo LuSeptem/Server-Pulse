@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 
 # Server-side monitoring agent support.
 #
@@ -987,14 +987,11 @@ function ConvertFrom-ServerPulseAgentPull {
             if ($null -eq $localMinute) { $corruptLines++; continue }
             $sampleCount = 1
             if ($null -ne $parsed.Record.SampleCount) { [void][int]::TryParse([string]$parsed.Record.SampleCount, [ref]$sampleCount) }
-            $matched = $false
             foreach ($serverEntry in @($parsed.Record.Servers)) {
                 if ($null -eq $serverEntry) { continue }
                 if ([string]$serverEntry.Id -notin $KnownServerIds) { $droppedUnknown++; continue }
-                $matched = $true
                 $entries.Add([PSCustomObject]@{ Minute=$localMinute; UtcMinute=$utcMinute; Entry=$serverEntry; SourceLine=$clean; SampleCount=$sampleCount })
             }
-            if (-not $matched) { $droppedUnknown++ }
         } catch { $corruptLines++ }
     }
     return [PSCustomObject]@{ Entries=@($entries); PulledLines=$pulledLines; CorruptLines=$corruptLines; DroppedUnknown=$droppedUnknown; MaxUtcMinute=$maxUtcMinute }

@@ -241,6 +241,31 @@ function Register-ServerManagerRowEvents {
         if(((Test-ServerPulseStoredCredential $s.Server.Identity)-or$s.Context.PendingCredentialWrites.ContainsKey($s.Server.Identity)) -and [Windows.MessageBox]::Show($s.Context.Window,(Get-ServerPulseText 'manager.deleteOnApplyPrompt' @($affected)),(Get-ServerPulseText 'manager.deleteCredentialTitle'),'YesNo','Question') -eq 'Yes'){[void]$s.Context.PendingCredentialWrites.Remove($s.Server.Identity);[void]$s.Context.PendingCredentialDeletes.Add($s.Server.Identity)}
         $s.Context.Rows.Remove($s);[void]$s.Context.Panel.Children.Remove($s.Surface)
     })
+    $State.AgentInjectButton.Tag=$State;$State.AgentInjectButton.Add_Click({param($sender,$eventArgs);$s=$sender.Tag;Invoke-ServerManagerAgentOperation $s.Context $s inject})
+    $State.AgentStopButton.Tag=$State;$State.AgentStopButton.Add_Click({param($sender,$eventArgs);$s=$sender.Tag;Invoke-ServerManagerAgentOperation $s.Context $s stop})
+    $State.AgentRestartButton.Tag=$State;$State.AgentRestartButton.Add_Click({param($sender,$eventArgs);$s=$sender.Tag;Invoke-ServerManagerAgentOperation $s.Context $s restart})
+    $State.AgentConfigButton.Tag=$State;$State.AgentConfigButton.Add_Click({
+        param($sender,$eventArgs);$s=$sender.Tag
+        $entry=Get-ServerPulseAgentServerEntry $s.Context.AgentState ([string]$s.Server.Id)
+        $interval=if($null-ne$entry){[int]$entry.IntervalSeconds}else{5}
+        $retention=if($null-ne$entry){[int]$entry.RetentionDays}else{30}
+        $restore=if($null-ne$entry){[bool]$entry.AutoRestoreOnStartup}else{$false}
+        $choice=Show-ServerPulseAgentConfigDialog -Owner $s.Context.Window -IntervalSeconds $interval -RetentionDays $retention -AutoRestoreOnStartup $restore
+        if($null-eq$choice){return}
+        Set-ServerPulseAgentServerEntry -State $s.Context.AgentState -Id ([string]$s.Server.Id) -IntervalSeconds $choice.IntervalSeconds -RetentionDays $choice.RetentionDays -AutoRestoreOnStartup $choice.AutoRestoreOnStartup
+        if(-not[string]::IsNullOrWhiteSpace($s.Context.AgentStatePath)){try{Save-ServerPulseAgentState $s.Context.AgentStatePath $s.Context.AgentState}catch{}}
+        Invoke-ServerManagerAgentOperation $s.Context $s update-config
+    })
+    $State.AgentMergeButton.Tag=$State;$State.AgentMergeButton.Add_Click({
+        param($sender,$eventArgs);$s=$sender.Tag
+        $choice=Show-ServerPulseAgentMergeDialog -Owner $s.Context.Window
+        if($null-eq$choice){return}
+        Invoke-ServerManagerAgentOperation $s.Context $s merge -CleanMerged $choice.CleanMerged
+    })
+    $State.AgentUninstallButton.Tag=$State;$State.AgentUninstallButton.Add_Click({
+        param($sender,$eventArgs);$s=$sender.Tag
+        if([Windows.MessageBox]::Show($s.Context.Window,(Get-ServerPulseText 'agent.uninstallPrompt' @($s.Server.Label)),(Get-ServerPulseText 'agent.uninstallTitle'),'YesNo','Warning')-eq'Yes'){Invoke-ServerManagerAgentOperation $s.Context $s uninstall}
+    })
 }
 
 function New-ServerManagerRow {
@@ -270,10 +295,23 @@ function New-ServerManagerRow {
     $eye=[Windows.Controls.Button]::new();$eye.Content=Get-ServerPulseText 'manager.reveal';$eye.Margin='6,0,0,0';$eye.Padding='7,2';Set-ServerManagerButtonVisual $eye;[Windows.Controls.Grid]::SetColumn($eye,1)
     [void]$passwordLine.Children.Add($password);[void]$passwordLine.Children.Add($reveal);[void]$passwordLine.Children.Add($eye);[void]$passwordPanel.Children.Add($passwordLine)
     $save=[Windows.Controls.CheckBox]::new();$save.Content=Get-ServerPulseText 'manager.saveCredential';$save.IsChecked=$false;$save.Foreground=New-ServerManagerBrush '#AAB3AD';$save.FontSize=9;$save.Margin='0,6,0,0';Set-ServerManagerCheckBoxVisual $save;[void]$passwordPanel.Children.Add($save);[void]$stack.Children.Add($passwordPanel)
-    $state=[PSCustomObject]@{Context=$Context;Server=$Server;Surface=$surface;Monitor=$monitor;Meta=$meta;StatusText=$status;Passwordless=$passwordless;CredentialText=$credential;UpdateCredentialButton=$updateCredential;DeleteCredentialButton=$deleteCredential;TestButton=$test;EditButton=$edit;DeleteButton=$delete;PasswordPanel=$passwordPanel;PasswordBox=$password;Reveal=$reveal;Eye=$eye;SaveCredential=$save;Status='unknown';AuthMode='auto'}
+    $agentLine=[Windows.Controls.StackPanel]::new();$agentLine.Orientation='Horizontal';$agentLine.Margin='22,4,0,0'
+    $agentBadge=[Windows.Controls.TextBlock]::new();$agentBadge.VerticalAlignment='Center';$agentBadge.FontSize=9;$agentBadge.Margin='0,0,10,0';$agentBadge.Foreground=New-ServerManagerBrush '#657069'
+    $agentInject=[Windows.Controls.Button]::new();$agentInject.Content=Get-ServerPulseText 'agent.inject';$agentInject.Padding='7,2';Set-ServerManagerButtonVisual $agentInject
+    $agentStop=[Windows.Controls.Button]::new();$agentStop.Content=Get-ServerPulseText 'agent.stop';$agentStop.Padding='7,2';$agentStop.Margin='5,0,0,0';Set-ServerManagerButtonVisual $agentStop
+    $agentRestart=[Windows.Controls.Button]::new();$agentRestart.Content=Get-ServerPulseText 'agent.restart';$agentRestart.Padding='7,2';$agentRestart.Margin='5,0,0,0';Set-ServerManagerButtonVisual $agentRestart
+    $agentConfig=[Windows.Controls.Button]::new();$agentConfig.Content=Get-ServerPulseText 'agent.config';$agentConfig.Padding='7,2';$agentConfig.Margin='5,0,0,0';Set-ServerManagerButtonVisual $agentConfig
+    $agentMerge=[Windows.Controls.Button]::new();$agentMerge.Content=Get-ServerPulseText 'agent.merge';$agentMerge.Padding='7,2';$agentMerge.Margin='5,0,0,0';Set-ServerManagerButtonVisual $agentMerge
+    $agentUninstall=[Windows.Controls.Button]::new();$agentUninstall.Content=Get-ServerPulseText 'agent.uninstall';$agentUninstall.Padding='7,2';$agentUninstall.Margin='5,0,0,0';Set-ServerManagerButtonVisual $agentUninstall
+    foreach($control in @($agentBadge,$agentInject,$agentStop,$agentRestart,$agentConfig,$agentMerge,$agentUninstall)){[void]$agentLine.Children.Add($control)}
+    [void]$stack.Children.Add($agentLine)
+    $state=[PSCustomObject]@{Context=$Context;Server=$Server;Surface=$surface;Monitor=$monitor;Meta=$meta;StatusText=$status;Passwordless=$passwordless;CredentialText=$credential;UpdateCredentialButton=$updateCredential;DeleteCredentialButton=$deleteCredential;TestButton=$test;EditButton=$edit;DeleteButton=$delete;PasswordPanel=$passwordPanel;PasswordBox=$password;Reveal=$reveal;Eye=$eye;SaveCredential=$save;Status='unknown';AuthMode='auto';AgentBadge=$agentBadge;AgentInjectButton=$agentInject;AgentStopButton=$agentStop;AgentRestartButton=$agentRestart;AgentConfigButton=$agentConfig;AgentMergeButton=$agentMerge;AgentUninstallButton=$agentUninstall;AgentStatus='unknown';AgentBusy=$false}
     Register-ServerManagerRowEvents $state
     $remembered=Get-ServerManagerRememberedValidation $Context $Server
     if($null-ne$remembered){$state.AuthMode=[string]$remembered.Mode;Set-ServerManagerRowStatus $state ([string]$remembered.Status)}
+    $agentEntry=Get-ServerPulseAgentServerEntry $Context.AgentState ([string]$Server.Id)
+    $agentInitialStatus=if($null-ne$agentEntry){if([string]$agentEntry.LastStatus-in@('running','stale','stopped','not_installed')){[string]$agentEntry.LastStatus}else{'unknown'}}else{'not_configured'}
+    Set-ServerManagerAgentStatus $state $agentInitialStatus
     return $state
 }
 
@@ -294,12 +332,20 @@ function Update-ServerManagerLanguage {
         $row.DeleteButton.Content = Get-ServerPulseText 'manager.delete'
         $row.Eye.Content = Get-ServerPulseText 'manager.reveal'
         $row.SaveCredential.Content = Get-ServerPulseText 'manager.saveCredential'
+        $row.AgentInjectButton.Content = Get-ServerPulseText 'agent.inject'
+        $row.AgentStopButton.Content = Get-ServerPulseText 'agent.stop'
+        $row.AgentRestartButton.Content = Get-ServerPulseText 'agent.restart'
+        $row.AgentConfigButton.Content = Get-ServerPulseText 'agent.config'
+        $row.AgentMergeButton.Content = Get-ServerPulseText 'agent.merge'
+        $row.AgentUninstallButton.Content = Get-ServerPulseText 'agent.uninstall'
         $info = $row.Passwordless.Parent.Children | Where-Object { $_ -is [Windows.Controls.Border] } | Select-Object -First 1
         if ($null -ne $info) { $info.ToolTip = Get-ServerPulseText 'manager.passwordlessTip' }
         Set-ServerManagerRowStatus $row ([string]$row.Status) $row.StatusText.ToolTip
+        Set-ServerManagerAgentStatus $row ([string]$row.AgentStatus) $row.AgentBadge.ToolTip
         $row.CredentialText.Text = if ($context.PendingCredentialWrites.ContainsKey($row.Server.Identity)) { Get-ServerPulseText 'manager.savedPending' } else { Get-ServerPulseCredentialState $row.Server $context.SessionSecrets }
         $row.DeleteCredentialButton.Visibility = if ($row.CredentialText.Text -eq (Get-ServerPulseText 'manager.saved')) { 'Visible' } else { 'Collapsed' }
     }
+    if ($context.PSObject.Properties.Name -contains 'MergeAllButton') { $context.MergeAllButton.Content = Get-ServerPulseText 'agent.mergeAll' }
 }
 
 function Start-ServerManagerCandidateDiscovery {
@@ -325,6 +371,218 @@ function Stop-ServerManagerCandidateDiscovery {
     }else{$shell.Dispose()}
 }
 
+# Background worker for server-side agent operations. Runs in its own
+# runspace with the agent/SSH/sample modules dot-sourced; returns a uniform
+# envelope consumed by Complete-ServerManagerAgentOperation.
+$script:ServerManagerAgentOpScript = @'
+param($ServerJson,$Action,$Password,$IntervalSeconds,$RetentionDays,$CursorUtc,$CleanMerged,$KnownIdsJson,$HistoryDirectory,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$AskPassPath,$TimeoutMs)
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+. $StorageModulePath
+. $AgentModulePath
+. $SshModulePath
+. $SampleModulePath
+$server = $ServerJson | ConvertFrom-Json
+switch ($Action) {
+    'status' {
+        $result = Get-ServerPulseAgentStatus -Server $server -Password $Password -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath -IntervalSeconds $IntervalSeconds
+        return [PSCustomObject]@{ Kind='status'; Status=$result.Status; Error=$result.Error; Pid=$result.Pid; HeartbeatAgeSeconds=$result.HeartbeatAgeSeconds }
+    }
+    'merge' {
+        $knownIds = @($KnownIdsJson | ConvertFrom-Json)
+        $result = Merge-ServerPulseAgentRecords -Server $server -HistoryDirectory $HistoryDirectory -KnownServerIds $knownIds -CursorUtc $CursorUtc -Password $Password -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath -CleanMerged:$CleanMerged
+        return [PSCustomObject]@{ Kind='merge'; Summary=$result }
+    }
+    default {
+        $result = Invoke-ServerPulseAgentControl -Server $server -Action $Action -Password $Password -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath -IntervalSeconds $IntervalSeconds -RetentionDays $RetentionDays
+        return [PSCustomObject]@{ Kind='control'; Result=$result }
+    }
+}
+'@
+
+function Set-ServerManagerAgentStatus {
+    param($RowState,[string]$Status,[string]$Detail='')
+    $RowState.AgentStatus=$Status
+    $RowState.AgentBadge.Text=switch($Status){
+        'running'{Get-ServerPulseText 'agent.status.running'}'stale'{Get-ServerPulseText 'agent.status.stale'}'stopped'{Get-ServerPulseText 'agent.status.stopped'}
+        'not_installed'{Get-ServerPulseText 'agent.status.notInstalled'}'checking'{Get-ServerPulseText 'agent.status.checking'}'not_configured'{Get-ServerPulseText 'agent.notConfigured'}
+        default{Get-ServerPulseText 'agent.status.unknown'}
+    }
+    $RowState.AgentBadge.Foreground=New-ServerManagerBrush $(switch($Status){
+        'running'{'#A7D948'}'stale'{'#E4B64B'}'stopped'{'#FF7B72'}'error'{'#FF7B72'}'not_configured'{'#657069'}default{'#7A857E'}
+    })
+    $RowState.AgentBadge.ToolTip=$Detail
+}
+
+function Set-ServerManagerAgentBusy {
+    param($RowState,[bool]$Busy)
+    $RowState.AgentBusy=$Busy
+    foreach($button in @($RowState.AgentInjectButton,$RowState.AgentStopButton,$RowState.AgentRestartButton,$RowState.AgentConfigButton,$RowState.AgentMergeButton,$RowState.AgentUninstallButton)){
+        if($null-ne$button){$button.IsEnabled=-not$Busy}
+    }
+}
+
+function Invoke-ServerManagerAgentOperation {
+    param($Context,$RowState,[ValidateSet('status','inject','stop','restart','update-config','uninstall','merge')][string]$Action,[bool]$CleanMerged=$false)
+    if($null-eq$Context-or$null-eq$RowState){return}
+    if($RowState.AgentBusy-and$Action-ne'status'){return}
+    if($Action-eq'merge'-and[string]::IsNullOrWhiteSpace($Context.HistoryDirectory)){
+        [Windows.MessageBox]::Show($Context.Window,(Get-ServerPulseText 'agent.mergeError' @('History directory unavailable')),(Get-ServerPulseText 'agent.mergeTitle'),'OK','Error')|Out-Null
+        return
+    }
+    $serverJson=$RowState.Server|ConvertTo-Json -Compress
+    $password=Get-ServerPulseAuthenticationPassword $RowState $Context.SessionSecrets
+    $entry=Get-ServerPulseAgentServerEntry $Context.AgentState ([string]$RowState.Server.Id)
+    $interval=if($null-ne$entry){[int]$entry.IntervalSeconds}else{5}
+    $retention=if($null-ne$entry){[int]$entry.RetentionDays}else{30}
+    $cursor=if($null-ne$entry){[string]$entry.MergeCursorUtc}else{$null}
+    $knownIds=@($Context.Rows|ForEach-Object{[string]$_.Server.Id}|Sort-Object -Unique)
+    $knownIdsJson=$knownIds|ConvertTo-Json -Compress
+    $shell=[PowerShell]::Create()
+    [void]$shell.AddScript($script:ServerManagerAgentOpScript)
+    [void]$shell.AddArgument($serverJson).AddArgument($Action).AddArgument($password).AddArgument($interval).AddArgument($retention).AddArgument($cursor).AddArgument($CleanMerged).AddArgument($knownIdsJson).AddArgument($Context.HistoryDirectory).AddArgument($Context.AgentModulePath).AddArgument($Context.ModulePath).AddArgument($Context.SampleModulePath).AddArgument($Context.StorageModulePath).AddArgument($Context.AskPassPath).AddArgument($Context.TimeoutMs)
+    $async=$shell.BeginInvoke()
+    $Context.AgentOps.Add([PSCustomObject]@{RowState=$RowState;Shell=$shell;Async=$async;Action=$Action})
+    if($Action-ne'status'){Set-ServerManagerAgentBusy $RowState $true}
+    Start-ServerManagerAgentOpTimer $Context
+}
+
+function Start-ServerManagerAgentOpTimer {
+    param($Context)
+    if($null-ne$Context.AgentOpTimer-and$Context.AgentOpTimer.IsEnabled){return}
+    $timer=[Windows.Threading.DispatcherTimer]::new();$timer.Interval=[TimeSpan]::FromMilliseconds(100);$timer.Tag=$Context
+    $timer.Add_Tick({param($sender,$eventArgs)
+        $ctx=$sender.Tag
+        $finished=@($ctx.AgentOps|Where-Object{$_.Async.IsCompleted})
+        foreach($op in $finished){
+            $ctx.AgentOps.Remove($op)
+            try{
+                $output=@($op.Shell.EndInvoke($op.Async))
+                $payload=if($output.Count-gt0){$output[0]}else{$null}
+                Complete-ServerManagerAgentOperation $ctx $op $payload
+            }catch{
+                Set-ServerManagerAgentStatus $op.RowState error $_.Exception.Message
+                Set-ServerManagerAgentBusy $op.RowState $false
+            }finally{$op.Shell.Dispose()}
+        }
+        if($ctx.AgentOps.Count-eq0){$sender.Stop()}
+    })
+    $Context.AgentOpTimer=$timer;$timer.Start()
+}
+
+function Complete-ServerManagerAgentOperation {
+    param($Context,$Op,$Payload)
+    $row=$Op.RowState
+    $entry=Get-ServerPulseAgentServerEntry $Context.AgentState ([string]$row.Server.Id)
+    switch($Op.Action){
+        'status'{
+            $status=[string]$Payload.Status
+            if($status-eq'error'){Set-ServerManagerAgentStatus $row error ([string]$Payload.Error)}
+            else{
+                Set-ServerManagerAgentStatus $row $status
+                if($null-ne$entry){Update-ServerPulseAgentStatusState $entry $Payload}
+            }
+        }
+        'merge'{
+            $summary=$Payload.Summary
+            if($null-ne$summary-and-not[string]$summary.Error){
+                if($null-ne$entry){
+                    $entry.MergeCursorUtc=if($null-ne$summary.MaxUtcMinute){$summary.MaxUtcMinute.ToString('yyyy-MM-ddTHH:mm')}else{$entry.MergeCursorUtc}
+                    $entry.LastMergeAt=[DateTime]::UtcNow.ToString('o')
+                    $entry.LastMergeSummary=$summary|Select-Object PulledLines,Added,Updated,Skipped,DroppedUnknown,CorruptLines,CleanedFiles,DurationMs
+                }
+                $text=Get-ServerPulseText 'agent.mergeSummary' @([int]$summary.PulledLines,[int]$summary.Added,[int]$summary.Updated,[int]$summary.Skipped,[int]$summary.DroppedUnknown,[int]$summary.CorruptLines,[int]$summary.CleanedFiles,[int]$summary.DurationMs)
+                [Windows.MessageBox]::Show($Context.Window,$text,(Get-ServerPulseText 'agent.mergeResult'),'OK','Information')|Out-Null
+                Invoke-ServerManagerAgentOperation $Context $row status
+            }else{
+                $errorText=if($null-ne$summary){[string]$summary.Error}else{(Get-ServerPulseText 'agent.mergeNothing')}
+                [Windows.MessageBox]::Show($Context.Window,(Get-ServerPulseText 'agent.mergeError' @($errorText)),(Get-ServerPulseText 'agent.mergeTitle'),'OK','Error')|Out-Null
+                Invoke-ServerManagerAgentOperation $Context $row status
+            }
+        }
+        default{
+            $result=$Payload.Result
+            $message=switch([string]$result.Result){
+                'started'{Get-ServerPulseText 'agent.injectStarted'}
+                'already_running'{Get-ServerPulseText 'agent.injectAlready'}
+                'stopped'{Get-ServerPulseText 'agent.stopDone'}
+                'config_updated'{Get-ServerPulseText 'agent.configDone'}
+                'uninstalled'{Get-ServerPulseText 'agent.uninstallDone'}
+                default{Get-ServerPulseText 'agent.opError' @([string]$result.Result)}
+            }
+            if([string]$result.Result-eq'error'){Set-ServerManagerAgentStatus $row error ([string]$result.Error)}
+            [Windows.MessageBox]::Show($Context.Window,$message,(Get-ServerPulseText 'agent.title'),'OK','Information')|Out-Null
+            Invoke-ServerManagerAgentOperation $Context $row status
+        }
+    }
+    Set-ServerManagerAgentBusy $row $false
+    if(-not[string]::IsNullOrWhiteSpace($Context.AgentStatePath)){
+        try{Save-ServerPulseAgentState $Context.AgentStatePath $Context.AgentState}catch{}
+    }
+}
+
+function Stop-ServerManagerAgentOperations {
+    param($Context)
+    if($null-ne$Context.AgentOpTimer){$Context.AgentOpTimer.Stop();$Context.AgentOpTimer=$null}
+    foreach($op in @($Context.AgentOps)){
+        $Context.AgentOps.Remove($op)
+        if($op.Shell.InvocationStateInfo.State-in@('Running','Stopping')){
+            try{[void]$op.Shell.BeginStop({param($asyncResult);$worker=[PowerShell]$asyncResult.AsyncState;try{$worker.EndStop($asyncResult)}catch{}finally{$worker.Dispose()}},$op.Shell)}catch{$op.Shell.Dispose()}
+        }else{$op.Shell.Dispose()}
+    }
+}
+
+function Show-ServerPulseAgentConfigDialog {
+    param([Windows.Window]$Owner,[int]$IntervalSeconds=5,[int]$RetentionDays=30,[bool]$AutoRestoreOnStartup=$false)
+    $dialog=[Windows.Window]::new();$dialog.Title=Get-ServerPulseText 'agent.configTitle';$dialog.Width=380;$dialog.Height=300;$dialog.Owner=$Owner
+    $dialog.WindowStartupLocation='CenterOwner';$dialog.ShowInTaskbar=$false;$dialog.ResizeMode='NoResize'
+    $dialog.Background=New-ServerManagerBrush '#101411';$dialog.Foreground=New-ServerManagerBrush '#E7ECE8';$dialog.FontFamily='Microsoft YaHei UI'
+    $panel=[Windows.Controls.StackPanel]::new();$panel.Margin=18;$dialog.Content=$panel
+    $intervalLabel=[Windows.Controls.TextBlock]::new();$intervalLabel.Text=Get-ServerPulseText 'agent.interval';$intervalLabel.Margin='0,4,0,3';[void]$panel.Children.Add($intervalLabel)
+    $intervalBox=[Windows.Controls.TextBox]::new();$intervalBox.Height=28;$intervalBox.Padding='6,3';$intervalBox.Text=[string]$IntervalSeconds;[void]$panel.Children.Add($intervalBox)
+    $retentionLabel=[Windows.Controls.TextBlock]::new();$retentionLabel.Text=Get-ServerPulseText 'agent.retention';$retentionLabel.Margin='0,10,0,3';[void]$panel.Children.Add($retentionLabel)
+    $retentionBox=[Windows.Controls.TextBox]::new();$retentionBox.Height=28;$retentionBox.Padding='6,3';$retentionBox.Text=[string]$RetentionDays;[void]$panel.Children.Add($retentionBox)
+    $restore=[Windows.Controls.CheckBox]::new();$restore.Content=Get-ServerPulseText 'agent.autoRestore';$restore.IsChecked=$AutoRestoreOnStartup;$restore.Margin='0,12,0,0';$restore.Foreground=New-ServerManagerBrush '#D9E0DB';Set-ServerManagerCheckBoxVisual $restore;[void]$panel.Children.Add($restore)
+    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,18,0,0'
+    $ok=[Windows.Controls.Button]::new();$ok.Content=Get-ServerPulseText 'agent.save';$ok.Padding='14,4';Set-ServerManagerButtonVisual $ok -Accent
+    $cancel=[Windows.Controls.Button]::new();$cancel.Content=Get-ServerPulseText 'manager.cancel';$cancel.Padding='14,4';$cancel.Margin='8,0,0,0';Set-ServerManagerButtonVisual $cancel
+    [void]$buttons.Children.Add($ok);[void]$buttons.Children.Add($cancel);[void]$panel.Children.Add($buttons)
+    $dialog.Tag=[PSCustomObject]@{IntervalBox=$intervalBox;RetentionBox=$retentionBox;Restore=$restore;Result=$null}
+    $ok.Tag=$dialog;$ok.Add_Click({param($sender,$eventArgs)
+        $w=$sender.Tag
+        try{
+            $i=0;$r=0
+            if(-not[int]::TryParse($w.Tag.IntervalBox.Text,[ref]$i)-or$i-lt1-or$i-gt3600){throw (Get-ServerPulseText 'agent.interval')}
+            if(-not[int]::TryParse($w.Tag.RetentionBox.Text,[ref]$r)-or$r-lt1-or$r-gt3650){throw (Get-ServerPulseText 'agent.retention')}
+            $w.Tag.Result=[PSCustomObject]@{IntervalSeconds=$i;RetentionDays=$r;AutoRestoreOnStartup=[bool]$w.Tag.Restore.IsChecked}
+            $w.DialogResult=$true
+        }catch{[Windows.MessageBox]::Show($w,$_.Exception.Message,(Get-ServerPulseText 'manager.inputError'),'OK','Error')|Out-Null}
+    })
+    $cancel.Tag=$dialog;$cancel.Add_Click({param($sender,$eventArgs);$sender.Tag.DialogResult=$false})
+    Update-ServerPulseThemeVisualTree $dialog
+    [void]$dialog.ShowDialog()
+    return $dialog.Tag.Result
+}
+
+function Show-ServerPulseAgentMergeDialog {
+    param([Windows.Window]$Owner)
+    $dialog=[Windows.Window]::new();$dialog.Title=Get-ServerPulseText 'agent.mergeTitle';$dialog.Width=400;$dialog.Height=210;$dialog.Owner=$Owner
+    $dialog.WindowStartupLocation='CenterOwner';$dialog.ShowInTaskbar=$false;$dialog.ResizeMode='NoResize'
+    $dialog.Background=New-ServerManagerBrush '#101411';$dialog.Foreground=New-ServerManagerBrush '#E7ECE8';$dialog.FontFamily='Microsoft YaHei UI'
+    $panel=[Windows.Controls.StackPanel]::new();$panel.Margin=18;$dialog.Content=$panel
+    $clean=[Windows.Controls.CheckBox]::new();$clean.Content=Get-ServerPulseText 'agent.mergeClean';$clean.IsChecked=$false;$clean.Foreground=New-ServerManagerBrush '#D9E0DB';Set-ServerManagerCheckBoxVisual $clean;[void]$panel.Children.Add($clean)
+    $buttons=[Windows.Controls.StackPanel]::new();$buttons.Orientation='Horizontal';$buttons.HorizontalAlignment='Right';$buttons.Margin='0,24,0,0'
+    $ok=[Windows.Controls.Button]::new();$ok.Content=Get-ServerPulseText 'agent.mergeRun';$ok.Padding='14,4';Set-ServerManagerButtonVisual $ok -Accent
+    $cancel=[Windows.Controls.Button]::new();$cancel.Content=Get-ServerPulseText 'manager.cancel';$cancel.Padding='14,4';$cancel.Margin='8,0,0,0';Set-ServerManagerButtonVisual $cancel
+    [void]$buttons.Children.Add($ok);[void]$buttons.Children.Add($cancel);[void]$panel.Children.Add($buttons)
+    $dialog.Tag=[PSCustomObject]@{Clean=$clean;Result=$null}
+    $ok.Tag=$dialog;$ok.Add_Click({param($sender,$eventArgs);$w=$sender.Tag;$w.Tag.Result=[PSCustomObject]@{CleanMerged=[bool]$w.Tag.Clean.IsChecked};$w.DialogResult=$true})
+    $cancel.Tag=$dialog;$cancel.Add_Click({param($sender,$eventArgs);$sender.Tag.DialogResult=$false})
+    Update-ServerPulseThemeVisualTree $dialog
+    [void]$dialog.ShowDialog()
+    return $dialog.Tag.Result
+}
+
 function Show-ServerPulseManualServerDialog {
     param([Windows.Window]$Owner,$Server=$null)
     $editing=$null-ne$Server
@@ -340,8 +598,11 @@ function Show-ServerPulseManualServerDialog {
 }
 
 function Show-ServerPulseServerManager {
-    param([Windows.Window]$Owner,$Store,[hashtable]$SessionSecrets,[string]$AskPassPath,[int]$TimeoutMs,[hashtable]$ValidationStates,[scriptblock]$OnRetryRequested,[scriptblock]$OnApplied,[switch]$SmokeTest)
-    $window=[Windows.Window]::new();$window.Title=Get-ServerPulseText 'manager.title';$window.Width=620;$window.Height=650;$window.MinWidth=520;$window.MinHeight=420;$window.Owner=$Owner;$window.WindowStartupLocation='CenterOwner';$window.ShowInTaskbar=$false;$window.Background=New-ServerManagerBrush '#0D100E';$window.Foreground=New-ServerManagerBrush '#E7ECE8';$window.FontFamily='Microsoft YaHei UI'
+    param([Windows.Window]$Owner,$Store,[hashtable]$SessionSecrets,[string]$AskPassPath,[int]$TimeoutMs,[hashtable]$ValidationStates,[scriptblock]$OnRetryRequested,[scriptblock]$OnApplied,[switch]$SmokeTest,[string]$AgentStatePath='',[string]$HistoryDirectory='',[string]$AgentModulePath='',[string]$SampleModulePath='')
+    if([string]::IsNullOrWhiteSpace($AgentModulePath)){$AgentModulePath=Join-Path $PSScriptRoot 'ServerPulse.Agent.ps1'}
+    if([string]::IsNullOrWhiteSpace($SampleModulePath)){$SampleModulePath=Join-Path $PSScriptRoot 'ServerPulse.Sample.ps1'}
+    $StorageModulePath=Join-Path $PSScriptRoot 'ServerPulse.Storage.ps1'
+    $window=[Windows.Window]::new();$window.Title=Get-ServerPulseText 'manager.title';$window.Width=640;$window.Height=650;$window.MinWidth=520;$window.MinHeight=420;$window.Owner=$Owner;$window.WindowStartupLocation='CenterOwner';$window.ShowInTaskbar=$false;$window.Background=New-ServerManagerBrush '#0D100E';$window.Foreground=New-ServerManagerBrush '#E7ECE8';$window.FontFamily='Microsoft YaHei UI'
     $topmostBinding=[Windows.Data.Binding]::new('Topmost');$topmostBinding.Source=$Owner;$topmostBinding.Mode='OneWay';[void]$window.SetBinding([Windows.Window]::TopmostProperty,$topmostBinding)
     $root=[Windows.Controls.DockPanel]::new();$root.Margin=16;$window.Content=$root
     $footer=[Windows.Controls.StackPanel]::new();$footer.Orientation='Horizontal';$footer.HorizontalAlignment='Right';$footer.Margin='0,12,0,0';[Windows.Controls.DockPanel]::SetDock($footer,'Bottom');[void]$root.Children.Add($footer)
@@ -351,14 +612,18 @@ function Show-ServerPulseServerManager {
     foreach($b in @($add,$apply,$cancel)){[void]$footer.Children.Add($b)}
     $introPanel=[Windows.Controls.StackPanel]::new();$introPanel.Margin='0,0,0,12';[Windows.Controls.DockPanel]::SetDock($introPanel,'Top');[void]$root.Children.Add($introPanel)
     $intro=[Windows.Controls.TextBlock]::new();$intro.Text=Get-ServerPulseText 'manager.intro';$intro.TextWrapping='Wrap';$intro.Foreground=New-ServerManagerBrush '#9DA7A0';[void]$introPanel.Children.Add($intro)
+    $agentHint=[Windows.Controls.TextBlock]::new();$agentHint.Text=Get-ServerPulseText 'agent.hint';$agentHint.TextWrapping='Wrap';$agentHint.Foreground=New-ServerManagerBrush '#657069';$agentHint.FontSize=9;$agentHint.Margin='0,6,0,0';[void]$introPanel.Children.Add($agentHint)
     $discoveryStatus=[Windows.Controls.TextBlock]::new();$discoveryStatus.Text=Get-ServerPulseText 'manager.waitingDiscovery';$discoveryStatus.Foreground=New-ServerManagerBrush '#657069';$discoveryStatus.FontSize=9;$discoveryStatus.Margin='0,5,0,0';[void]$introPanel.Children.Add($discoveryStatus)
+    $mergeAll=[Windows.Controls.Button]::new();$mergeAll.Content=Get-ServerPulseText 'agent.mergeAll';$mergeAll.Padding='10,3';$mergeAll.Margin='0,8,0,0';$mergeAll.HorizontalAlignment='Left';Set-ServerManagerButtonVisual $mergeAll;[void]$introPanel.Children.Add($mergeAll)
     $scroll=[Windows.Controls.ScrollViewer]::new();$scroll.VerticalScrollBarVisibility='Auto';$panel=[Windows.Controls.StackPanel]::new();$scroll.Content=$panel;[void]$root.Children.Add($scroll)
     $workingSecrets=New-ServerPulseSessionSecretStore
     foreach($identity in @($SessionSecrets.Keys)){$secret=Get-ServerPulseSessionSecret $SessionSecrets $identity;if($null-ne$secret){Set-ServerPulseSessionSecret $workingSecrets $identity $secret};$secret=$null}
     if($null-eq$ValidationStates){$ValidationStates=@{}}
-    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Intro=$intro;AddButton=$add;ApplyButton=$apply;CancelButton=$cancel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;ValidationStates=$ValidationStates;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryState='waiting';DiscoveryCount=0;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied}
+    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Intro=$intro;AddButton=$add;ApplyButton=$apply;CancelButton=$cancel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;ValidationStates=$ValidationStates;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryState='waiting';DiscoveryCount=0;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied;AgentStatePath=$AgentStatePath;HistoryDirectory=$HistoryDirectory;AgentModulePath=$AgentModulePath;SampleModulePath=$SampleModulePath;StorageModulePath=$StorageModulePath;AgentState=$(if(-not[string]::IsNullOrWhiteSpace($AgentStatePath)){Read-ServerPulseAgentState $AgentStatePath}else{New-ServerPulseAgentState});AgentOps=[Collections.ArrayList]::new();AgentOpTimer=$null;MergeAllButton=$mergeAll}
     foreach($server in @($Store.Servers)){ $copy=Copy-ServerPulseManagedServer $server;$row=New-ServerManagerRow $context $copy;[void]$context.Rows.Add($row);[void]$panel.Children.Add($row.Surface) }
     Start-ServerManagerCandidateDiscovery $context
+    foreach($row in @($context.Rows)){if($null-ne(Get-ServerPulseAgentServerEntry $context.AgentState ([string]$row.Server.Id))){Invoke-ServerManagerAgentOperation $context $row status}}
+    $mergeAll.Tag=$context;$mergeAll.Add_Click({param($sender,$eventArgs);$ctx=$sender.Tag;foreach($row in @($ctx.Rows)){if($null-ne(Get-ServerPulseAgentServerEntry $ctx.AgentState ([string]$row.Server.Id))){Invoke-ServerManagerAgentOperation $ctx $row merge}}})
     $add.Tag=$context;$add.Add_Click({param($sender,$eventArgs);$ctx=$sender.Tag;$result=Show-ServerPulseManualServerDialog $ctx.Window;if($null-ne$result){$row=New-ServerManagerRow $ctx $result.Server;[void]$ctx.Rows.Add($row);[void]$ctx.Panel.Children.Add($row.Surface);Invoke-ServerManagerRowTest $row}})
     $cancel.Tag=$window;$cancel.Add_Click({param($sender,$eventArgs);$sender.Tag.Close()})
     $apply.Tag=$context;$apply.Add_Click({
@@ -379,7 +644,7 @@ function Show-ServerPulseServerManager {
         }catch{[Windows.MessageBox]::Show($ctx.Window,$_.Exception.Message,(Get-ServerPulseText 'manager.applyError'),'OK','Error')|Out-Null}
         finally{$sender.IsEnabled=$true}
     })
-    $window.Tag=$context;$window.Add_Closed({param($sender,$eventArgs);$ctx=$sender.Tag;Stop-ServerManagerCandidateDiscovery $ctx;Clear-ServerPulseSessionSecrets $ctx.SessionSecrets;foreach($pending in @($ctx.PendingCredentialWrites.Values)){$pending.Password=$null};$ctx.PendingCredentialWrites.Clear()})
+    $window.Tag=$context;$window.Add_Closed({param($sender,$eventArgs);$ctx=$sender.Tag;Stop-ServerManagerCandidateDiscovery $ctx;Stop-ServerManagerAgentOperations $ctx;Clear-ServerPulseSessionSecrets $ctx.SessionSecrets;foreach($pending in @($ctx.PendingCredentialWrites.Values)){$pending.Password=$null};$ctx.PendingCredentialWrites.Clear()})
     Update-ServerPulseThemeVisualTree $window
     $result=[PSCustomObject]@{Window=$window;Context=$context;ApplyButton=$apply;AddButton=$add}
     if(-not$SmokeTest){$window.Show();[void]$window.Activate()}

@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 
 <#+
     Storage policy helpers are intentionally independent from WPF.  The main

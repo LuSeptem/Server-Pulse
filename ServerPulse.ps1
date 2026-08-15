@@ -182,7 +182,7 @@ $locationPointerPath = Get-ServerPulseLocationPointerPath -LocalAppDataPath $env
 $dataRootResolution = Resolve-ServerPulseDataRoot -DefaultRoot $defaultDataRoot -PointerPath $locationPointerPath -CreateDefault
 $settingsDirectory = $dataRootResolution.ActiveRoot
 $settingsPath = Join-Path $settingsDirectory 'settings.json'
-$settings = [PSCustomObject]@{ Version = 5; ThemeMode = 'dark'; LanguageMode = 'zh'; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null; HistoryRetentionDays = 7; HistoryNeverCleanup = $false; HistoryLastRetentionDays = 7; HistoryStorageConfigured = $false; CleanupPaused = $false; CleanupOnStartup = $false }
+$settings = [PSCustomObject]@{ Version = 5; ThemeMode = 'dark'; LanguageMode = 'zh'; Opacity = 0.94; AutoHide = $true; Topmost = $true; RefreshIntervalSeconds = $null; Width = 420.0; Height = 560.0; Left = $null; Top = $null; HistoryRetentionDays = 7; HistoryNeverCleanup = $false; HistoryLastRetentionDays = 7; HistoryStorageConfigured = $false; CleanupPaused = $false; CleanupOnStartup = $false; AutoMergeOnStartup = $false }
 if (Test-Path -LiteralPath $settingsPath) {
     try {
         $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -288,6 +288,8 @@ $ui.PinButton.Tag = if ($window.Topmost) { 'active' } else { $null }
 . (Join-Path $scriptRoot 'src\ServerPulse.Core.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.History.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.Ssh.ps1')
+. (Join-Path $scriptRoot 'src\ServerPulse.Sample.ps1')
+. (Join-Path $scriptRoot 'src\ServerPulse.Agent.ps1')
 . (Join-Path $scriptRoot 'src\ServerPulse.ServerManager.ps1')
 $config = Get-ServerPulseConfig -Path $configPath
 $serverStorePath = Join-Path $settingsDirectory 'servers.json'
@@ -326,7 +328,7 @@ $historyJsonWriterCommand = Get-Command Write-ServerPulseJsonAtomic -ErrorAction
 $historyAskPassCommand = Get-Command Ensure-ServerPulseAskPassHelper -ErrorAction SilentlyContinue
 $historyContextSetterCommand = Get-Command Set-HistoryStorageContextValue -ErrorAction SilentlyContinue
 $historyStorageContext = [PSCustomObject]@{
-    DefaultRoot=$defaultDataRoot;ActiveRoot=$settingsDirectory;PreferredRoot=if($dataRootResolution.PreferredRoot){$dataRootResolution.PreferredRoot}else{$settingsDirectory};PointerPath=$locationPointerPath;IsFallback=[bool]$dataRootResolution.IsFallback;PendingSync=[bool]$dataRootResolution.IsFallback;PrivacyWarned=$false;HistoryWritePaused=$false;Recorder=$script:historyRecorder;Settings=$settings
+    DefaultRoot=$defaultDataRoot;ActiveRoot=$settingsDirectory;PreferredRoot=if($dataRootResolution.PreferredRoot){$dataRootResolution.PreferredRoot}else{$settingsDirectory};PointerPath=$locationPointerPath;IsFallback=[bool]$dataRootResolution.IsFallback;PendingSync=[bool]$dataRootResolution.IsFallback;PrivacyWarned=$false;HistoryWritePaused=$false;Recorder=$script:historyRecorder;Settings=$settings;AutoMergeOnStartup=[bool]$settings.AutoMergeOnStartup
     SaveSettings=$null;ApplyRoot=$null;OnRequery=$null
 }
 $script:historyStorageContext = $historyStorageContext
@@ -1199,6 +1201,7 @@ function Save-Settings {
     if ($settings.PSObject.Properties.Name -notcontains 'HistoryStorageConfigured') { $settings | Add-Member -NotePropertyName HistoryStorageConfigured -NotePropertyValue $false }
     if ($settings.PSObject.Properties.Name -notcontains 'CleanupPaused') { $settings | Add-Member -NotePropertyName CleanupPaused -NotePropertyValue $false }
     if ($settings.PSObject.Properties.Name -notcontains 'CleanupOnStartup') { $settings | Add-Member -NotePropertyName CleanupOnStartup -NotePropertyValue $false }
+    if ($settings.PSObject.Properties.Name -notcontains 'AutoMergeOnStartup') { $settings | Add-Member -NotePropertyName AutoMergeOnStartup -NotePropertyValue $false }
     Write-ServerPulseJsonAtomic -Path $settingsPath -Value $settings -Depth 8
     if ((Get-Variable -Name historyStorageContext -Scope Script -ErrorAction SilentlyContinue) -and $null -ne $script:historyStorageContext -and [bool]$script:historyStorageContext.IsFallback) {
         try { Write-ServerPulseLocationPointer -Path $locationPointerPath -Pointer (New-ServerPulseLocationPointer -PreferredDataRootPath ([string]$script:historyStorageContext.PreferredRoot) -PendingSync $true -ActiveDataRootPath $settingsDirectory -LastError (Get-ServerPulseText 'history.settingsFallback')) } catch { }
@@ -1367,7 +1370,7 @@ function Show-ServerPulseSshManager {
     $script:authManagerPrompted=$true
     $script:sshManagerOpen=$true
     try{
-        $manager=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -ValidationStates $script:serverAuthStates -OnRetryRequested {param($serverId);Request-ServerPulseReconnect $serverId} -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows}
+        $manager=Show-ServerPulseServerManager -Owner $window -Store $script:serverStore -SessionSecrets $script:sessionSecrets -AskPassPath $script:askPassPath -TimeoutMs $config.SshTimeoutMs -ValidationStates $script:serverAuthStates -AgentStatePath (Join-Path $settingsDirectory 'agent-state.json') -HistoryDirectory (Join-Path $settingsDirectory 'history') -OnRetryRequested {param($serverId);Request-ServerPulseReconnect $serverId} -OnApplied {param($store,$rows);Apply-ServerPulseManagedServers $store $rows}
         $script:sshManagerWindow=$manager.Window
         $manager.Window.Add_Closed({$script:sshManagerOpen=$false;$script:sshManagerWindow=$null})
     }catch{$script:sshManagerOpen=$false;$script:sshManagerWindow=$null;throw}
@@ -1377,6 +1380,62 @@ function Queue-ServerPulseSshManager {
     if($script:sshManagerOpen-or$script:sshManagerOpenQueued){return}
     $script:sshManagerOpenQueued=$true
     [void]$window.Dispatcher.BeginInvoke([Action]{Show-ServerPulseSshManager -Queued},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+}
+
+function Start-ServerPulseStartupAgentTasks {
+    # Runs server-side agent auto-restore and auto-merge a few seconds after
+    # the window loads, in a background runspace; never blocks the main window.
+    $timer=[Windows.Threading.DispatcherTimer]::new()
+    $timer.Interval=[TimeSpan]::FromSeconds(3)
+    $timer.Tag=[PSCustomObject]@{
+        AgentStatePath=(Join-Path $settingsDirectory 'agent-state.json')
+        HistoryDirectory=(Join-Path $settingsDirectory 'history')
+        ErrorLogPath=(Join-Path $settingsDirectory 'error.log')
+        AgentModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Agent.ps1')
+        SshModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Ssh.ps1')
+        SampleModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Sample.ps1')
+        StorageModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Storage.ps1')
+        Store=$script:serverStore
+        Secrets=$script:sessionSecrets
+        AskPassPath=$script:askPassPath
+        TimeoutMs=$config.SshTimeoutMs
+        AutoMergeOnStartup=[bool]$settings.AutoMergeOnStartup
+        Shell=$null;Async=$null
+    }
+    $timer.Add_Tick({param($sender,$eventArgs)
+        $data=$sender.Tag
+        if($null-eq$data.Async){
+            $storeJson=$data.Store|ConvertTo-Json -Depth 8 -Compress
+            $plainSecrets=@{}
+            foreach($identity in @($data.Secrets.Keys)){$secret=Get-ServerPulseSessionSecret $data.Secrets $identity;if($null-ne$secret){$plainSecrets[$identity]=$secret};$secret=$null}
+            $secretsJson=$plainSecrets|ConvertTo-Json -Compress
+            $shell=[PowerShell]::Create()
+            [void]$shell.AddScript({
+                param($StoreJson,$SecretsJson,$AgentStatePath,$HistoryDirectory,$ErrorLogPath,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$AskPassPath,$TimeoutMs,$AutoMergeOnStartup)
+                $ErrorActionPreference='Stop'
+                $ProgressPreference='SilentlyContinue'
+                . $StorageModulePath
+                . $AgentModulePath
+                . $SshModulePath
+                . $SampleModulePath
+                $store=$StoreJson|ConvertFrom-Json
+                $secrets=@{}
+                $parsedSecrets=$SecretsJson|ConvertFrom-Json
+                if($null-ne$parsedSecrets){foreach($property in @($parsedSecrets.PSObject.Properties)){$secrets[$property.Name]=[string]$property.Value}}
+                Invoke-ServerPulseStartupAgentTasks -AgentStatePath $AgentStatePath -HistoryDirectory $HistoryDirectory -ServerStore $store -SessionSecrets $secrets -AskPassPath $AskPassPath -TimeoutMs $TimeoutMs -ErrorLogPath $ErrorLogPath -AutoMergeOnStartup $AutoMergeOnStartup
+            }).AddArgument($storeJson).AddArgument($secretsJson).AddArgument($data.AgentStatePath).AddArgument($data.HistoryDirectory).AddArgument($data.ErrorLogPath).AddArgument($data.AgentModulePath).AddArgument($data.SshModulePath).AddArgument($data.SampleModulePath).AddArgument($data.StorageModulePath).AddArgument($data.AskPassPath).AddArgument($data.TimeoutMs).AddArgument($data.AutoMergeOnStartup)|Out-Null
+            $data.Shell=$shell
+            $data.Async=$shell.BeginInvoke()
+            $sender.Interval=[TimeSpan]::FromMilliseconds(200)
+        }else{
+            if($data.Async.IsCompleted){
+                $sender.Stop()
+                try{[void]$data.Shell.EndInvoke($data.Async)}catch{try{Write-ServerPulseErrorLog -Exception $_.Exception -Context 'agent startup tasks'}catch{}}
+                finally{$data.Shell.Dispose();$data.Shell=$null;$data.Async=$null}
+            }
+        }
+    })
+    $timer.Start()
 }
 
 function Show-ServerPulseFromTray {
@@ -1740,6 +1799,7 @@ $window.Add_Loaded({
     }
     $cursorTimer.Start(); $themeFollowTimer.Start(); $pollTimer.Start(); Start-Collection
     if(($script:firstServerStoreRun -or @($script:serverStore.Servers|Where-Object{$_.Monitored}).Count-eq0) -and -not$SmokeTest){Queue-ServerPulseSshManager}
+    if(-not$SmokeTest){Start-ServerPulseStartupAgentTasks}
 })
 $window.Add_Closing({
     Close-UserUsagePopup $script:userUsagePopupManager

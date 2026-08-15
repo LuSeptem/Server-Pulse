@@ -16,6 +16,7 @@ The repository seed configuration contains two SSH aliases, `3090` and `a6000`. 
 - Switch between dark, light, and system themes, and between Chinese, English, and system language.
 - Query minute-level CPU, memory, GPU, VRAM, and temperature history.
 - Choose a retention period from 1–3650 calendar days or **Never clean up**, and move the complete local data root from the History page.
+- Inject a persistent server-side monitoring agent for any saved server, check its status and control it from Manage, and merge its records into local history — monitoring continues while the app is closed.
 
 ## Screenshots
 
@@ -176,6 +177,35 @@ Changing the path first flushes the current minute, pauses new history writes, a
 ```
 
 This pointer stores only the preferred/active root and synchronization state. Windows credentials are not migrated. If a preferred root disappears or loses permission, the current run explicitly falls back to the default root and asks you to choose again; it never silently switches to an unknown directory.
+
+## Server-side monitoring
+
+For a saved server you can inject a small agent that keeps sampling and recording even while the application is closed, the laptop sleeps, or the network drops. The agent runs as your login user on the server (no root, no systemd, no crontab) and stores records under `~/.serverpulse/`:
+
+```text
+~/.serverpulse/
+├─ agent.sh               # self-contained POSIX sh agent (generated)
+├─ config                 # interval, retention days, server identity
+├─ state/                 # pid and heartbeat files for status detection
+├─ records/yyyy-MM-dd.v2.jsonl  # minute records, same format as local history (UTC timestamps)
+└─ agent.log              # agent output
+```
+
+Open **Manage** and use the server-side monitoring row under each server:
+
+- **Status badge**: Running, Stale (process alive but heartbeat expired), Stopped, Not installed, or Unknown.
+- **Inject** writes the agent and starts it detached from the SSH session; it keeps running when the app exits or the connection drops. Injecting again while it is running is a no-op.
+- **Stop** sends TERM (KILL after a grace period); **Restart** rewrites and restarts the agent; **Uninstall** stops it and removes `~/.serverpulse` (records included — merge them first if you still need them).
+- **Configure** sets the sample interval (1–3600 s), server-side retention in days (1–3650), and whether a stopped agent is re-injected automatically when the app starts.
+- **Merge records** pulls the server-side records, converts their UTC minutes to local time, and merges them into local history. For a minute that exists on both sides, the record with more online samples wins; a tie keeps the local record. An incremental cursor avoids re-pulling merged minutes, and **Merge all** does this for every configured server. The merge dialog can also delete the merged server-side files afterwards (off by default; the agent itself prunes records older than the configured retention).
+- The History settings panel has **Auto-merge server records on startup** (off by default).
+
+Notes and limits:
+
+- The agent writes UTC minute timestamps and the merge converts them to your local timezone, so timezone differences between the server and your machine are handled.
+- A server reboot stops the agent (it is a plain user process). The badge shows Stopped; re-inject manually or enable auto-restore in Configure.
+- Records contain the same data as local history — UIDs, usernames, and minute aggregates — never PIDs, process names, command lines, or passwords.
+- The server needs POSIX `sh`, `awk`, `/proc`, and optionally `nvidia-smi` — the same requirements as live monitoring.
 
 ## Local configuration
 
