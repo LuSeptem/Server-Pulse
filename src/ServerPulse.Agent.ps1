@@ -583,6 +583,11 @@ while :; do
     printf '__SP_SAMPLE__\n'
 '@ + "`n" + $SampleScript + "`n" + @'
   ) > "$sp_state/sample.tmp" 2>/dev/null
+  # A failed sample (e.g. the temp file could not be fully written when the
+  # disk is full) used to be silent; log it so the cause is diagnosable.
+  if ! grep -q '^CPU_PERCENT=' "$sp_state/sample.tmp" 2>/dev/null; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] sample failed: $(wc -c < "$sp_state/sample.tmp" 2>/dev/null || echo 0) bytes" >> "$sp_base/agent.log" 2>/dev/null
+  fi
   cat "$sp_state/sample.tmp" >> "$sp_state/samples-$sp_current" 2>/dev/null
   rm -f "$sp_state/sample.tmp" 2>/dev/null
   touch "$sp_state/heartbeat" 2>/dev/null

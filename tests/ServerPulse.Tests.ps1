@@ -1026,6 +1026,7 @@ $agentLoopScript = New-ServerPulseRemoteLoopScript -SampleScript $agentSample -I
 Assert-Equal ([bool]($agentLoopScript -match "`r")) $false '长期会话循环脚本保持 LF 行尾'
 $agentScript = New-ServerPulseAgentScript -ServerId 'agent-test-1' -Label 'Label "X"' -ServerHost 'host1' -SampleScript $agentSample -IntervalSeconds 7 -RetentionDays 40
 Assert-Equal ([bool]($agentScript -match "`r")) $false '代理脚本保持 LF 行尾'
+Assert-Equal ([bool]($agentScript -match 'sample failed')) $true '代理脚本在采样失败时写诊断日志'
 Assert-Equal ([bool]($agentScript -match 'sp_interval=7')) $true '代理脚本注入采样间隔'
 Assert-Equal ([bool]($agentScript -match 'sp_retention_days=40')) $true '代理脚本注入保留天数'
 Assert-Equal ([bool]($agentScript -match 'Label  X')) $true '代理脚本消毒引号标签'
