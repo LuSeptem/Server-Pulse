@@ -375,9 +375,10 @@ function Stop-ServerManagerCandidateDiscovery {
 # runspace with the agent/SSH/sample modules dot-sourced; returns a uniform
 # envelope consumed by Complete-ServerManagerAgentOperation.
 $script:ServerManagerAgentOpScript = @'
-param($ServerJson,$Action,$Password,$IntervalSeconds,$RetentionDays,$CursorUtc,$CleanMerged,$KnownIdsJson,$HistoryDirectory,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$AskPassPath,$TimeoutMs)
+param($ServerJson,$Action,$Password,$IntervalSeconds,$RetentionDays,$CursorUtc,$CleanMerged,$KnownIdsJson,$HistoryDirectory,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$CoreModulePath,$AskPassPath,$TimeoutMs)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+. $CoreModulePath
 . $StorageModulePath
 . $AgentModulePath
 . $SshModulePath
@@ -440,7 +441,7 @@ function Invoke-ServerManagerAgentOperation {
     $knownIdsJson=$knownIds|ConvertTo-Json -Compress
     $shell=[PowerShell]::Create()
     [void]$shell.AddScript($script:ServerManagerAgentOpScript)
-    [void]$shell.AddArgument($serverJson).AddArgument($Action).AddArgument($password).AddArgument($interval).AddArgument($retention).AddArgument($cursor).AddArgument($CleanMerged).AddArgument($knownIdsJson).AddArgument($Context.HistoryDirectory).AddArgument($Context.AgentModulePath).AddArgument($Context.ModulePath).AddArgument($Context.SampleModulePath).AddArgument($Context.StorageModulePath).AddArgument($Context.AskPassPath).AddArgument($Context.TimeoutMs)
+    [void]$shell.AddArgument($serverJson).AddArgument($Action).AddArgument($password).AddArgument($interval).AddArgument($retention).AddArgument($cursor).AddArgument($CleanMerged).AddArgument($knownIdsJson).AddArgument($Context.HistoryDirectory).AddArgument($Context.AgentModulePath).AddArgument($Context.ModulePath).AddArgument($Context.SampleModulePath).AddArgument($Context.StorageModulePath).AddArgument($Context.CoreModulePath).AddArgument($Context.AskPassPath).AddArgument($Context.TimeoutMs)
     $async=$shell.BeginInvoke()
     $Context.AgentOps.Add([PSCustomObject]@{RowState=$RowState;Shell=$shell;Async=$async;Action=$Action})
     if($Action-ne'status'){Set-ServerManagerAgentBusy $RowState $true}
@@ -602,6 +603,7 @@ function Show-ServerPulseServerManager {
     if([string]::IsNullOrWhiteSpace($AgentModulePath)){$AgentModulePath=Join-Path $PSScriptRoot 'ServerPulse.Agent.ps1'}
     if([string]::IsNullOrWhiteSpace($SampleModulePath)){$SampleModulePath=Join-Path $PSScriptRoot 'ServerPulse.Sample.ps1'}
     $StorageModulePath=Join-Path $PSScriptRoot 'ServerPulse.Storage.ps1'
+    $CoreModulePath=Join-Path $PSScriptRoot 'ServerPulse.Core.ps1'
     $window=[Windows.Window]::new();$window.Title=Get-ServerPulseText 'manager.title';$window.Width=640;$window.Height=650;$window.MinWidth=520;$window.MinHeight=420;$window.Owner=$Owner;$window.WindowStartupLocation='CenterOwner';$window.ShowInTaskbar=$false;$window.Background=New-ServerManagerBrush '#0D100E';$window.Foreground=New-ServerManagerBrush '#E7ECE8';$window.FontFamily='Microsoft YaHei UI'
     $topmostBinding=[Windows.Data.Binding]::new('Topmost');$topmostBinding.Source=$Owner;$topmostBinding.Mode='OneWay';[void]$window.SetBinding([Windows.Window]::TopmostProperty,$topmostBinding)
     $root=[Windows.Controls.DockPanel]::new();$root.Margin=16;$window.Content=$root
@@ -619,7 +621,7 @@ function Show-ServerPulseServerManager {
     $workingSecrets=New-ServerPulseSessionSecretStore
     foreach($identity in @($SessionSecrets.Keys)){$secret=Get-ServerPulseSessionSecret $SessionSecrets $identity;if($null-ne$secret){Set-ServerPulseSessionSecret $workingSecrets $identity $secret};$secret=$null}
     if($null-eq$ValidationStates){$ValidationStates=@{}}
-    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Intro=$intro;AddButton=$add;ApplyButton=$apply;CancelButton=$cancel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;ValidationStates=$ValidationStates;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryState='waiting';DiscoveryCount=0;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied;AgentStatePath=$AgentStatePath;HistoryDirectory=$HistoryDirectory;AgentModulePath=$AgentModulePath;SampleModulePath=$SampleModulePath;StorageModulePath=$StorageModulePath;AgentState=$(if(-not[string]::IsNullOrWhiteSpace($AgentStatePath)){Read-ServerPulseAgentState $AgentStatePath}else{New-ServerPulseAgentState});AgentOps=[Collections.ArrayList]::new();AgentOpTimer=$null;MergeAllButton=$mergeAll}
+    $context=[PSCustomObject]@{Window=$window;Panel=$panel;Intro=$intro;AddButton=$add;ApplyButton=$apply;CancelButton=$cancel;Rows=[Collections.ArrayList]::new();PendingCredentialWrites=@{};PendingCredentialDeletes=[Collections.ArrayList]::new();Store=$Store;SessionSecrets=$workingSecrets;OriginalSessionSecrets=$SessionSecrets;ValidationStates=$ValidationStates;AskPassPath=$AskPassPath;TimeoutMs=$TimeoutMs;ModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');SshModulePath=(Join-Path $PSScriptRoot 'ServerPulse.Ssh.ps1');DiscoveryStatus=$discoveryStatus;DiscoveryState='waiting';DiscoveryCount=0;DiscoveryTimer=$null;DiscoveryPowerShell=$null;DiscoveryAsync=$null;KnownTargets=$null;OnRetryRequested=$OnRetryRequested;OnApplied=$OnApplied;AgentStatePath=$AgentStatePath;HistoryDirectory=$HistoryDirectory;AgentModulePath=$AgentModulePath;SampleModulePath=$SampleModulePath;StorageModulePath=$StorageModulePath;CoreModulePath=$CoreModulePath;AgentState=$(if(-not[string]::IsNullOrWhiteSpace($AgentStatePath)){Read-ServerPulseAgentState $AgentStatePath}else{New-ServerPulseAgentState});AgentOps=[Collections.ArrayList]::new();AgentOpTimer=$null;MergeAllButton=$mergeAll}
     foreach($server in @($Store.Servers)){ $copy=Copy-ServerPulseManagedServer $server;$row=New-ServerManagerRow $context $copy;[void]$context.Rows.Add($row);[void]$panel.Children.Add($row.Surface) }
     Start-ServerManagerCandidateDiscovery $context
     foreach($row in @($context.Rows)){if($null-ne(Get-ServerPulseAgentServerEntry $context.AgentState ([string]$row.Server.Id))){Invoke-ServerManagerAgentOperation $context $row status}}

@@ -1,4 +1,14 @@
-﻿function New-ServerPulseRetryState {
+﻿# Self-contained LF normalization (see ServerPulse.Core.ps1); lets this
+# module serve runspaces that do not dot-source Core.
+if ($null -eq (Get-Command ConvertTo-ServerPulseShText -ErrorAction SilentlyContinue)) {
+    function ConvertTo-ServerPulseShText {
+        param([AllowNull()][string]$Text)
+        if ($null -eq $Text) { return '' }
+        return $Text.Replace("`r`n", "`n")
+    }
+}
+
+function New-ServerPulseRetryState {
     param([int]$CircuitThreshold=6,[int[]]$ScheduleSeconds=@(5,15,30,60,300),[int]$RandomSeed=0)
     return [PSCustomObject]@{
         FailureCount=0;CircuitOpen=$false;NextRetryAt=$null;LastDelaySeconds=0

@@ -1,5 +1,15 @@
 ﻿Set-StrictMode -Version Latest
 
+# Self-contained LF normalization so any runspace that loads this module can
+# generate POSIX sh text even when ServerPulse.Core.ps1 is not dot-sourced.
+if ($null -eq (Get-Command ConvertTo-ServerPulseShText -ErrorAction SilentlyContinue)) {
+    function ConvertTo-ServerPulseShText {
+        param([AllowNull()][string]$Text)
+        if ($null -eq $Text) { return '' }
+        return $Text.Replace("`r`n", "`n")
+    }
+}
+
 # Server-side monitoring agent support.
 #
 # The module is WPF-free so it can be loaded from the main window, from the

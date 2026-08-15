@@ -1395,6 +1395,7 @@ function Start-ServerPulseStartupAgentTasks {
         SshModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Ssh.ps1')
         SampleModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Sample.ps1')
         StorageModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Storage.ps1')
+        CoreModulePath=(Join-Path $scriptRoot 'src\ServerPulse.Core.ps1')
         Store=$script:serverStore
         Secrets=$script:sessionSecrets
         AskPassPath=$script:askPassPath
@@ -1411,9 +1412,10 @@ function Start-ServerPulseStartupAgentTasks {
             $secretsJson=$plainSecrets|ConvertTo-Json -Compress
             $shell=[PowerShell]::Create()
             [void]$shell.AddScript({
-                param($StoreJson,$SecretsJson,$AgentStatePath,$HistoryDirectory,$ErrorLogPath,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$AskPassPath,$TimeoutMs,$AutoMergeOnStartup)
+                param($StoreJson,$SecretsJson,$AgentStatePath,$HistoryDirectory,$ErrorLogPath,$AgentModulePath,$SshModulePath,$SampleModulePath,$StorageModulePath,$CoreModulePath,$AskPassPath,$TimeoutMs,$AutoMergeOnStartup)
                 $ErrorActionPreference='Stop'
                 $ProgressPreference='SilentlyContinue'
+                . $CoreModulePath
                 . $StorageModulePath
                 . $AgentModulePath
                 . $SshModulePath
@@ -1423,7 +1425,7 @@ function Start-ServerPulseStartupAgentTasks {
                 $parsedSecrets=$SecretsJson|ConvertFrom-Json
                 if($null-ne$parsedSecrets){foreach($property in @($parsedSecrets.PSObject.Properties)){$secrets[$property.Name]=[string]$property.Value}}
                 Invoke-ServerPulseStartupAgentTasks -AgentStatePath $AgentStatePath -HistoryDirectory $HistoryDirectory -ServerStore $store -SessionSecrets $secrets -AskPassPath $AskPassPath -TimeoutMs $TimeoutMs -ErrorLogPath $ErrorLogPath -AutoMergeOnStartup $AutoMergeOnStartup
-            }).AddArgument($storeJson).AddArgument($secretsJson).AddArgument($data.AgentStatePath).AddArgument($data.HistoryDirectory).AddArgument($data.ErrorLogPath).AddArgument($data.AgentModulePath).AddArgument($data.SshModulePath).AddArgument($data.SampleModulePath).AddArgument($data.StorageModulePath).AddArgument($data.AskPassPath).AddArgument($data.TimeoutMs).AddArgument($data.AutoMergeOnStartup)|Out-Null
+            }).AddArgument($storeJson).AddArgument($secretsJson).AddArgument($data.AgentStatePath).AddArgument($data.HistoryDirectory).AddArgument($data.ErrorLogPath).AddArgument($data.AgentModulePath).AddArgument($data.SshModulePath).AddArgument($data.SampleModulePath).AddArgument($data.StorageModulePath).AddArgument($data.CoreModulePath).AddArgument($data.AskPassPath).AddArgument($data.TimeoutMs).AddArgument($data.AutoMergeOnStartup)|Out-Null
             $data.Shell=$shell
             $data.Async=$shell.BeginInvoke()
             $sender.Interval=[TimeSpan]::FromMilliseconds(200)

@@ -960,6 +960,30 @@ try {
 $agentSample = Get-ServerPulseSampleScript
 Assert-Equal ([bool]($agentSample -match 'GPU_USER_STATUS')) $true '共享采样脚本包含 GPU 用户状态'
 Assert-Equal ([bool]($agentSample -match "`r")) $false '采样脚本保持 LF 行尾（远端 sh 拒绝 CRLF）'
+# LF normalization must not depend on ServerPulse.Core.ps1 being loaded:
+# the Manage-window and startup background runspaces dot-source the agent
+# modules directly.  Start-Job gives the same isolated runspace, and it is
+# already used by the authentication-batch tests in this suite.
+$guardJob=Start-Job -ScriptBlock {
+    param($AgentPath,$SshPath,$SamplePath)
+    $ErrorActionPreference='Stop'
+    . $AgentPath
+    . $SshPath
+    . $SamplePath
+    $sample=Get-ServerPulseSampleScript
+    $script=New-ServerPulseAgentScript -ServerId 'guard-1' -Label 'L' -ServerHost 'h' -SampleScript $sample
+    [PSCustomObject]@{ SampleCrlf=([regex]::Matches($sample,"`r`n")).Count; AgentCrlf=([regex]::Matches($script,"`r`n")).Count }
+} -ArgumentList (Join-Path $PSScriptRoot '..\src\ServerPulse.Agent.ps1'),(Join-Path $PSScriptRoot '..\src\ServerPulse.Ssh.ps1'),(Join-Path $PSScriptRoot '..\src\ServerPulse.Sample.ps1')
+try {
+    $guardResult=@(Receive-Job -Job $guardJob -Wait)
+    Assert-Equal $guardResult.Count 1 '独立作业可加载代理模块生成脚本'
+    Assert-Equal $guardResult[0].SampleCrlf 0 '无 Core 的作业采样脚本仍为 LF'
+    Assert-Equal $guardResult[0].AgentCrlf 0 '无 Core 的作业代理脚本仍为 LF'
+} finally { Remove-Job -Job $guardJob -Force -ErrorAction SilentlyContinue }
+$serverManagerSourceText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\src\ServerPulse.ServerManager.ps1') -Raw
+Assert-Equal ([bool]($serverManagerSourceText -match '\. \$CoreModulePath')) $true '管理窗口代理后台任务显式加载 Core 模块'
+$mainSourceText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw
+Assert-Equal ([bool]($mainSourceText -match '\. \$CoreModulePath')) $true '启动后台任务显式加载 Core 模块'
 $agentLoopScript = New-ServerPulseRemoteLoopScript -SampleScript $agentSample -IntervalSeconds 5
 Assert-Equal ([bool]($agentLoopScript -match "`r")) $false '长期会话循环脚本保持 LF 行尾'
 $agentScript = New-ServerPulseAgentScript -ServerId 'agent-test-1' -Label 'Label "X"' -ServerHost 'host1' -SampleScript $agentSample -IntervalSeconds 7 -RetentionDays 40

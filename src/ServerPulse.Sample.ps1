@@ -1,5 +1,15 @@
 ﻿Set-StrictMode -Version Latest
 
+# Self-contained LF normalization (see ServerPulse.Core.ps1); lets this
+# module serve runspaces that do not dot-source Core.
+if ($null -eq (Get-Command ConvertTo-ServerPulseShText -ErrorAction SilentlyContinue)) {
+    function ConvertTo-ServerPulseShText {
+        param([AllowNull()][string]$Text)
+        if ($null -eq $Text) { return '' }
+        return $Text.Replace("`r`n", "`n")
+    }
+}
+
 # Shared remote sample script. Both the local collector (Collect-Metrics.ps1)
 # and the server-side agent (ServerPulse.Agent.ps1) embed this exact POSIX sh
 # text, so server-side records and local history stay field-compatible.
