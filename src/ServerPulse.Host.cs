@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Server Pulse")]
 [assembly: AssemblyProduct("Server Pulse")]
 [assembly: AssemblyCopyright("Copyright © Server Pulse")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 internal static class ServerPulseHost
 {

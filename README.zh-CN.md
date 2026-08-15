@@ -6,6 +6,8 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 仓库种子配置默认提供 `3090` 和 `a6000` 两个 SSH 别名。已有的密钥免密登录和 `ssh-agent` 配置可以继续使用，也可以在服务器管理窗口中使用普通账户密码。
 
+当前版本：**v1.1.0** · [中英双语更新说明](CHANGELOG.md)
+
 ## 功能概览
 
 - 在一个紧凑、可置顶的浮窗中同时查看多台 SSH 服务器。
@@ -224,6 +226,7 @@ server_monitoring/
 ├─ src/                     # 采集、历史、存储、SSH、主题和宿主源码
 ├─ tests/                   # 自动化测试和模拟 SSH
 ├─ docs/DEVELOPMENT.md      # 开发者文档
+├─ CHANGELOG.md             # 中英双语版本历史和发布说明
 ├─ README.md                # 英文说明书
 └─ README.zh-CN.md         # 中文说明书
 ```

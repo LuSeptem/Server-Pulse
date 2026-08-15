@@ -11,4 +11,5 @@
    - 修改文件列表和主要修改细节；
    - 已执行的测试及结果；
    - 最终工作区状态。
-
+6. 每次更新版本号或发布 GitHub Release 时，必须使用中英双语说明新增、变更和修复内容，并将同一份说明同步到仓库的版本记录中。
+   Every version update or GitHub Release must describe additions, changes, and fixes in both Chinese and English, and the same notes must be kept in the repository changelog.
