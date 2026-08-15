@@ -208,5 +208,7 @@ echo "GPU_USER_STATUS=$gpu_query_status"
 '@
 
 function Get-ServerPulseSampleScript {
-    return $script:ServerPulseSampleScript
+    # Remote sh rejects CRLF; normalize regardless of the module file's
+    # line endings (git autocrlf may convert the working tree).
+    return ConvertTo-ServerPulseShText $script:ServerPulseSampleScript
 }

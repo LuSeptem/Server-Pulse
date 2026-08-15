@@ -160,6 +160,8 @@ Windows 凭据管理器属于操作系统安全存储，不在迁移范围内；
 
 ### 服务器端布局与生命周期
 
+远端 `sh` 拒绝 CRLF 脚本。Windows 工作区在 `core.autocrlf=true` 的检出下会把 here-string 内容转成 CRLF，因此所有发给远端 shell 的文本（采样脚本、循环脚本、代理脚本、控制命令）必须在边界经 `ConvertTo-ServerPulseShText` 归一化为 LF——该规则对新增的 sh 生成代码是强制的，测试中有无 `\r` 断言。
+
 ```text
 ~/.serverpulse/            # umask 077，由注入命令创建
 ├─ agent.sh                # 自包含 POSIX sh 代理（cat 写入，heredoc 分隔符唯一）

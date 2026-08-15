@@ -27,7 +27,7 @@ function Register-ServerPulseConnectionFailure {
 function New-ServerPulseRemoteLoopScript {
     param([Parameter(Mandatory)][string]$SampleScript,[int]$IntervalSeconds=5)
     $interval=[Math]::Max(1,[Math]::Min(3600,$IntervalSeconds))
-    return @"
+    $script = @"
 serverpulse_interval=$interval
 while :; do
   printf '%s\n' '__SERVERPULSE_SAMPLE_BEGIN__'
@@ -39,6 +39,7 @@ $SampleScript
   sleep "`$serverpulse_interval" || exit 0
 done
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Start-ServerPulsePersistentSshProcess {

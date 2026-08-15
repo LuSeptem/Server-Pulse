@@ -42,13 +42,14 @@ function New-ServerPulseAgentConfigText {
     )
     $interval = [Math]::Max(1, [Math]::Min(3600, $IntervalSeconds))
     $retention = [Math]::Max(1, [Math]::Min(3650, $RetentionDays))
-    return @(
+    $text = @(
         "interval=$interval"
         "retention_days=$retention"
         "server_id=$((ConvertTo-ServerPulseAgentConfigValue $ServerId))"
         "server_label=$((ConvertTo-ServerPulseAgentConfigValue $Label))"
         "server_host=$((ConvertTo-ServerPulseAgentConfigValue $ServerHost))"
     ) -join "`n"
+    return ConvertTo-ServerPulseShText $text
 }
 
 # The awk aggregator is embedded in agent.sh between single quotes, so it must
@@ -584,12 +585,12 @@ done
     $script = $script.Replace('sp_server_id=""', "sp_server_id=""$safeId""")
     $script = $script.Replace('sp_server_label=""', "sp_server_label=""$safeLabel""")
     $script = $script.Replace('sp_server_host=""', "sp_server_host=""$safeHost""")
-    return $script
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Get-ServerPulseAgentStatusScript {
     param([string]$AgentFolder = '.serverpulse')
-    return @"
+    $script = @"
 sp="`$HOME/$AgentFolder"
 if [ -d "`$sp" ]; then
   echo 'SP_AGENT_INSTALLED=1'
@@ -618,11 +619,12 @@ else
   echo 'SP_AGENT_STATUS=stopped'
 fi
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Get-ServerPulseAgentStopScript {
     param([string]$AgentFolder = '.serverpulse')
-    return @"
+    $script = @"
 sp="`$HOME/$AgentFolder"
 if [ -f "`$sp/state/pid" ]; then
   sp_pid=`$(cat "`$sp/state/pid" 2>/dev/null)
@@ -638,6 +640,7 @@ if [ -f "`$sp/state/pid" ]; then
 fi
 echo 'SP_AGENT_RESULT=stopped'
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Get-ServerPulseAgentInjectScript {
@@ -646,7 +649,7 @@ function Get-ServerPulseAgentInjectScript {
         [Parameter(Mandatory)][string]$ConfigText,
         [string]$AgentFolder = '.serverpulse'
     )
-    return @"
+    $script = @"
 sp="`$HOME/$AgentFolder"
 umask 077
 mkdir -p "`$sp/state" "`$sp/records" 2>/dev/null || { echo 'SP_AGENT_RESULT=error'; echo 'SP_AGENT_ERROR=mkdir failed'; exit 0; }
@@ -664,6 +667,7 @@ else
   echo 'SP_AGENT_RESULT=started'
 fi
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Get-ServerPulseAgentConfigScript {
@@ -671,7 +675,7 @@ function Get-ServerPulseAgentConfigScript {
         [Parameter(Mandatory)][string]$ConfigText,
         [string]$AgentFolder = '.serverpulse'
     )
-    return @"
+    $script = @"
 sp="`$HOME/$AgentFolder"
 cat > "`$sp/config" <<'SERVERPULSE_CONFIG_EOF'
 $ConfigText
@@ -684,16 +688,18 @@ else
   echo 'SP_AGENT_RUNNING=0'
 fi
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Get-ServerPulseAgentUninstallScript {
     param([string]$AgentFolder = '.serverpulse')
     $stop = Get-ServerPulseAgentStopScript -AgentFolder $AgentFolder
-    return $stop + @"
+    $script = $stop + @"
 sp="`$HOME/$AgentFolder"
 rm -rf "`$sp"
 echo 'SP_AGENT_RESULT=uninstalled'
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Get-ServerPulseAgentMergePullScript {
@@ -701,7 +707,7 @@ function Get-ServerPulseAgentMergePullScript {
         [AllowNull()][string]$CursorUtc,
         [string]$AgentFolder = '.serverpulse'
     )
-    return @"
+    $script = @"
 sp="`$HOME/$AgentFolder"
 sp_cursor="$([string]$CursorUtc)"
 if [ -d "`$sp/records" ]; then
@@ -723,6 +729,7 @@ if [ -d "`$sp/records" ]; then
 fi
 echo '__SP_DONE__'
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Get-ServerPulseAgentCleanScript {
@@ -730,7 +737,7 @@ function Get-ServerPulseAgentCleanScript {
         [AllowNull()][string]$CursorUtc,
         [string]$AgentFolder = '.serverpulse'
     )
-    return @"
+    $script = @"
 sp="`$HOME/$AgentFolder"
 sp_cursor="$([string]$CursorUtc)"
 sp_cursor_date=`${sp_cursor%T*}
@@ -751,6 +758,7 @@ if [ -n "`$sp_cursor" ] && [ -d "`$sp/records" ]; then
 fi
 echo '__SP_DONE__'
 "@
+    return ConvertTo-ServerPulseShText $script
 }
 
 function Invoke-ServerPulseAgentConnection {
@@ -821,7 +829,7 @@ function Invoke-ServerPulseAgentControl {
         [string]$AgentFolder = '.serverpulse',
         [string]$SampleScriptPath
     )
-    $sampleScript = if ([string]::IsNullOrWhiteSpace($SampleScriptPath)) { Get-ServerPulseSampleScript } else { Get-Content -LiteralPath $SampleScriptPath -Raw -Encoding UTF8 }
+    $sampleScript = if ([string]::IsNullOrWhiteSpace($SampleScriptPath)) { Get-ServerPulseSampleScript } else { ConvertTo-ServerPulseShText (Get-Content -LiteralPath $SampleScriptPath -Raw -Encoding UTF8) }
     $config = New-ServerPulseAgentConfigText -ServerId ([string]$Server.Id) -Label ([string]$Server.Label) -ServerHost ([string]$Server.SshTarget) -IntervalSeconds $IntervalSeconds -RetentionDays $RetentionDays
     switch ($Action) {
         'inject' {

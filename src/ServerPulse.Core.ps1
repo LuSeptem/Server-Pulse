@@ -1,5 +1,15 @@
 ﻿Set-StrictMode -Version Latest
 
+# POSIX shells on the server reject CRLF scripts.  Git checkouts with
+# core.autocrlf can leave the working tree (and therefore here-string
+# contents) in CRLF, so every script that is sent to a remote sh must be
+# normalized to LF at the boundary.
+function ConvertTo-ServerPulseShText {
+    param([AllowNull()][string]$Text)
+    if ($null -eq $Text) { return '' }
+    return $Text.Replace("`r`n", "`n")
+}
+
 function ConvertTo-MetricNumber {
     param([AllowNull()][string]$Value)
 

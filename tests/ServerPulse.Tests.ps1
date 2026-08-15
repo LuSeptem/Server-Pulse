@@ -959,7 +959,11 @@ try {
 
 $agentSample = Get-ServerPulseSampleScript
 Assert-Equal ([bool]($agentSample -match 'GPU_USER_STATUS')) $true '共享采样脚本包含 GPU 用户状态'
+Assert-Equal ([bool]($agentSample -match "`r")) $false '采样脚本保持 LF 行尾（远端 sh 拒绝 CRLF）'
+$agentLoopScript = New-ServerPulseRemoteLoopScript -SampleScript $agentSample -IntervalSeconds 5
+Assert-Equal ([bool]($agentLoopScript -match "`r")) $false '长期会话循环脚本保持 LF 行尾'
 $agentScript = New-ServerPulseAgentScript -ServerId 'agent-test-1' -Label 'Label "X"' -ServerHost 'host1' -SampleScript $agentSample -IntervalSeconds 7 -RetentionDays 40
+Assert-Equal ([bool]($agentScript -match "`r")) $false '代理脚本保持 LF 行尾'
 Assert-Equal ([bool]($agentScript -match 'sp_interval=7')) $true '代理脚本注入采样间隔'
 Assert-Equal ([bool]($agentScript -match 'sp_retention_days=40')) $true '代理脚本注入保留天数'
 Assert-Equal ([bool]($agentScript -match 'Label  X')) $true '代理脚本消毒引号标签'
@@ -974,6 +978,9 @@ $agentConfig=New-ServerPulseAgentConfigText -ServerId 'agent-test-1' -Label 'L' 
 Assert-Equal ([bool]($agentConfig -match "interval=7`n")) $true '代理配置包含采样间隔'
 Assert-Equal ([bool]($agentConfig -match "retention_days=40`n")) $true '代理配置包含保留天数'
 Assert-Equal (Get-ServerPulseAgentFolder) '.serverpulse' '代理目录固定为隐藏目录'
+Assert-Equal ([bool]((Get-ServerPulseAgentStatusScript) -match "`r")) $false '代理状态脚本保持 LF 行尾'
+Assert-Equal ([bool]((Get-ServerPulseAgentStopScript) -match "`r")) $false '代理停止脚本保持 LF 行尾'
+Assert-Equal ([bool]((Get-ServerPulseAgentMergePullScript -CursorUtc $null) -match "`r")) $false '代理拉取脚本保持 LF 行尾'
 
 # status detection and control via a mocked SSH connection
 # The mock is installed here, after all earlier tests that use the real one;
