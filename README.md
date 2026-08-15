@@ -258,7 +258,7 @@ server_monitoring/
 
 Architecture, collection protocol, history format, building, testing, security boundaries, and the release checklist are in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). End users only need this manual.
 
-Local agent instructions in `AGENTS.md` are intentionally ignored by Git and are not included in published source snapshots.
+Local agent instructions in `AGENTS.md` are kept outside version control and are not included in published source snapshots.
 
 ## License
 

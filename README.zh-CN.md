@@ -249,7 +249,7 @@ server_monitoring/
 
 架构、采集协议、历史格式、构建、测试、安全边界和发布检查清单位于 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。普通用户只需要阅读本文。
 
-本地协作说明文件 `AGENTS.md` 已加入 Git 忽略规则，不会包含在公开源码快照中。
+本地协作说明文件 `AGENTS.md` 仅保留在本地版本控制之外，不会包含在公开源码快照中。
 
 ## 许可证
 

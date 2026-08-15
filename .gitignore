@@ -1,8 +1,0 @@
-.DS_Store
-Thumbs.db
-*.log
-.env
-tests/artifacts/
-
-# Local agent instructions; never include them in repository or release snapshots.
-AGENTS.md
