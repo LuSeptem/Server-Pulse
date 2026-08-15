@@ -401,6 +401,12 @@ try{
     if(Test-Path $askPassTestDirectory){Get-ChildItem $askPassTestDirectory -File|Remove-Item -Force;Remove-Item $askPassTestDirectory -Force}
 }
 
+# Large stdout must not block the child until the wait times out: the pipe
+# buffer fills and ssh never exits unless output is drained while it runs.
+$bigOutput=Invoke-ServerPulseProcess -FileName 'powershell.exe' -Arguments @('-NoProfile','-Command','[Console]::Out.Write([string]::new("x",200000))') -TimeoutMs 5000
+Assert-Equal $bigOutput.TimedOut $false '大输出不触发子进程超时'
+Assert-Equal $bigOutput.Stdout.Length 200000 '大输出完整读回'
+
 $mainScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\ServerPulse.ps1') -Raw -Encoding UTF8
 $iconPath=Join-Path $PSScriptRoot '..\assets\server-pulse.ico';$iconBytes=[IO.File]::ReadAllBytes($iconPath)
 Assert-Equal (($iconBytes[0..3]-join',')) '0,0,1,0' 'Server Pulse 托盘资源是有效 ICO 容器'
@@ -1019,6 +1025,9 @@ $agentConfig=New-ServerPulseAgentConfigText -ServerId 'agent-test-1' -Label 'L' 
 Assert-Equal ([bool]($agentConfig -match "interval=7`n")) $true '代理配置包含采样间隔'
 Assert-Equal ([bool]($agentConfig -match "retention_days=40`n")) $true '代理配置包含保留天数'
 Assert-Equal (Get-ServerPulseAgentFolder) '.serverpulse' '代理目录固定为隐藏目录'
+Assert-Equal (Resolve-ServerPulseAgentPullTimeout 100) 60000 '合并拉取超时低于 60 秒时兜底到 60 秒'
+Assert-Equal (Resolve-ServerPulseAgentPullTimeout 15000) 60000 '合并拉取超时短于 60 秒一律兜底'
+Assert-Equal (Resolve-ServerPulseAgentPullTimeout 120000) 120000 '合并拉取超时不做上限截断'
 Assert-Equal ([bool]((Get-ServerPulseAgentStatusScript) -match "`r")) $false '代理状态脚本保持 LF 行尾'
 Assert-Equal ([bool]((Get-ServerPulseAgentStopScript) -match "`r")) $false '代理停止脚本保持 LF 行尾'
 Assert-Equal ([bool]((Get-ServerPulseAgentMergePullScript -CursorUtc $null) -match "`r")) $false '代理拉取脚本保持 LF 行尾'

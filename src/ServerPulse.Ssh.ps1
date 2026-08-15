@@ -186,10 +186,17 @@ function Invoke-ServerPulseProcess {
     $info.StandardErrorEncoding = [Text.Encoding]::UTF8
     if ($null -ne $Environment) { foreach ($key in $Environment.Keys) { $info.EnvironmentVariables[[string]$key] = [string]$Environment[$key] } }
     $process = [Diagnostics.Process]::Start($info)
+    # Drain stdout/stderr asynchronously while the process runs; reading them
+    # only after WaitForExit would block the child once the pipe buffer fills
+    # (large merge pulls), so the wait would always time out.
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     if ($null -ne $StandardInput) { $process.StandardInput.Write($StandardInput) }
     $process.StandardInput.Close()
     if (-not $process.WaitForExit($TimeoutMs)) { try { $process.Kill() } catch { }; return [PSCustomObject]@{ExitCode=$null;Stdout='';Stderr='操作超时';TimedOut=$true;Arguments=$info.Arguments} }
-    return [PSCustomObject]@{ExitCode=$process.ExitCode;Stdout=$process.StandardOutput.ReadToEnd();Stderr=$process.StandardError.ReadToEnd().Trim();TimedOut=$false;Arguments=$info.Arguments}
+    $stdout = if ($null -ne $stdoutTask) { try { $stdoutTask.Result } catch { '' } } else { '' }
+    $stderr = if ($null -ne $stderrTask) { try { $stderrTask.Result } catch { '' } } else { '' }
+    return [PSCustomObject]@{ExitCode=$process.ExitCode;Stdout=$stdout;Stderr=$stderr.Trim();TimedOut=$false;Arguments=$info.Arguments}
 }
 
 function Get-ServerPulseSshResolvedTarget {
@@ -374,6 +381,9 @@ function Invoke-ServerPulseSsh {
     $process=$null
     try {
         $process=[Diagnostics.Process]::Start($info)
+        # Drain stdout/stderr while the process runs (see Invoke-ServerPulseProcess).
+        $stdoutTask=$process.StandardOutput.ReadToEndAsync()
+        $stderrTask=$process.StandardError.ReadToEndAsync()
         $deadline=[DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
         while(-not $wait.AsyncWaitHandle.WaitOne(25) -and -not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) { }
         if($wait.IsCompleted){
@@ -385,7 +395,9 @@ function Invoke-ServerPulseSsh {
         }
         if(-not $process.HasExited){$process.StandardInput.Write($Script);$process.StandardInput.Close()}
         if(-not $process.WaitForExit([Math]::Max(1,[int]($deadline-[DateTime]::UtcNow).TotalMilliseconds))){try{$process.Kill()}catch{};return [PSCustomObject]@{ExitCode=$null;Stdout='';Stderr='SSH 采集超时';TimedOut=$true;Arguments=$info.Arguments}}
-        return [PSCustomObject]@{ExitCode=$process.ExitCode;Stdout=$process.StandardOutput.ReadToEnd();Stderr=$process.StandardError.ReadToEnd().Trim();TimedOut=$false;Arguments=$info.Arguments}
+        $stdout=if($null-ne$stdoutTask){try{$stdoutTask.Result}catch{''}}else{''}
+        $stderr=if($null-ne$stderrTask){try{$stderrTask.Result}catch{''}}else{''}
+        return [PSCustomObject]@{ExitCode=$process.ExitCode;Stdout=$stdout;Stderr=$stderr.Trim();TimedOut=$false;Arguments=$info.Arguments}
     } finally { $pipe.Dispose(); if($null -ne $process){$process.Dispose()} }
 }
 

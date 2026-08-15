@@ -1105,6 +1105,14 @@ function Merge-ServerPulseAgentRecordsIntoHistory {
     return $dayResults
 }
 
+# Merging pulls the server-side record files over one SSH connection, which
+# is a much heavier operation than a status probe; give it a dedicated
+# floor so short UI/collection timeouts never abort a legitimate merge.
+function Resolve-ServerPulseAgentPullTimeout {
+    param([int]$TimeoutMs = 0, [int]$FloorMs = 60000)
+    return [Math]::Max($TimeoutMs, $FloorMs)
+}
+
 function Merge-ServerPulseAgentRecords {
     param(
         [Parameter(Mandatory)]$Server,
@@ -1120,8 +1128,9 @@ function Merge-ServerPulseAgentRecords {
         [string]$SampleScriptPath
     )
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $pullTimeout = Resolve-ServerPulseAgentPullTimeout $TimeoutMs
     $pullScript = Get-ServerPulseAgentMergePullScript -CursorUtc $CursorUtc -AgentFolder $AgentFolder
-    $connection = Invoke-ServerPulseAgentConnection -Server $Server -Script $pullScript -Password $Password -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath -SshPath $SshPath
+    $connection = Invoke-ServerPulseAgentConnection -Server $Server -Script $pullScript -Password $Password -TimeoutMs $pullTimeout -AskPassPath $AskPassPath -SshPath $SshPath
     if ($connection.Status -ne 'online') {
         return [PSCustomObject]@{
             ServerId=[string]$Server.Id; ServerLabel=[string]$Server.Label; Error=[string]$connection.Error; AuthMode=[string]$connection.AuthMode
@@ -1144,7 +1153,7 @@ function Merge-ServerPulseAgentRecords {
     $cleaned = 0
     if ($CleanMerged -and $null -ne $parsed.MaxUtcMinute) {
         $cleanScript = Get-ServerPulseAgentCleanScript -CursorUtc $parsed.MaxUtcMinute.ToString('yyyy-MM-ddTHH:mm') -AgentFolder $AgentFolder
-        $cleanConnection = Invoke-ServerPulseAgentConnection -Server $Server -Script $cleanScript -Password $Password -TimeoutMs $TimeoutMs -AskPassPath $AskPassPath -SshPath $SshPath
+        $cleanConnection = Invoke-ServerPulseAgentConnection -Server $Server -Script $cleanScript -Password $Password -TimeoutMs $pullTimeout -AskPassPath $AskPassPath -SshPath $SshPath
         if ($cleanConnection.Status -eq 'online') {
             foreach ($line in ($cleanConnection.Output -split "`r?`n")) {
                 if ($line.Trim() -match '^SP_AGENT_CLEANED=(.+)$') { $cleaned++ }
