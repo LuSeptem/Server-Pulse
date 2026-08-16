@@ -55,7 +55,7 @@ defineEmits<{
       </div>
     </div>
 
-    <p v-if="error" class="error-text">{{ error }}</p>
+    <p v-if="error && status !== 'online'" class="error-text">{{ error }}</p>
 
     <footer class="card-actions">
       <button v-if="status === 'stopped' || status === 'offline'" @click="$emit('start')">Start</button>

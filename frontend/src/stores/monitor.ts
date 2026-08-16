@@ -32,6 +32,7 @@ interface MonitorState {
   sshConfigAliases: string[]
   sshConfigCandidates: ServerConfig[]
   sshConfigError: string
+  intervalSeconds: number
   initialized: boolean
 }
 
@@ -50,6 +51,14 @@ export const useMonitorStore = defineStore('monitor', {
     sshConfigAliases: [],
     sshConfigCandidates: [],
     sshConfigError: '',
+    intervalSeconds: (() => {
+      try {
+        const val = Number(localStorage.getItem('serverpulse:interval_seconds'))
+        return val >= 1 && val <= 300 ? val : 5
+      } catch {
+        return 5
+      }
+    })(),
     initialized: false,
   }),
   getters: {
@@ -101,7 +110,11 @@ export const useMonitorStore = defineStore('monitor', {
           await listen<StatusEvent>('server.status', (event) => {
             const id = event.payload.serverId
             this.statuses = { ...this.statuses, [id]: event.payload.payload.status }
-            if (event.payload.payload.detail?.detail) {
+            if (event.payload.payload.status === 'online') {
+              const nextErrors = { ...this.errors }
+              delete nextErrors[id]
+              this.errors = nextErrors
+            } else if (event.payload.payload.detail?.detail) {
               this.errors = { ...this.errors, [id]: event.payload.payload.detail.detail }
             }
           }),
@@ -117,6 +130,15 @@ export const useMonitorStore = defineStore('monitor', {
       }, 2000)
       this.initialized = true
     },
+    async setIntervalSeconds(seconds: number) {
+      const clamped = Math.max(1, Math.min(300, Math.round(seconds || 5)))
+      this.intervalSeconds = clamped
+      try {
+        localStorage.setItem('serverpulse:interval_seconds', String(clamped))
+      } catch {}
+      await invoke('set_all_monitoring_intervals', { intervalSeconds: clamped }).catch(() => undefined)
+      await this.refreshMonitoringState()
+    },
     async refreshMonitoringState() {
       try {
         const res = await invoke<{
@@ -131,16 +153,23 @@ export const useMonitorStore = defineStore('monitor', {
           if (res.statuses && Object.keys(res.statuses).length > 0) {
             this.statuses = { ...this.statuses, ...res.statuses }
           }
-          if (res.errors && Object.keys(res.errors).length > 0) {
-            this.errors = { ...this.errors, ...res.errors }
+          if (res.errors) {
+            const nextErrors: Record<string, string> = { ...res.errors }
+            for (const [id, status] of Object.entries(this.statuses)) {
+              if (status === 'online') {
+                delete nextErrors[id]
+              }
+            }
+            this.errors = nextErrors
           }
         }
       } catch (error) {
         console.error('Failed to get monitoring state:', error)
       }
     },
-    async start(server: ServerConfig) {
-      await invoke('start_monitoring', { server, intervalSeconds: 5 })
+    async start(server: ServerConfig, customInterval?: number) {
+      const interval = customInterval ?? this.intervalSeconds
+      await invoke('start_monitoring', { server, intervalSeconds: interval })
       this.statuses = { ...this.statuses, [server.id]: 'connecting' }
       setTimeout(() => {
         void this.refreshMonitoringState()

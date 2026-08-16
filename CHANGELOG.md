@@ -30,6 +30,8 @@
 - 在管理界面（Manage）为已有 SSH 服务器列表增加监控复选框（Monitor Checkbox），支持自由勾选/取消勾选任意服务器的监控状态，并即时启停后台采集与同步持久化配置。
 - 强化监控状态与前端画面同步链路：后端增加内存快照/状态注册表与 `get_monitoring_state` 全量查询指令，前端结合实时 Tauri 事件与防抖轮询双重同步，杜绝前端未挂载时事件漏接导致的画面空白。
 - 增强主界面服务器卡片呈现：支持 CPU、内存、GPU 卡数与 Host 概览，并增加独立 GPU 详细信息栏（GPU 索引、型号、核心利用率、显存占用与上限）。
+- 修复服务器在 `online` 状态下仍残留初始超时错误提示的问题：优化后端 `get_monitoring_state` 与前端 Pinia Store 的错误清理机制，并在服务器卡片中增加状态守护条件，确保在线状态下不显示过期的连接错误信息。
+- 支持自主配置监控刷新采样频率（Cadence / Refresh Interval）：新增全局/单机自定义采样间隔设置（预设 2s、5s、10s、30s、60s 及 1~300s 自定义输入），并在主浮窗展示当前刷新间隔徽标，修改后即时更新后台采集器。
 
 #### 未完成
 
@@ -63,6 +65,8 @@
 - Added monitor toggle checkboxes to the Manage view server list, allowing users to easily enable or disable monitoring for any configured SSH server with immediate background start/stop and persistent config saves.
 - Hardened monitoring state synchronization between backend and frontend: added in-memory state caching in Rust and the `get_monitoring_state` IPC command, backed by both Tauri events and reactive polling in Pinia to eliminate missed startup events.
 - Enhanced server cards on the main dashboard with complete metric grids (CPU, Memory, GPU count, Hostname) and per-GPU breakdown rows (GPU model, utilization, VRAM usage/limit).
+- Fixed lingering initial timeout error notices on online servers: pruned stale errors on online transitions in both Rust and Pinia, and guarded card error rendering so error text only displays when the server is genuinely disconnected.
+- Added user-configurable monitoring refresh interval (cadence): provided presets (2s, 5s default, 10s, 30s, 60s) and a custom 1–300s input in Manage view with live indicator on the main dashboard, immediately updating background collection tasks.
 
 #### Remaining
 

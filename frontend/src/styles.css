@@ -96,7 +96,81 @@ button:active { transform: translateY(1px); }
 .no-drag, button, input { -webkit-app-region: no-drag; }
 
 .summary-row { margin: 14px 0; font-size: 12px; }
+.summary-left { display: flex; align-items: center; gap: 8px; }
+.cadence-tag {
+  background: #18251c;
+  border: 1px solid #2e4736;
+  color: #8fd3a8;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cadence-tag:hover {
+  background: #233b2c;
+  border-color: #4a805c;
+  color: #aff5c8;
+}
+.data-root-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
 .muted { color: #85968b; font-size: 12px; }
+
+.interval-badge {
+  background: #18291d;
+  color: #8fd3a8;
+  border: 1px solid #2b5437;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.interval-controls {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.preset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.preset-buttons button {
+  padding: 5px 12px;
+  font-size: 12px;
+  background: #17201a;
+  border: 1px solid #253329;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #cdd9d1;
+  transition: all 0.15s ease;
+}
+.preset-buttons button:hover {
+  border-color: #3f5f49;
+  background: #1f2b23;
+}
+.preset-buttons button.active {
+  background: #1b3824;
+  border-color: #488b5d;
+  color: #85e89d;
+  font-weight: 600;
+}
+.custom-interval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #9bb0a2;
+}
+.custom-interval input {
+  width: 70px;
+  padding: 4px 8px;
+}
 
 .server-list, .manage-list { display: grid; gap: 10px; }
 

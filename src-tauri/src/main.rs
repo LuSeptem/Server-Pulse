@@ -320,8 +320,8 @@ async fn start_task(
         return Err("password authentication requires a saved credential; choose passwordless SSH or save a password first".to_owned());
     }
     let mut tasks = state.tasks.lock().await;
-    if tasks.contains_key(&server.id) {
-        return Ok(());
+    if let Some(old) = tasks.remove(&server.id) {
+        old.abort();
     }
     let interval = Duration::from_secs(interval_seconds.unwrap_or(5).clamp(1, 300));
     let id = server.id.clone();
@@ -443,10 +443,31 @@ async fn recheck_monitoring(
 }
 
 #[tauri::command]
+async fn set_all_monitoring_intervals(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    interval_seconds: u64,
+) -> Result<(), String> {
+    let servers = load_servers()?;
+    let interval = interval_seconds.clamp(1, 300);
+    for server in servers {
+        if server.monitored {
+            let _ = start_task(app.clone(), &state, server, Some(interval)).await;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn get_monitoring_state(state: State<'_, AppState>) -> Result<MonitorStateResponse, String> {
     let snapshots = state.snapshots.lock().await.clone();
     let statuses = state.statuses.lock().await.clone();
-    let errors = state.errors.lock().await.clone();
+    let mut errors = state.errors.lock().await.clone();
+    for (id, status) in &statuses {
+        if status == "online" {
+            errors.remove(id);
+        }
+    }
     Ok(MonitorStateResponse {
         snapshots,
         statuses,
@@ -634,6 +655,7 @@ fn main() {
             start_monitoring,
             stop_monitoring,
             recheck_monitoring,
+            set_all_monitoring_intervals,
             get_monitoring_state,
             get_data_root,
             validate_data_root,

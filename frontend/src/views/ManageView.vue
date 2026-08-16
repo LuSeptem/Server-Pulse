@@ -179,6 +179,40 @@ async function remove(server: ServerConfig) {
       </div>
     </div>
 
+    <!-- Refresh Interval / Cadence Setting -->
+    <section class="info-card">
+      <div class="card-header">
+        <div>
+          <strong style="color: #f2f7f4; font-size: 13px;">Monitoring interval / 采样刷新频率</strong>
+          <p class="muted" style="margin: 2px 0 0; font-size: 11px;">Configures how frequently background metrics are collected via SSH.</p>
+        </div>
+        <span class="interval-badge">{{ store.intervalSeconds }}s</span>
+      </div>
+      <div class="interval-controls">
+        <div class="preset-buttons">
+          <button
+            v-for="preset in [2, 5, 10, 30, 60]"
+            :key="preset"
+            type="button"
+            :class="{ active: store.intervalSeconds === preset }"
+            @click="store.setIntervalSeconds(preset)"
+          >
+            {{ preset }}s{{ preset === 5 ? ' (Default)' : '' }}
+          </button>
+        </div>
+        <div class="custom-interval">
+          <span>Custom (1 - 300s):</span>
+          <input
+            type="number"
+            min="1"
+            max="300"
+            :value="store.intervalSeconds"
+            @change="(e) => store.setIntervalSeconds(Number((e.target as HTMLInputElement).value))"
+          />
+        </div>
+      </div>
+    </section>
+
     <!-- Candidate discovery section matching legacy ServerPulse candidate discovery -->
     <section v-if="store.unaddedCandidates.length" class="candidate-section">
       <div class="candidate-header">

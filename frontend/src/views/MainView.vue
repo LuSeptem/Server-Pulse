@@ -26,8 +26,11 @@ const startDragging = (event: MouseEvent) => {
     </header>
 
     <div class="summary-row">
-      <span>{{ store.onlineCount }}/{{ store.servers.length }} online</span>
-      <span class="muted">{{ store.dataRoot }}</span>
+      <div class="summary-left">
+        <span>{{ store.onlineCount }}/{{ store.servers.length }} online</span>
+        <button class="cadence-tag" title="Click to change monitoring interval in Manage" @click="store.openWindow('manage')">⚡ {{ store.intervalSeconds }}s</button>
+      </div>
+      <span class="muted data-root-label" :title="store.dataRoot">{{ store.dataRoot }}</span>
     </div>
 
     <section class="server-list">
