@@ -22,12 +22,24 @@ use tokio::task::JoinHandle;
 const SAMPLE_SCRIPT: &str = include_str!("../../assets/serverpulse-sample.sh");
 const SEED_SERVERS: &str = include_str!("../../config/servers.json");
 
-#[derive(Default)]
 struct AppState {
     tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     snapshots: Arc<Mutex<HashMap<String, MetricSnapshot>>>,
     statuses: Arc<Mutex<HashMap<String, String>>>,
     errors: Arc<Mutex<HashMap<String, String>>>,
+    interval_seconds: Arc<Mutex<u64>>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            tasks: Arc::new(Mutex::new(HashMap::new())),
+            snapshots: Arc::new(Mutex::new(HashMap::new())),
+            statuses: Arc::new(Mutex::new(HashMap::new())),
+            errors: Arc::new(Mutex::new(HashMap::new())),
+            interval_seconds: Arc::new(Mutex::new(5)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,6 +48,7 @@ struct MonitorStateResponse {
     snapshots: HashMap<String, MetricSnapshot>,
     statuses: HashMap<String, String>,
     errors: HashMap<String, String>,
+    interval_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -439,7 +452,8 @@ async fn recheck_monitoring(
         task.abort();
     }
     state.statuses.lock().await.insert(server_id, "rechecking".to_owned());
-    start_task(app, &state, server, Some(5)).await
+    let interval = *state.interval_seconds.lock().await;
+    start_task(app, &state, server, Some(interval)).await
 }
 
 #[tauri::command]
@@ -448,8 +462,10 @@ async fn set_all_monitoring_intervals(
     state: State<'_, AppState>,
     interval_seconds: u64,
 ) -> Result<(), String> {
-    let servers = load_servers()?;
     let interval = interval_seconds.clamp(1, 300);
+    *state.interval_seconds.lock().await = interval;
+    let _ = app.emit("interval.changed", interval);
+    let servers = load_servers()?;
     for server in servers {
         if server.monitored {
             let _ = start_task(app.clone(), &state, server, Some(interval)).await;
@@ -463,6 +479,7 @@ async fn get_monitoring_state(state: State<'_, AppState>) -> Result<MonitorState
     let snapshots = state.snapshots.lock().await.clone();
     let statuses = state.statuses.lock().await.clone();
     let mut errors = state.errors.lock().await.clone();
+    let interval_seconds = *state.interval_seconds.lock().await;
     for (id, status) in &statuses {
         if status == "online" {
             errors.remove(id);
@@ -472,6 +489,7 @@ async fn get_monitoring_state(state: State<'_, AppState>) -> Result<MonitorState
         snapshots,
         statuses,
         errors,
+        interval_seconds,
     })
 }
 

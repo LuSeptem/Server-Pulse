@@ -118,9 +118,28 @@ export const useMonitorStore = defineStore('monitor', {
               this.errors = { ...this.errors, [id]: event.payload.payload.detail.detail }
             }
           }),
+          await listen<number>('interval.changed', (event) => {
+            if (event.payload && event.payload >= 1 && event.payload <= 300) {
+              this.intervalSeconds = event.payload
+              try {
+                localStorage.setItem('serverpulse:interval_seconds', String(event.payload))
+              } catch {}
+            }
+          }),
         ]
       } catch (error) {
         console.warn('Event listen not available:', error)
+      }
+
+      if (typeof window !== 'undefined') {
+        window.addEventListener('storage', (e) => {
+          if (e.key === 'serverpulse:interval_seconds' && e.newValue) {
+            const val = Number(e.newValue)
+            if (val >= 1 && val <= 300) {
+              this.intervalSeconds = val
+            }
+          }
+        })
       }
 
       await Promise.all(this.servers.filter((server) => server.monitored).map((server) => this.start(server)))
@@ -139,14 +158,24 @@ export const useMonitorStore = defineStore('monitor', {
       await invoke('set_all_monitoring_intervals', { intervalSeconds: clamped }).catch(() => undefined)
       await this.refreshMonitoringState()
     },
+    async cycleInterval() {
+      const presets = [2, 5, 10, 30, 60]
+      const currentIndex = presets.indexOf(this.intervalSeconds)
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % presets.length : 0
+      await this.setIntervalSeconds(presets[nextIndex])
+    },
     async refreshMonitoringState() {
       try {
         const res = await invoke<{
           snapshots: Record<string, MetricSnapshot>
           statuses: Record<string, string>
           errors: Record<string, string>
+          intervalSeconds?: number
         }>('get_monitoring_state')
         if (res) {
+          if (res.intervalSeconds && res.intervalSeconds >= 1 && res.intervalSeconds <= 300 && res.intervalSeconds !== this.intervalSeconds) {
+            this.intervalSeconds = res.intervalSeconds
+          }
           if (res.snapshots && Object.keys(res.snapshots).length > 0) {
             this.snapshots = { ...this.snapshots, ...res.snapshots }
           }

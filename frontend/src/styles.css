@@ -97,6 +97,16 @@ button:active { transform: translateY(1px); }
 
 .summary-row { margin: 14px 0; font-size: 12px; }
 .summary-left { display: flex; align-items: center; gap: 8px; }
+.cadence-container {
+  position: relative;
+  display: inline-flex;
+}
+.caret {
+  font-size: 8px;
+  margin-left: 2px;
+  vertical-align: middle;
+  opacity: 0.8;
+}
 .cadence-tag {
   background: #18251c;
   border: 1px solid #2e4736;
@@ -108,10 +118,59 @@ button:active { transform: translateY(1px); }
   cursor: pointer;
   transition: all 0.15s ease;
 }
-.cadence-tag:hover {
+.cadence-tag:hover, .cadence-tag.active {
   background: #233b2c;
   border-color: #4a805c;
   color: #aff5c8;
+}
+.cadence-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 100;
+  background: #131b15;
+  border: 1px solid #283a2d;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75);
+  padding: 6px;
+  min-width: 140px;
+  display: grid;
+  gap: 4px;
+}
+.cadence-dropdown-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #728678;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+}
+.cadence-options {
+  display: grid;
+  gap: 2px;
+}
+.cadence-option {
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #d1dfd6;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.12s ease;
+}
+.cadence-option:hover {
+  background: #1e2c21;
+  border-color: #314a37;
+  color: #85e89d;
+}
+.cadence-option.active {
+  background: #1a3823;
+  border-color: #3d794f;
+  color: #85e89d;
+  font-weight: 600;
 }
 .data-root-label {
   overflow: hidden;
