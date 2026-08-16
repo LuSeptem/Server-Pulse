@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useMonitorStore } from '../stores/monitor'
 import ServerCard from '../components/ServerCard.vue'
 
 const store = useMonitorStore()
+const startDragging = (event: MouseEvent) => {
+  if ((event.target as HTMLElement).closest('button, input, a')) return
+  void getCurrentWindow().startDragging().catch(() => undefined)
+}
 </script>
 
 <template>
   <section class="widget-window">
-    <header class="window-header drag-region">
+    <header class="window-header drag-region" data-tauri-drag-region @mousedown="startDragging">
       <div>
         <span class="eyebrow">SERVER PULSE</span>
         <h1>Server monitor</h1>
@@ -16,6 +21,7 @@ const store = useMonitorStore()
         <button title="History" @click="store.openWindow('history')">History</button>
         <button title="Manage" @click="store.openWindow('manage')">Manage</button>
         <button title="Hide" @click="store.hideMain()">—</button>
+        <button title="Close" aria-label="Close" @click="store.closeMain()">×</button>
       </div>
     </header>
 

@@ -59,6 +59,14 @@ struct HistoryResponse {
     corrupt_lines: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SshConfigInfo {
+    path: Option<String>,
+    aliases: Vec<String>,
+    error: Option<String>,
+}
+
 fn to_command_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -79,6 +87,7 @@ fn discovered_servers() -> Vec<ServerConfig> {
             user: None,
             port: None,
             monitored: true,
+            passwordless: true,
         })
         .collect()
 }
@@ -165,11 +174,12 @@ fn credential_identity(server: &ServerConfig) -> String {
 fn target_with_saved_credential(server: &ServerConfig) -> SshTarget {
     let mut target = SshTarget::from_server(server);
     let identity = credential_identity(server);
-    if KeyringCredentialStore::default()
-        .get(&identity)
-        .ok()
-        .flatten()
-        .is_some()
+    if !server.passwordless
+        && KeyringCredentialStore::default()
+            .get(&identity)
+            .ok()
+            .flatten()
+            .is_some()
     {
         target.credential_identity = Some(identity);
     }
@@ -279,6 +289,15 @@ async fn start_task(
     interval_seconds: Option<u64>,
 ) -> Result<(), String> {
     server.validate().map_err(to_command_error)?;
+    if !server.passwordless
+        && !KeyringCredentialStore::default()
+            .get(&credential_identity(&server))
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        return Err("password authentication requires a saved credential; choose passwordless SSH or save a password first".to_owned());
+    }
     let mut tasks = tasks.lock().await;
     if tasks.contains_key(&server.id) {
         return Ok(());
@@ -292,6 +311,23 @@ async fn start_task(
 #[tauri::command]
 async fn list_servers() -> Result<Vec<ServerConfig>, String> {
     load_servers()
+}
+
+#[tauri::command]
+async fn inspect_ssh_config() -> Result<SshConfigInfo, String> {
+    let path = SystemOpenSsh::config_path().map(|path| path.to_string_lossy().into_owned());
+    match SystemOpenSsh::default().discover_config_aliases() {
+        Ok(aliases) => Ok(SshConfigInfo {
+            path,
+            aliases,
+            error: None,
+        }),
+        Err(error) => Ok(SshConfigInfo {
+            path,
+            aliases: Vec::new(),
+            error: Some(to_command_error(error)),
+        }),
+    }
 }
 
 #[tauri::command]
@@ -462,6 +498,14 @@ async fn hide_main_window(app: AppHandle) -> Result<(), String> {
         .map_err(to_command_error)
 }
 
+#[tauri::command]
+async fn close_main_window(app: AppHandle) -> Result<(), String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "main window is missing".to_owned())?
+        .close()
+        .map_err(to_command_error)
+}
+
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
     let hide = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
@@ -515,6 +559,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_servers,
+            inspect_ssh_config,
             save_server,
             delete_server,
             start_monitoring,
@@ -529,7 +574,8 @@ fn main() {
             preview_import,
             apply_import,
             open_window,
-            hide_main_window
+            hide_main_window,
+            close_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running Server Pulse");

@@ -78,6 +78,7 @@ Rust `serde` 结构是 IPC 的单一数据源。正式合并前应从 Rust 类�
 
 ```text
 list_servers()
+inspect_ssh_config()
 save_server(server)
 delete_server(server_id)
 start_monitoring(server, interval_seconds)
@@ -93,6 +94,7 @@ save_credential(server, password)
 delete_credential(server)
 open_window(kind)
 hide_main_window()
+close_main_window()
 ```
 
 ### 事件
@@ -150,7 +152,7 @@ DataRootManager
 └─ apply_import()
 ```
 
-当前实现已经落地 `CredentialStore`、`DataRootManager`、JSONL store、核心解析/错误/退避、旧 Windows `Servers` 配置兼容、SSH config 别名发现、服务器新增/删除和 OpenSSH short command；`CollectorManager`、完整 `SshTransport` 长连接/指纹接口和深度历史聚合仍需在 M2–M4 收口。
+当前实现已经落地 `CredentialStore`、`DataRootManager`、JSONL store、核心解析/错误/退避、旧 Windows `Servers` 配置兼容、SSH config 别名发现/诊断、服务器新增/删除、免密/凭据模式和 OpenSSH short command；`CollectorManager`、完整 `SshTransport` 长连接/指纹接口和深度历史聚合仍需在 M2–M4 收口。
 
 ## 6. SSH 与安全边界
 
@@ -204,7 +206,7 @@ DataRootManager
 
 主窗口为透明、无装饰、置顶的监控浮窗；管理窗口和历史窗口使用独立 Tauri Webview 窗口。Pinia 管理服务器列表、snapshot/status、历史查询、数据根目录、主题和语言。ECharts 负责历史曲线、缺口、tooltip 和固定详情。
 
-行为目标是对齐而不是 WPF 像素复制：保留置顶、透明、拖拽、缩放、托盘、贴边收起、主题和语言；允许 Web UI 重新设计布局。Preview 当前已提供主浮窗、管理/历史窗口、托盘菜单、状态卡片、SSH config 发现、服务器新增/删除和基础历史图表；贴边、透明度、拖拽、主题语言设置、多服务器细节面板和 macOS 窗口行为仍需实机验收。
+行为目标是对齐而不是 WPF 像素复制：保留置顶、透明、拖拽、缩放、托盘、贴边收起、主题和语言；允许 Web UI 重新设计布局。Preview 当前已提供主浮窗拖拽/关闭、管理/历史窗口、托盘菜单、状态卡片、SSH config 发现与诊断、服务器新增/删除、免密/凭据选项和基础历史图表；贴边、透明度、主题语言设置、多服务器细节面板和 macOS 窗口行为仍需实机验收。
 
 官方 Tauri 插件仅用于通用文件、对话框、shell 和窗口状态；SSH、凭据、历史和窗口策略继续走最小权限的自定义 Rust command。
 

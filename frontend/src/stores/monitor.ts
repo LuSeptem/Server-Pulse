@@ -28,6 +28,9 @@ interface MonitorState {
   history: HistoryEntry[]
   historyCorruptLines: number
   dataRoot: string
+  sshConfigPath: string
+  sshConfigAliases: string[]
+  sshConfigError: string
   initialized: boolean
 }
 
@@ -42,6 +45,9 @@ export const useMonitorStore = defineStore('monitor', {
     history: [],
     historyCorruptLines: 0,
     dataRoot: '',
+    sshConfigPath: '',
+    sshConfigAliases: [],
+    sshConfigError: '',
     initialized: false,
   }),
   getters: {
@@ -61,6 +67,7 @@ export const useMonitorStore = defineStore('monitor', {
         this.initialized = true
         return
       }
+      await this.refreshSshConfig()
       unlisteners.forEach((unlisten) => unlisten())
       unlisteners = [
         await listen<SnapshotEvent>('server.snapshot', (event) => {
@@ -85,9 +92,37 @@ export const useMonitorStore = defineStore('monitor', {
       await invoke('stop_monitoring', { serverId })
       this.statuses[serverId] = 'stopped'
     },
+    async reloadServers() {
+      const servers = await invoke<ServerConfig[]>('list_servers')
+      this.servers = servers
+      await this.refreshSshConfig()
+      await Promise.all(
+        servers
+          .filter((server) => server.monitored && !this.statuses[server.id])
+          .map((server) => this.start(server).catch((error) => {
+            this.errors[server.id] = error instanceof Error ? error.message : String(error)
+          })),
+      )
+    },
+    async refreshSshConfig() {
+      try {
+        const info = await invoke<{ path?: string | null; aliases: string[]; error?: string | null }>('inspect_ssh_config')
+        this.sshConfigPath = info.path ?? ''
+        this.sshConfigAliases = info.aliases
+        this.sshConfigError = info.error ?? ''
+      } catch (error) {
+        this.sshConfigError = error instanceof Error ? error.message : String(error)
+      }
+    },
     async saveServer(server: ServerConfig, password = '', savePassword = false) {
+      const existing = this.servers.find((candidate) => candidate.id !== server.id && candidate.host.toLowerCase() === server.host.toLowerCase())
+      if (existing && this.statuses[existing.id]) {
+        await this.stop(existing.id).catch(() => undefined)
+      }
       this.servers = await invoke<ServerConfig[]>('save_server', { server })
-      if (savePassword && password) {
+      if (server.passwordless) {
+        await invoke('delete_credential', { server })
+      } else if (savePassword && password) {
         await invoke('save_credential', { server, password })
       }
       if (server.monitored) {
@@ -112,6 +147,9 @@ export const useMonitorStore = defineStore('monitor', {
     },
     async hideMain() {
       await invoke('hide_main_window')
+    },
+    async closeMain() {
+      await invoke('close_main_window')
     },
     async loadHistory(day: string) {
       const response = await invoke<{ entries: HistoryEntry[]; corruptLines: number }>('query_history', { day })

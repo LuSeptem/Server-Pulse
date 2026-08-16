@@ -5,10 +5,13 @@ import { useMonitorStore } from './monitor'
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (command: string) => {
     if (command === 'list_servers') {
-      return [{ id: '3090', label: 'RTX 3090', host: '3090', monitored: true }]
+      return [{ id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true }]
     }
     if (command === 'get_data_root') {
       return '/tmp/ServerPulse'
+    }
+    if (command === 'inspect_ssh_config') {
+      return { path: '/home/test/.ssh/config', aliases: ['3090'], error: null }
     }
     return undefined
   }),

@@ -14,6 +14,7 @@ const form = reactive({
   user: '',
   port: '',
   monitored: true,
+  passwordless: true,
   password: '',
   savePassword: false,
 })
@@ -26,6 +27,7 @@ function resetForm() {
   form.user = ''
   form.port = ''
   form.monitored = true
+  form.passwordless = true
   form.password = ''
   form.savePassword = false
   formError.value = ''
@@ -45,6 +47,10 @@ async function submit() {
     formError.value = 'Port must be between 1 and 65535.'
     return
   }
+  if (!form.passwordless && (!form.password || !form.savePassword)) {
+    formError.value = 'Choose passwordless SSH or enter a password and save it in the OS credential store.'
+    return
+  }
   const server: ServerConfig = {
     id: `server-${Date.now()}`,
     label,
@@ -52,11 +58,22 @@ async function submit() {
     user: form.user.trim() || null,
     port,
     monitored: form.monitored,
+    passwordless: form.passwordless,
   }
   try {
     await store.saveServer(server, form.password, form.savePassword)
     savedNotice.value = `${label} saved.`
     resetForm()
+  } catch (error) {
+    formError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function reloadServers() {
+  formError.value = ''
+  try {
+    await store.reloadServers()
+    savedNotice.value = `Reloaded ${store.servers.length} server(s) and ${store.sshConfigAliases.length} SSH alias(es).`
   } catch (error) {
     formError.value = error instanceof Error ? error.message : String(error)
   }
@@ -80,12 +97,19 @@ async function remove(server: ServerConfig) {
         <h1>SSH servers</h1>
       </div>
       <div class="page-actions">
+        <button title="Reload SSH config" @click="reloadServers">Reload</button>
         <button @click="showForm = !showForm">{{ showForm ? 'Cancel' : 'Add server' }}</button>
         <button @click="closeWindow">Close</button>
       </div>
     </header>
 
     <p class="muted">Existing OpenSSH aliases are detected from your user SSH config. Add a hostname or alias here to save it to Server Pulse.</p>
+    <p class="ssh-config-info">
+      <span>SSH config: {{ store.sshConfigPath || 'not found' }}</span>
+      <span v-if="store.sshConfigAliases.length">Detected aliases: {{ store.sshConfigAliases.join(', ') }}</span>
+      <span v-else-if="store.sshConfigError" class="error-text">Read error: {{ store.sshConfigError }}</span>
+      <span v-else>No concrete Host aliases detected.</span>
+    </p>
 
     <form v-if="showForm" class="editor-card" @submit.prevent="submit">
       <h2>Add SSH server</h2>
@@ -111,14 +135,20 @@ async function remove(server: ServerConfig) {
         <input v-model="form.monitored" type="checkbox" />
         <span>Start monitoring after saving</span>
       </label>
-      <label class="field password-field">
-        <span>Password (optional; saved only in the OS credential store)</span>
-        <input v-model="form.password" type="password" autocomplete="new-password" />
+      <label class="check-row">
+        <input v-model="form.passwordless" type="checkbox" />
+        <span>Passwordless SSH (use key or ssh-agent)</span>
       </label>
-      <label class="check-row" :class="{ disabled: !form.password }">
-        <input v-model="form.savePassword" type="checkbox" :disabled="!form.password" />
-        <span>Save password for this server</span>
-      </label>
+      <template v-if="!form.passwordless">
+        <label class="field password-field">
+          <span>Password (saved only in the OS credential store)</span>
+          <input v-model="form.password" type="password" autocomplete="new-password" />
+        </label>
+        <label class="check-row" :class="{ disabled: !form.password }">
+          <input v-model="form.savePassword" type="checkbox" :disabled="!form.password" />
+          <span>Save password for this server</span>
+        </label>
+      </template>
       <p v-if="formError" class="error-text">{{ formError }}</p>
       <p v-if="savedNotice" class="success-text">{{ savedNotice }}</p>
       <div class="card-actions">
@@ -133,6 +163,7 @@ async function remove(server: ServerConfig) {
           <span class="muted">{{ server.host }} · {{ server.user ?? 'SSH config user' }}<template v-if="server.port"> · {{ server.port }}</template></span>
         </div>
         <div class="manage-actions">
+          <span class="auth-mode">{{ server.passwordless ? 'Passwordless' : 'Saved password' }}</span>
           <span class="status-pill" :class="'status-' + (store.statuses[server.id] ?? 'stopped').split(':')[0]">{{ store.statuses[server.id] ?? 'stopped' }}</span>
           <button class="danger-button" @click="remove(server)">Remove</button>
         </div>

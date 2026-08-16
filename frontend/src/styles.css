@@ -80,6 +80,7 @@ button:active { transform: translateY(1px); }
 .editor-card { margin: 16px 0; padding: 14px; border: 1px solid #2a362e; border-radius: 10px; background: rgba(25, 34, 28, 0.66); }
 .editor-card h2 { margin: 0 0 12px; font-size: 16px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.ssh-config-info { display: grid; gap: 4px; margin: -6px 0 14px; color: #748178; font-size: 11px; overflow-wrap: anywhere; }
 .field { display: grid; gap: 6px; max-width: 220px; margin-bottom: 14px; }
 .form-grid .field, .password-field { max-width: none; }
 .field span { color: #9eaaa2; font-size: 12px; }
@@ -88,6 +89,7 @@ input { border: 1px solid #3b4840; border-radius: 7px; padding: 8px; color: #e7e
 .check-row input { accent-color: #8fd3a8; }
 .check-row.disabled { color: #69756d; }
 .success-text { margin: 0 0 10px; color: #9fe2b1; font-size: 12px; }
+.auth-mode { color: #a9cdb4; font-size: 11px; white-space: nowrap; }
 .danger-button { color: #ffb0a8; background: #321c1b; }
 .history-chart { height: 360px; width: 100%; }
 .empty-state { display: grid; place-items: center; min-height: 180px; text-align: center; color: #9eaaa2; }

@@ -12,7 +12,7 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 `codex/tauri-port` 分支包含跨平台重写版本。现有 PowerShell/WPF 版本通过 `port-baseline-v1.1.0` 标签保留，新版本在同一仓库中独立开发。Preview 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不纳入 v1。
 
-当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现、旧版 Windows 服务器配置兼容、系统凭据库接入、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，服务器端 Agent 控制属于 v1.1，主机指纹确认和仅本次会话密码交互仍需在合并前补齐。
+当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现与诊断、旧版 Windows 服务器配置兼容、免密/凭据认证选项、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，服务器端 Agent 控制属于 v1.1，主机指纹确认和仅本次会话密码交互仍需在合并前补齐。
 
 在仓库根目录执行：
 
@@ -89,7 +89,7 @@ ssh -o BatchMode=yes a6000 hostname
 
 点击主窗口在线统计右侧的“管理”，或右键托盘图标选择“SSH 服务器”。候选服务器来自数据根目录中的 `servers.json`（兼容旧版 Windows 的 `Servers` / `SshTarget` / `HostName` 格式）、当前用户 `~/.ssh/config` 中不含通配符的 `Host` 及简单 `Include` 文件，以及管理窗口手动添加的服务器。
 
-管理窗口现在提供“添加服务器”表单，可填写 SSH 别名或主机名、可选用户/端口；明确勾选保存时，密码只写入 Windows 凭据管理器，不会写入 `servers.json`。
+管理窗口现在提供“添加服务器”和“重新加载”功能，可填写 SSH 别名或主机名、可选用户/端口，并选择“免密 SSH（密钥或 ssh-agent）”或保存密码。页面会显示实际配置路径、已发现的别名和读取错误；密码只写入 Windows 凭据管理器，不会写入 `servers.json`。
 
 “监视”复选框决定服务器是否生成实时卡片。缺少认证的服务器保持暂停，不会阻塞其他服务器。
 
@@ -97,9 +97,9 @@ ssh -o BatchMode=yes a6000 hostname
 
 1. 使用密钥或 `ssh-agent` 的免密 SSH（`BatchMode`）；
 2. Windows 凭据管理器中已保存的密码；
-3. 仅用于本次运行的密码。
+3. 仅用于本次运行的密码（规划中；当前 Preview 尚未提供）。
 
-“免密登录”是检测结果，不是绕过认证的开关。旁边的 `!` 提示会解释密钥、`ssh-agent`、凭据管理器和终端 SSH 的区别。
+“免密 SSH”选项会使用密钥或 `ssh-agent`，并以 `BatchMode=yes` 连接。只有需要保存密码时才关闭该选项；Preview 暂未提供交互式的“仅本次会话密码”输入框。
 
 Windows 凭据管理器是 Windows 自带的安全存储，不需要安装。Server Pulse 保存的凭据只供本程序使用，普通终端中的 `ssh` 不会读取，也不会修改全局 OpenSSH 或 `SSH_ASKPASS` 配置。
 
@@ -121,6 +121,7 @@ Windows 凭据管理器是 Windows 自带的安全存储，不需要安装。Ser
 - **刷新**：输入 `1`–`300` 秒，按 Enter 或移开焦点生效。
 - **记录**：打开历史记录窗口。
 - **管理**：打开 SSH 服务器管理窗口。
+- **关闭（×）**：关闭主窗口；顶栏空白区域可拖动，按钮区域不会触发拖动。
 
 ### 移动、贴边和托盘
 
@@ -270,6 +271,8 @@ server_monitoring/
 **窗口找不到了？** 触碰启用的贴边位置或点击托盘图标；若位置不可用，删除 `%LOCALAPPDATA%\\ServerPulse\\settings.json` 恢复默认位置。
 
 **启动 Preview 时为什么有终端窗口？** 请从资源管理器或快捷方式启动生成的 `serverpulse-tauri.exe`；Release 版本使用 GUI 子系统，不会主动创建控制台。如果从 Windows Terminal 中输入命令启动，父终端按设计会继续保持打开。
+
+**SSH aliases 没有显示怎么办？** 打开“管理”并点击“重新加载”，检查页面显示的配置路径、已发现别名和读取错误。Preview 会读取 `~/.ssh/config` 及简单 `Include` 文件中的具体 `Host`，只含通配符的条目会被跳过。
 
 **如何报告问题？** 请附版本、Windows 版本、EXE/脚本模式、复现步骤和脱敏后的 `error.log`。不要上传历史目录、密码、私钥、真实主机地址或用户列表。
 

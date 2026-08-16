@@ -96,6 +96,10 @@ impl SystemOpenSsh {
         Ok(aliases)
     }
 
+    pub fn config_path() -> Option<PathBuf> {
+        default_config_path()
+    }
+
     pub fn build_arguments(&self, target: &SshTarget) -> Vec<String> {
         let batch_mode = if target.credential_identity.is_some() { "no" } else { "yes" };
         let mut args = vec![
@@ -191,12 +195,23 @@ impl SystemOpenSsh {
 }
 
 fn default_config_path() -> Option<PathBuf> {
-    let home = if cfg!(windows) {
+    let home = home_directory()?;
+    Some(home.join(".ssh").join("config"))
+}
+
+fn home_directory() -> Option<PathBuf> {
+    if cfg!(windows) {
         std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .or_else(|| {
+                let drive = std::env::var_os("HOMEDRIVE")?;
+                let path = std::env::var_os("HOMEPATH")?;
+                Some(format!("{}{}", drive.to_string_lossy(), path.to_string_lossy()).into())
+            })
+            .map(PathBuf::from)
     } else {
-        std::env::var_os("HOME")
-    }?;
-    Some(PathBuf::from(home).join(".ssh").join("config"))
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
 }
 
 fn read_config_file(
@@ -208,7 +223,8 @@ fn read_config_file(
     if !visited.insert(identity) {
         return Ok(());
     }
-    let text = fs::read_to_string(path)?;
+    let bytes = fs::read(path)?;
+    let text = decode_config_text(&bytes);
     let base = path.parent().unwrap_or_else(|| Path::new("."));
     for raw_line in text.lines() {
         let line = raw_line.split('#').next().unwrap_or_default().trim();
@@ -238,6 +254,24 @@ fn read_config_file(
         }
     }
     Ok(())
+}
+
+fn decode_config_text(bytes: &[u8]) -> String {
+    if let Some(bytes) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return String::from_utf16_lossy(&units);
+    }
+    if let Some(bytes) = bytes.strip_prefix(&[0xfe, 0xff]) {
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return String::from_utf16_lossy(&units);
+    }
+    String::from_utf8_lossy(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes)).into_owned()
 }
 
 fn expand_include_path(value: &str, base: &Path) -> Vec<PathBuf> {
@@ -416,5 +450,11 @@ mod tests {
         let matches = expand_include_path("conf.d/*", &root);
         assert_eq!(matches.len(), 2);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn decodes_utf16_and_bom_config_text() {
+        assert_eq!(decode_config_text(&[0xff, 0xfe, b'H', 0, b'i', 0]), "Hi");
+        assert_eq!(decode_config_text(&[0xef, 0xbb, 0xbf, b'H', b'i']), "Hi");
     }
 }

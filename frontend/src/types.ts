@@ -7,6 +7,7 @@ export interface ServerConfig {
   user?: string | null
   port?: number | null
   monitored: boolean
+  passwordless: boolean
 }
 export interface CpuUserUsage {
   uid: string

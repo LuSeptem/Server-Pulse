@@ -17,6 +17,7 @@
 - Preview 目标改为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端和服务器 Agent 控制移至 v1.1。
 - Preview 为未签名内部版本；macOS 透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验证。
 - Windows Release 桌面进程改为 GUI subsystem，SSH/askpass 子进程使用无控制台启动，避免 Preview 启动时额外弹出终端。
+- 主浮窗增加可靠的拖拽与关闭按钮；管理页增加 SSH 配置诊断/重新加载和免密 SSH（密钥或 ssh-agent）选项。
 
 #### 未完成
 
@@ -37,6 +38,7 @@
 - The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop and server Agent control move to v1.1.
 - The Preview is unsigned and for internal testing; macOS transparency, tray, edge docking, and sleep/resume remain unverified on physical hardware.
 - The Windows Release desktop process now uses the GUI subsystem, and SSH/askpass children use no-console creation flags so the Preview does not open an extra terminal on startup.
+- Added reliable main-window dragging and close controls, SSH config diagnostics/reload, and an explicit passwordless SSH (key or ssh-agent) option in Manage.
 
 #### Remaining
 

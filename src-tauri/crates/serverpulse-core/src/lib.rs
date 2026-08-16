@@ -107,9 +107,15 @@ pub struct ServerConfig {
     pub port: Option<u16>,
     #[serde(default = "default_monitored")]
     pub monitored: bool,
+    #[serde(default = "default_passwordless")]
+    pub passwordless: bool,
 }
 
 fn default_monitored() -> bool {
+    true
+}
+
+fn default_passwordless() -> bool {
     true
 }
 
@@ -166,6 +172,7 @@ pub fn parse_server_configs(text: &str) -> Result<Vec<ServerConfig>, ServerPulse
                 user: string_field(&item, &["user", "User"]),
                 port: number_field(&item, &["port", "Port"]).and_then(|value| u16::try_from(value).ok()),
                 monitored: bool_field(&item, &["monitored", "Monitored"]).unwrap_or(true),
+                passwordless: bool_field(&item, &["passwordless", "Passwordless"]).unwrap_or(true),
             }
         };
         server.validate()?;
@@ -676,5 +683,6 @@ GPU_USER_STATUS=unavailable"#;
         assert_eq!(servers[0].host, "3090");
         assert_eq!(servers[0].user.as_deref(), Some("alice"));
         assert_eq!(servers[0].port, Some(22));
+        assert!(servers[0].passwordless);
     }
 }

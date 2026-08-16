@@ -463,6 +463,7 @@ mod tests {
             user: Some("alice".to_owned()),
             port: Some(2222),
             monitored: true,
+            passwordless: true,
         }];
         write_server_configs(&root, &servers).expect("write servers");
         assert_eq!(read_server_configs(&root).expect("read servers"), Some(servers));
