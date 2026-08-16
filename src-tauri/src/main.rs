@@ -599,6 +599,11 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(to_command_error)
+}
+
+#[tauri::command]
 async fn hide_main_window(app: AppHandle) -> Result<(), String> {
     app.get_webview_window("main")
         .ok_or_else(|| "main window is missing".to_owned())?
@@ -684,6 +689,7 @@ fn main() {
             preview_import,
             apply_import,
             open_window,
+            drag_window,
             hide_main_window,
             close_main_window
         ])

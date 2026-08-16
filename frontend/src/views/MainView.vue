@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useMonitorStore } from '../stores/monitor'
 import ServerCard from '../components/ServerCard.vue'
@@ -8,9 +9,18 @@ const store = useMonitorStore()
 const showIntervalMenu = ref(false)
 const presets = [1, 2, 3, 5, 10, 30, 60]
 
-const startDragging = (event: MouseEvent) => {
-  if ((event.target as HTMLElement).closest('button, input, a, .cadence-dropdown')) return
-  void getCurrentWindow().startDragging().catch(() => undefined)
+const startDragging = async (event: MouseEvent) => {
+  if (event.button !== 0) return
+  const target = event.target as HTMLElement | null
+  if (!target) return
+  if (target.closest('button, input, select, textarea, a, .card-actions, .cadence-dropdown, .no-drag')) {
+    return
+  }
+  try {
+    await invoke('drag_window')
+  } catch {
+    void getCurrentWindow().startDragging().catch(() => undefined)
+  }
 }
 
 const selectInterval = async (val: number) => {
@@ -20,11 +30,11 @@ const selectInterval = async (val: number) => {
 </script>
 
 <template>
-  <section class="widget-window" @click="showIntervalMenu = false">
+  <section class="widget-window" @mousedown="startDragging" @click="showIntervalMenu = false">
     <header class="window-header drag-region" data-tauri-drag-region @mousedown="startDragging">
-      <div>
-        <span class="eyebrow">SERVER PULSE</span>
-        <h1>Server monitor</h1>
+      <div data-tauri-drag-region>
+        <span class="eyebrow" data-tauri-drag-region>SERVER PULSE</span>
+        <h1 data-tauri-drag-region>Server monitor</h1>
       </div>
       <div class="header-actions no-drag">
         <button title="History" @click="store.openWindow('history')">History</button>
@@ -34,9 +44,9 @@ const selectInterval = async (val: number) => {
       </div>
     </header>
 
-    <div class="summary-row">
-      <div class="summary-left">
-        <span>{{ store.onlineCount }}/{{ store.servers.length }} online</span>
+    <div class="summary-row drag-region" data-tauri-drag-region @mousedown="startDragging">
+      <div class="summary-left" data-tauri-drag-region>
+        <span data-tauri-drag-region>{{ store.onlineCount }}/{{ store.servers.length }} online</span>
         <div class="cadence-container" @click.stop>
           <button
             class="cadence-tag"

@@ -92,8 +92,18 @@ button:active { transform: translateY(1px); }
   border-color: #2b392f;
 }
 
-.drag-region { -webkit-app-region: drag; }
-.no-drag, button, input { -webkit-app-region: no-drag; }
+.drag-region {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.drag-region:active {
+  cursor: grabbing;
+}
+.no-drag, button, input, select, textarea {
+  cursor: auto;
+  user-select: auto;
+}
 
 .summary-row { margin: 14px 0; font-size: 12px; }
 .summary-left { display: flex; align-items: center; gap: 8px; }

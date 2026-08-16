@@ -33,6 +33,7 @@
 - 修复服务器在 `online` 状态下仍残留初始超时错误提示的问题：优化后端 `get_monitoring_state` 与前端 Pinia Store 的错误清理机制，并在服务器卡片中增加状态守护条件，确保在线状态下不显示过期的连接错误信息。
 - 支持自主配置监控刷新采样频率（Cadence / Refresh Interval）：新增全局/单机自定义采样间隔设置（预设 2s、5s、10s、30s、60s 及 1~300s 自定义输入），并在主浮窗展示当前刷新间隔徽标，修改后即时更新后台采集器。
 - 支持多窗口采样频率实时同步与主界面直接修改：后端增加 `interval_seconds` 状态注册与 `interval.changed` 多窗口广播事件，前端主窗口增加交互式下拉选择菜单（支持直接点选 1s、2s、3s、5s、10s、30s、60s 档位），管理窗口与主浮窗双向无缝秒级联动。
+- 修复主浮窗无边框透明模式下无法拖动窗口的问题：排查并移除导致 WebView2 鼠标事件拦截失效的 Electron 专有样式 `-webkit-app-region`，在 Rust 后端补充 `drag_window` 原生拖拽指令，并在前端主浮窗所有空白与标题区域增加全域拖拽响应与精准交互元素穿透过滤。
 
 #### 未完成
 
@@ -69,6 +70,7 @@
 - Fixed lingering initial timeout error notices on online servers: pruned stale errors on online transitions in both Rust and Pinia, and guarded card error rendering so error text only displays when the server is genuinely disconnected.
 - Added user-configurable monitoring refresh interval (cadence): provided presets (2s, 5s default, 10s, 30s, 60s) and a custom 1–300s input in Manage view with live indicator on the main dashboard, immediately updating background collection tasks.
 - Added cross-window interval synchronization and direct inline cadence modification on the main dashboard: broadcasted `interval.changed` events across Tauri windows and added a quick popover selector directly on the main floating widget (1s, 2s, 3s, 5s, 10s, 30s, 60s).
+- Fixed main floating window dragging on Windows frameless/transparent mode: removed conflicting `-webkit-app-region` styles that intercepted WebView2 DOM events, added dedicated native `drag_window` IPC command, and enabled comprehensive blank-area and header drag hit-testing with button exclusions.
 
 #### Remaining
 
