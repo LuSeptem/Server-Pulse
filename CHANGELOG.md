@@ -28,6 +28,8 @@
 - 修复保存服务器配置时出现的 `JSON error: expected value at line 1 column 1` 报错：完善 UTF-8 BOM（`\u{feff}`）与 UTF-16 编码识别解码，确保写入和合并旧版 PowerShell 遗留的 `servers.json` 时完全兼容。
 - 修复 SSH 监控采样阻塞并一直卡在 `connecting`/`rechecking` 的问题：为 OpenSSH 补充 `-T`（禁用伪终端分配）与远端指令 `sh -s`，并在发送脚本时严格清理回车符 `\r` 与及时关闭标准输入管道，使指标采样在毫秒级快速完成。
 - 在管理界面（Manage）为已有 SSH 服务器列表增加监控复选框（Monitor Checkbox），支持自由勾选/取消勾选任意服务器的监控状态，并即时启停后台采集与同步持久化配置。
+- 强化监控状态与前端画面同步链路：后端增加内存快照/状态注册表与 `get_monitoring_state` 全量查询指令，前端结合实时 Tauri 事件与防抖轮询双重同步，杜绝前端未挂载时事件漏接导致的画面空白。
+- 增强主界面服务器卡片呈现：支持 CPU、内存、GPU 卡数与 Host 概览，并增加独立 GPU 详细信息栏（GPU 索引、型号、核心利用率、显存占用与上限）。
 
 #### 未完成
 
@@ -59,6 +61,8 @@
 - Fixed `JSON error: expected value at line 1 column 1` when saving server configs: added transparent UTF-8 BOM (`\u{feff}`) and UTF-16 decoding across config and history parsers, ensuring seamless compatibility with legacy PowerShell `servers.json`.
 - Fixed SSH sampling process hanging indefinitely on `connecting`/`rechecking`: added OpenSSH `-T` (no pseudo-terminal) and remote command `sh -s`, stripped carriage returns `\r`, and closed stdin immediately to guarantee fast metric execution.
 - Added monitor toggle checkboxes to the Manage view server list, allowing users to easily enable or disable monitoring for any configured SSH server with immediate background start/stop and persistent config saves.
+- Hardened monitoring state synchronization between backend and frontend: added in-memory state caching in Rust and the `get_monitoring_state` IPC command, backed by both Tauri events and reactive polling in Pinia to eliminate missed startup events.
+- Enhanced server cards on the main dashboard with complete metric grids (CPU, Memory, GPU count, Hostname) and per-GPU breakdown rows (GPU model, utilization, VRAM usage/limit).
 
 #### Remaining
 

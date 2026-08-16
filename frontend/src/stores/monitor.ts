@@ -91,13 +91,18 @@ export const useMonitorStore = defineStore('monitor', {
         unlisteners.forEach((unlisten) => unlisten())
         unlisteners = [
           await listen<SnapshotEvent>('server.snapshot', (event) => {
-            this.snapshots[event.payload.serverId] = event.payload.payload
-            this.statuses[event.payload.serverId] = 'online'
+            const id = event.payload.serverId
+            this.snapshots = { ...this.snapshots, [id]: event.payload.payload }
+            this.statuses = { ...this.statuses, [id]: 'online' }
+            const nextErrors = { ...this.errors }
+            delete nextErrors[id]
+            this.errors = nextErrors
           }),
           await listen<StatusEvent>('server.status', (event) => {
-            this.statuses[event.payload.serverId] = event.payload.payload.status
+            const id = event.payload.serverId
+            this.statuses = { ...this.statuses, [id]: event.payload.payload.status }
             if (event.payload.payload.detail?.detail) {
-              this.errors[event.payload.serverId] = event.payload.payload.detail.detail
+              this.errors = { ...this.errors, [id]: event.payload.payload.detail.detail }
             }
           }),
         ]
@@ -106,15 +111,44 @@ export const useMonitorStore = defineStore('monitor', {
       }
 
       await Promise.all(this.servers.filter((server) => server.monitored).map((server) => this.start(server)))
+      await this.refreshMonitoringState()
+      setInterval(() => {
+        void this.refreshMonitoringState()
+      }, 2000)
       this.initialized = true
+    },
+    async refreshMonitoringState() {
+      try {
+        const res = await invoke<{
+          snapshots: Record<string, MetricSnapshot>
+          statuses: Record<string, string>
+          errors: Record<string, string>
+        }>('get_monitoring_state')
+        if (res) {
+          if (res.snapshots && Object.keys(res.snapshots).length > 0) {
+            this.snapshots = { ...this.snapshots, ...res.snapshots }
+          }
+          if (res.statuses && Object.keys(res.statuses).length > 0) {
+            this.statuses = { ...this.statuses, ...res.statuses }
+          }
+          if (res.errors && Object.keys(res.errors).length > 0) {
+            this.errors = { ...this.errors, ...res.errors }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to get monitoring state:', error)
+      }
     },
     async start(server: ServerConfig) {
       await invoke('start_monitoring', { server, intervalSeconds: 5 })
-      this.statuses[server.id] = 'connecting'
+      this.statuses = { ...this.statuses, [server.id]: 'connecting' }
+      setTimeout(() => {
+        void this.refreshMonitoringState()
+      }, 500)
     },
     async stop(serverId: string) {
       await invoke('stop_monitoring', { serverId })
-      this.statuses[serverId] = 'stopped'
+      this.statuses = { ...this.statuses, [serverId]: 'stopped' }
     },
     async reloadServers() {
       const servers = await invoke<ServerConfig[]>('list_servers')
@@ -186,7 +220,10 @@ export const useMonitorStore = defineStore('monitor', {
     },
     async recheck(server: ServerConfig) {
       await invoke('recheck_monitoring', { server })
-      this.statuses[server.id] = 'rechecking'
+      this.statuses = { ...this.statuses, [server.id]: 'rechecking' }
+      setTimeout(() => {
+        void this.refreshMonitoringState()
+      }, 500)
     },
     async openWindow(kind: 'manage' | 'history') {
       await invoke('open_window', { kind })

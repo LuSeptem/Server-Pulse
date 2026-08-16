@@ -150,7 +150,24 @@ button:active { transform: translateY(1px); }
 }
 .metric span, .metric strong { display: block; }
 .metric span { color: #85968b; font-size: 11px; }
-.metric strong { margin-top: 3px; font-size: 15px; color: #f2f7f4; }
+.metric strong { margin-top: 3px; font-size: 15px; color: #f2f7f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.gpu-summary-list {
+  display: grid;
+  gap: 4px;
+  background: #101612;
+  border: 1px solid #1e2820;
+  border-radius: 7px;
+  padding: 6px 10px;
+}
+.gpu-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+.gpu-label { color: #a4b4a9; }
+.gpu-usage { color: #85e89d; font-weight: 600; }
 
 .status-pill {
   border-radius: 999px;

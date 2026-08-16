@@ -11,3 +11,7 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "process", "time"] }
 thiserror = "2"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+

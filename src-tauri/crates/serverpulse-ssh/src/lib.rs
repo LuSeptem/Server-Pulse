@@ -519,4 +519,23 @@ mod tests {
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0], home.join(".ssh").join("config"));
     }
+
+    #[test]
+    #[ignore]
+    fn test_live_ssh() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ssh = SystemOpenSsh::default();
+            let target = SshTarget {
+                alias: "3090".to_owned(),
+                user: Some("test-user".to_owned()),
+                port: Some(22),
+                credential_identity: None,
+            };
+            let script = include_str!("../../../../assets/serverpulse-sample.sh");
+            let res = ssh.collect_once(&target, script).await;
+            println!("LIVE SSH COLLECT RESULT: {:?}", res);
+            assert!(res.is_ok(), "Collect failed: {:?}", res);
+        });
+    }
 }

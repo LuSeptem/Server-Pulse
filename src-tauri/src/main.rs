@@ -25,6 +25,17 @@ const SEED_SERVERS: &str = include_str!("../../config/servers.json");
 #[derive(Default)]
 struct AppState {
     tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    snapshots: Arc<Mutex<HashMap<String, MetricSnapshot>>>,
+    statuses: Arc<Mutex<HashMap<String, String>>>,
+    errors: Arc<Mutex<HashMap<String, String>>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitorStateResponse {
+    snapshots: HashMap<String, MetricSnapshot>,
+    statuses: HashMap<String, String>,
+    errors: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -189,6 +200,9 @@ fn target_with_saved_credential(server: &ServerConfig) -> SshTarget {
 
 fn spawn_monitoring_task(
     app: AppHandle,
+    state_snapshots: Arc<Mutex<HashMap<String, MetricSnapshot>>>,
+    state_statuses: Arc<Mutex<HashMap<String, String>>>,
+    state_errors: Arc<Mutex<HashMap<String, String>>>,
     server: ServerConfig,
     interval: Duration,
 ) -> JoinHandle<()> {
@@ -200,6 +214,7 @@ fn spawn_monitoring_task(
         let history_store = data_root.as_ref().map(|root| JsonHistoryStore::new(root));
         let mut sequence = 0u64;
         let mut retry = RetryState::default();
+        state_statuses.lock().await.insert(id.clone(), "connecting".to_owned());
         let _ = app.emit(
             "server.status",
             StatusEvent {
@@ -225,6 +240,9 @@ fn spawn_monitoring_task(
                     if let (Some(store), Ok(line)) = (&history_store, history_line(&server, &timestamp, &snapshot)) {
                         let _ = store.append_jsonl(&history_day(now), &line);
                     }
+                    state_snapshots.lock().await.insert(id.clone(), snapshot.clone());
+                    state_statuses.lock().await.insert(id.clone(), "online".to_owned());
+                    state_errors.lock().await.remove(&id);
                     let _ = app.emit(
                         "server.snapshot",
                         SnapshotEvent {
@@ -258,6 +276,8 @@ fn spawn_monitoring_task(
                     } else {
                         "offline".to_owned()
                     };
+                    state_statuses.lock().await.insert(id.clone(), status.clone());
+                    state_errors.lock().await.insert(id.clone(), error.public_error().detail.clone().unwrap_or_default());
                     let _ = app.emit(
                         "server.status",
                         StatusEvent {
@@ -285,7 +305,7 @@ fn spawn_monitoring_task(
 
 async fn start_task(
     app: AppHandle,
-    tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    state: &AppState,
     server: ServerConfig,
     interval_seconds: Option<u64>,
 ) -> Result<(), String> {
@@ -299,13 +319,23 @@ async fn start_task(
     {
         return Err("password authentication requires a saved credential; choose passwordless SSH or save a password first".to_owned());
     }
-    let mut tasks = tasks.lock().await;
+    let mut tasks = state.tasks.lock().await;
     if tasks.contains_key(&server.id) {
         return Ok(());
     }
     let interval = Duration::from_secs(interval_seconds.unwrap_or(5).clamp(1, 300));
     let id = server.id.clone();
-    tasks.insert(id, spawn_monitoring_task(app, server, interval));
+    tasks.insert(
+        id,
+        spawn_monitoring_task(
+            app,
+            state.snapshots.clone(),
+            state.statuses.clone(),
+            state.errors.clone(),
+            server,
+            interval,
+        ),
+    );
     Ok(())
 }
 
@@ -386,7 +416,7 @@ async fn start_monitoring(
     server: ServerConfig,
     interval_seconds: Option<u64>,
 ) -> Result<(), String> {
-    start_task(app, state.tasks.clone(), server, interval_seconds).await
+    start_task(app, &state, server, interval_seconds).await
 }
 
 #[tauri::command]
@@ -394,6 +424,7 @@ async fn stop_monitoring(state: State<'_, AppState>, server_id: String) -> Resul
     if let Some(task) = state.tasks.lock().await.remove(&server_id) {
         task.abort();
     }
+    state.statuses.lock().await.insert(server_id, "stopped".to_owned());
     Ok(())
 }
 
@@ -407,7 +438,20 @@ async fn recheck_monitoring(
     if let Some(task) = state.tasks.lock().await.remove(&server_id) {
         task.abort();
     }
-    start_task(app, state.tasks.clone(), server, Some(5)).await
+    state.statuses.lock().await.insert(server_id, "rechecking".to_owned());
+    start_task(app, &state, server, Some(5)).await
+}
+
+#[tauri::command]
+async fn get_monitoring_state(state: State<'_, AppState>) -> Result<MonitorStateResponse, String> {
+    let snapshots = state.snapshots.lock().await.clone();
+    let statuses = state.statuses.lock().await.clone();
+    let errors = state.errors.lock().await.clone();
+    Ok(MonitorStateResponse {
+        snapshots,
+        statuses,
+        errors,
+    })
 }
 
 #[tauri::command]
@@ -590,6 +634,7 @@ fn main() {
             start_monitoring,
             stop_monitoring,
             recheck_monitoring,
+            get_monitoring_state,
             get_data_root,
             validate_data_root,
             set_data_root,
