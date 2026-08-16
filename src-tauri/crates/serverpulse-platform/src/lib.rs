@@ -236,8 +236,10 @@ fn copy_tree(source: &Path, target: &Path, backup: &Path, mode: ConflictMode, im
 }
 
 fn merge_server_files(existing: &str, incoming: &str) -> Result<String, ServerPulseError> {
-    let mut target: serde_json::Value = serde_json::from_str(existing).unwrap_or_else(|_| serde_json::json!({ "servers": [] }));
-    let source: serde_json::Value = serde_json::from_str(incoming)?;
+    let clean_existing = existing.trim_start_matches('\u{feff}').trim();
+    let clean_incoming = incoming.trim_start_matches('\u{feff}').trim();
+    let mut target: serde_json::Value = serde_json::from_str(clean_existing).unwrap_or_else(|_| serde_json::json!({ "servers": [] }));
+    let source: serde_json::Value = serde_json::from_str(clean_incoming)?;
     let target_servers = target["servers"].as_array_mut().ok_or_else(|| ServerPulseError::InvalidHistory("servers.json has no servers array".to_owned()))?;
     let source_servers = source["servers"].as_array().cloned().unwrap_or_default();
     for candidate in source_servers {
@@ -299,12 +301,27 @@ impl Drop for FileLock {
     }
 }
 
+pub fn read_file_text(path: &Path) -> Result<String, ServerPulseError> {
+    let bytes = fs::read(path)?;
+    if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        Ok(String::from_utf8_lossy(&bytes[3..]).into_owned())
+    } else if bytes.starts_with(&[0xff, 0xfe]) {
+        let (text, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        Ok(text.into_owned())
+    } else if bytes.starts_with(&[0xfe, 0xff]) {
+        let (text, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        Ok(text.into_owned())
+    } else {
+        Ok(String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_owned())
+    }
+}
+
 pub fn read_server_configs(data_root: &Path) -> Result<Option<Vec<ServerConfig>>, ServerPulseError> {
     let path = data_root.join("servers.json");
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path)?;
+    let text = read_file_text(&path)?;
     Ok(Some(parse_server_configs(&text)?))
 }
 
@@ -316,7 +333,13 @@ pub fn write_server_configs(data_root: &Path, servers: &[ServerConfig]) -> Resul
     let path = data_root.join("servers.json");
     let lock = FileLock::acquire(data_root.join(".servers.lock"), Duration::from_secs(10))?;
     let mut document = if path.exists() {
-        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path)?)?
+        let text = read_file_text(&path).unwrap_or_default();
+        let clean = text.trim();
+        if clean.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str::<serde_json::Value>(clean).unwrap_or_else(|_| serde_json::json!({}))
+        }
     } else {
         serde_json::json!({})
     };
@@ -467,6 +490,34 @@ mod tests {
         }];
         write_server_configs(&root, &servers).expect("write servers");
         assert_eq!(read_server_configs(&root).expect("read servers"), Some(servers));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_and_overwrites_bom_encoded_servers_json() {
+        let root = std::env::temp_dir().join(format!("serverpulse-bom-{}", unique_suffix()));
+        fs::create_dir_all(&root).expect("temp dir");
+        let path = root.join("servers.json");
+        let mut bom_bytes = vec![0xef, 0xbb, 0xbf];
+        bom_bytes.extend_from_slice(br#"{"servers":[{"id":"3090","label":"3090","host":"3090","monitored":true,"passwordless":true}]}"#);
+        fs::write(&path, &bom_bytes).expect("write bom file");
+
+        let read = read_server_configs(&root).expect("read servers with bom");
+        assert_eq!(read.as_ref().map(Vec::len), Some(1));
+
+        let updated = vec![
+            ServerConfig {
+                id: "3090".to_owned(),
+                label: "RTX 3090".to_owned(),
+                host: "3090".to_owned(),
+                user: Some("test-user".to_owned()),
+                port: Some(22),
+                monitored: true,
+                passwordless: true,
+            },
+        ];
+        write_server_configs(&root, &updated).expect("write over bom file");
+        assert_eq!(read_server_configs(&root).expect("read updated"), Some(updated));
         let _ = fs::remove_dir_all(root);
     }
 }

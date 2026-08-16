@@ -25,6 +25,7 @@
 - 统一主界面、管理界面与历史界面的暗色设计语言：去除管理窗口多余外边距与背景色差，采用一致的深曜石绿主题色彩、卡片质感、状态徽标与交互按钮。
 - 修复 Tauri 2 窗口权限配置：添加 `src-tauri/capabilities/default.json` 完整赋权，避免多窗口事件监听与 IPC 调用失败导致前端数据加载受阻。
 - 强化 SSH 配置与别名解析可靠性：集成 `dirs::home_dir()` Win32 原生主目录定位，优化 Pinia Store 初始化与容灾逻辑，确保 `~/.ssh/config` 别名与候选主机始终稳定加载。
+- 修复保存服务器配置时出现的 `JSON error: expected value at line 1 column 1` 报错：完善 UTF-8 BOM（`\u{feff}`）与 UTF-16 编码识别解码，确保写入和合并旧版 PowerShell 遗留的 `servers.json` 时完全兼容。
 
 #### 未完成
 
@@ -53,6 +54,7 @@
 - Unified the visual language between the Main, Manage, and History windows: eliminated inconsistent window padding and background mismatch, applying a cohesive deep obsidian green palette, card borders, status pills, and action buttons.
 - Configured Tauri 2 capabilities in `src-tauri/capabilities/default.json` for full window permissions, multi-window events, and IPC calls.
 - Hardened SSH config alias and candidate loading: integrated `dirs::home_dir()` Win32 native home resolution, and made store initialization resilient so `~/.ssh/config` aliases are always discovered and displayed.
+- Fixed `JSON error: expected value at line 1 column 1` when saving server configs: added transparent UTF-8 BOM (`\u{feff}`) and UTF-16 decoding across config and history parsers, ensuring seamless compatibility with legacy PowerShell `servers.json`.
 
 #### Remaining
 

@@ -146,7 +146,11 @@ impl ServerConfig {
 }
 
 pub fn parse_server_configs(text: &str) -> Result<Vec<ServerConfig>, ServerPulseError> {
-    let value: serde_json::Value = serde_json::from_str(text)?;
+    let clean = text.trim_start_matches('\u{feff}').trim();
+    if clean.is_empty() {
+        return Ok(Vec::new());
+    }
+    let value: serde_json::Value = serde_json::from_str(clean)?;
     let items = value
         .get("servers")
         .or_else(|| value.get("Servers"))
@@ -504,7 +508,8 @@ pub struct HistoryRead {
 pub fn read_history_jsonl(text: &str) -> HistoryRead {
     let mut result = HistoryRead::default();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<HistoryEntry>(line) {
+        let clean = line.trim_start_matches('\u{feff}').trim();
+        match serde_json::from_str::<HistoryEntry>(clean) {
             Ok(entry) => result.entries.push(entry),
             Err(_) => result.corrupt_lines += 1,
         }
@@ -514,7 +519,8 @@ pub fn read_history_jsonl(text: &str) -> HistoryRead {
 
 pub fn read_history_json(text: &str) -> HistoryRead {
     let mut result = HistoryRead::default();
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+    let clean = text.trim_start_matches('\u{feff}').trim();
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(clean) else {
         result.corrupt_lines = 1;
         return result;
     };
