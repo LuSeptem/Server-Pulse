@@ -283,6 +283,12 @@ button:active { transform: translateY(1px); }
   font-size: 14px;
   color: #f0f5f2;
 }
+.server-meta-line {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #8fa093;
+}
 
 .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .metric {

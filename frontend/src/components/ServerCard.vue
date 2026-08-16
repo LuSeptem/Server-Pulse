@@ -32,7 +32,9 @@ function getVramPercent(gpu: GpuMetric) {
     <header class="card-header">
       <div>
         <strong>{{ server.label }}</strong>
-        <span class="muted">{{ server.host }}</span>
+        <span class="muted server-meta-line">
+          {{ server.host }}<template v-if="snapshot?.hostname && snapshot.hostname !== server.host"> · {{ snapshot.hostname }}</template><template v-if="snapshot?.gpus && snapshot.gpus.length"> · {{ snapshot.gpus.length }} GPU{{ snapshot.gpus.length > 1 ? 's' : '' }}</template>
+        </span>
       </div>
       <span class="status-pill" :class="'status-' + status.split(':')[0]">{{ status }}</span>
     </header>
@@ -45,14 +47,6 @@ function getVramPercent(gpu: GpuMetric) {
       <div class="metric">
         <span>MEM</span>
         <strong>{{ snapshot.memoryPercent != null ? snapshot.memoryPercent.toFixed(1) + '%' : '—' }}</strong>
-      </div>
-      <div class="metric">
-        <span>GPU</span>
-        <strong>{{ snapshot.gpus && snapshot.gpus.length ? snapshot.gpus.length : '0' }}</strong>
-      </div>
-      <div class="metric">
-        <span>HOST</span>
-        <strong :title="snapshot.hostname">{{ snapshot.hostname || server.host }}</strong>
       </div>
     </div>
 
