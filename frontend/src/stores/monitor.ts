@@ -62,7 +62,15 @@ export const useMonitorStore = defineStore('monitor', {
     initialized: false,
   }),
   getters: {
-    onlineCount: (state) => Object.values(state.statuses).filter((value) => value === 'online').length,
+    monitoredServers: (state) => state.servers.filter((server) => server.monitored),
+    onlineCount: (state) => {
+      const monitoredIds = new Set(
+        state.servers.length > 0
+          ? state.servers.filter((s) => s.monitored).map((s) => s.id)
+          : Object.keys(state.statuses),
+      )
+      return Object.entries(state.statuses).filter(([id, status]) => monitoredIds.has(id) && status === 'online').length
+    },
     unaddedCandidates: (state) =>
       state.sshConfigCandidates.filter(
         (candidate) =>
@@ -99,6 +107,12 @@ export const useMonitorStore = defineStore('monitor', {
       try {
         unlisteners.forEach((unlisten) => unlisten())
         unlisteners = [
+          await listen<ServerConfig[]>('servers.changed', (event) => {
+            if (Array.isArray(event.payload)) {
+              this.servers = event.payload
+              void this.refreshSshConfig()
+            }
+          }),
           await listen<SnapshotEvent>('server.snapshot', (event) => {
             const id = event.payload.serverId
             this.snapshots = { ...this.snapshots, [id]: event.payload.payload }

@@ -46,7 +46,7 @@ const selectInterval = async (val: number) => {
 
     <div class="summary-row drag-region" data-tauri-drag-region @mousedown="startDragging">
       <div class="summary-left" data-tauri-drag-region>
-        <span data-tauri-drag-region>{{ store.onlineCount }}/{{ store.servers.length }} online</span>
+        <span data-tauri-drag-region>{{ store.onlineCount }}/{{ store.monitoredServers.length }} online</span>
         <div class="cadence-container" @click.stop>
           <button
             class="cadence-tag"
@@ -79,7 +79,7 @@ const selectInterval = async (val: number) => {
 
     <section class="server-list">
       <ServerCard
-        v-for="server in store.servers"
+        v-for="server in store.monitoredServers"
         :key="server.id"
         :server="server"
         :snapshot="store.snapshots[server.id]"
@@ -89,8 +89,9 @@ const selectInterval = async (val: number) => {
         @stop="store.stop(server.id)"
         @recheck="store.recheck(server)"
       />
-      <div v-if="store.servers.length === 0" class="empty-state">
-        <p>No configured SSH servers.</p>
+      <div v-if="store.monitoredServers.length === 0" class="empty-state">
+        <p v-if="store.servers.length === 0">No configured SSH servers.</p>
+        <p v-else>No servers selected for monitoring.</p>
         <button @click="store.openWindow('manage')">Open Manage</button>
       </div>
     </section>

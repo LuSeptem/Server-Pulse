@@ -399,26 +399,48 @@ async fn inspect_ssh_config() -> Result<SshConfigInfo, String> {
 }
 
 #[tauri::command]
-async fn save_server(server: ServerConfig) -> Result<Vec<ServerConfig>, String> {
+async fn save_server(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    server: ServerConfig,
+) -> Result<Vec<ServerConfig>, String> {
     server.validate().map_err(to_command_error)?;
     let (root, mut servers) = writable_servers()?;
     if let Some(existing) = servers.iter_mut().find(|existing| {
         existing.id.eq_ignore_ascii_case(&server.id)
             || existing.host.eq_ignore_ascii_case(&server.host)
     }) {
-        *existing = server;
+        *existing = server.clone();
     } else {
-        servers.push(server);
+        servers.push(server.clone());
     }
     write_server_configs(&root, &servers).map_err(to_command_error)?;
+    if !server.monitored {
+        if let Some(task) = state.tasks.lock().await.remove(&server.id) {
+            task.abort();
+        }
+        state.statuses.lock().await.insert(server.id.clone(), "stopped".to_owned());
+    }
+    let _ = app.emit("servers.changed", &servers);
     Ok(servers)
 }
 
 #[tauri::command]
-async fn delete_server(server_id: String) -> Result<Vec<ServerConfig>, String> {
+async fn delete_server(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    server_id: String,
+) -> Result<Vec<ServerConfig>, String> {
     let (root, mut servers) = writable_servers()?;
     servers.retain(|server| !server.id.eq_ignore_ascii_case(&server_id));
     write_server_configs(&root, &servers).map_err(to_command_error)?;
+    if let Some(task) = state.tasks.lock().await.remove(&server_id) {
+        task.abort();
+    }
+    state.snapshots.lock().await.remove(&server_id);
+    state.statuses.lock().await.remove(&server_id);
+    state.errors.lock().await.remove(&server_id);
+    let _ = app.emit("servers.changed", &servers);
     Ok(servers)
 }
 
