@@ -19,6 +19,11 @@
 - Windows Release 桌面进程改为 GUI subsystem，SSH/askpass 子进程使用无控制台启动，避免 Preview 启动时额外弹出终端。
 - 主浮窗增加可靠的拖拽与关闭按钮；管理页增加 SSH 配置诊断/重新加载和免密 SSH（密钥或 ssh-agent）选项。
 
+#### 修复
+
+- 修复 `~/.ssh/config` 别名未作为候选服务器加载的问题：优化配置解析支持 `Host = alias`、引号与多主机名模式，修复 `~` 包含路径展开，并使用 `ssh -G` 自动解析候选主机的用户名与端口。
+- 增强管理窗口的候选发现体验：提供可点击预填的别名标签、候选列表单键“+ 加入监控”以及“全部导入”功能。
+
 #### 未完成
 
 - 主机指纹确认/变更阻断的完整界面、仅本次会话密码通道、按分钟加权聚合、完整服务器编辑、Agent 注入控制和 macOS 实机验收仍需在 Preview 合并前完成。
@@ -39,6 +44,11 @@
 - The Preview is unsigned and for internal testing; macOS transparency, tray, edge docking, and sleep/resume remain unverified on physical hardware.
 - The Windows Release desktop process now uses the GUI subsystem, and SSH/askpass children use no-console creation flags so the Preview does not open an extra terminal on startup.
 - Added reliable main-window dragging and close controls, SSH config diagnostics/reload, and an explicit passwordless SSH (key or ssh-agent) option in Manage.
+
+#### Fixed
+
+- Fixed SSH alias candidate discovery from `~/.ssh/config`: corrected `~` include expansion, supported `Host = alias`, quotes, and multi-alias lines, and used `ssh -G` to automatically resolve target usernames, ports, and hostnames.
+- Enhanced SSH candidate management UI: added interactive alias badges for instant form pre-filling, single-click "+ Add to monitor" candidate cards, and an "Import all" action matching the legacy ServerPulse experience.
 
 #### Remaining
 

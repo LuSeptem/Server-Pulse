@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
-import type { HistoryEntry, MetricSnapshot, ServerConfig } from '../types'
+import type { HistoryEntry, MetricSnapshot, ServerConfig, SshConfigInfo } from '../types'
 
 interface SnapshotEvent {
   serverId: string
@@ -30,6 +30,7 @@ interface MonitorState {
   dataRoot: string
   sshConfigPath: string
   sshConfigAliases: string[]
+  sshConfigCandidates: ServerConfig[]
   sshConfigError: string
   initialized: boolean
 }
@@ -47,11 +48,21 @@ export const useMonitorStore = defineStore('monitor', {
     dataRoot: '',
     sshConfigPath: '',
     sshConfigAliases: [],
+    sshConfigCandidates: [],
     sshConfigError: '',
     initialized: false,
   }),
   getters: {
     onlineCount: (state) => Object.values(state.statuses).filter((value) => value === 'online').length,
+    unaddedCandidates: (state) =>
+      state.sshConfigCandidates.filter(
+        (candidate) =>
+          !state.servers.some(
+            (server) =>
+              server.id.toLowerCase() === candidate.id.toLowerCase() ||
+              server.host.toLowerCase() === candidate.host.toLowerCase(),
+          ),
+      ),
   },
   actions: {
     async init() {
@@ -106,12 +117,27 @@ export const useMonitorStore = defineStore('monitor', {
     },
     async refreshSshConfig() {
       try {
-        const info = await invoke<{ path?: string | null; aliases: string[]; error?: string | null }>('inspect_ssh_config')
+        const info = await invoke<SshConfigInfo>('inspect_ssh_config')
         this.sshConfigPath = info.path ?? ''
-        this.sshConfigAliases = info.aliases
+        this.sshConfigAliases = info.aliases ?? []
+        this.sshConfigCandidates = info.candidates ?? []
         this.sshConfigError = info.error ?? ''
       } catch (error) {
         this.sshConfigError = error instanceof Error ? error.message : String(error)
+      }
+    },
+    async importCandidate(candidate: ServerConfig, startNow = true) {
+      const server: ServerConfig = {
+        ...candidate,
+        monitored: startNow,
+        passwordless: true,
+      }
+      await this.saveServer(server)
+    },
+    async importAllCandidates(startNow = true) {
+      const unadded = this.unaddedCandidates
+      for (const candidate of unadded) {
+        await this.importCandidate(candidate, startNow)
       }
     },
     async saveServer(server: ServerConfig, password = '', savePassword = false) {

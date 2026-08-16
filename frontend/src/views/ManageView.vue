@@ -5,7 +5,7 @@ import { useMonitorStore } from '../stores/monitor'
 import type { ServerConfig } from '../types'
 
 const store = useMonitorStore()
-const showForm = ref(true)
+const showForm = ref(false)
 const formError = ref('')
 const savedNotice = ref('')
 const form = reactive({
@@ -31,6 +31,42 @@ function resetForm() {
   form.password = ''
   form.savePassword = false
   formError.value = ''
+}
+
+function fillFormWithCandidate(candidate: ServerConfig) {
+  form.label = candidate.label
+  form.host = candidate.host
+  form.user = candidate.user ?? ''
+  form.port = candidate.port ? String(candidate.port) : ''
+  form.monitored = true
+  form.passwordless = candidate.passwordless
+  form.password = ''
+  form.savePassword = false
+  formError.value = ''
+  showForm.value = true
+}
+
+async function importCandidate(candidate: ServerConfig) {
+  formError.value = ''
+  savedNotice.value = ''
+  try {
+    await store.importCandidate(candidate, true)
+    savedNotice.value = `Imported ${candidate.label} and started monitoring.`
+  } catch (error) {
+    formError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function importAllCandidates() {
+  formError.value = ''
+  savedNotice.value = ''
+  const count = store.unaddedCandidates.length
+  try {
+    await store.importAllCandidates(true)
+    savedNotice.value = `Imported ${count} candidate(s) from SSH config.`
+  } catch (error) {
+    formError.value = error instanceof Error ? error.message : String(error)
+  }
 }
 
 async function submit() {
@@ -104,12 +140,44 @@ async function remove(server: ServerConfig) {
     </header>
 
     <p class="muted">Existing OpenSSH aliases are detected from your user SSH config. Add a hostname or alias here to save it to Server Pulse.</p>
-    <p class="ssh-config-info">
-      <span>SSH config: {{ store.sshConfigPath || 'not found' }}</span>
-      <span v-if="store.sshConfigAliases.length">Detected aliases: {{ store.sshConfigAliases.join(', ') }}</span>
-      <span v-else-if="store.sshConfigError" class="error-text">Read error: {{ store.sshConfigError }}</span>
-      <span v-else>No concrete Host aliases detected.</span>
-    </p>
+    <div class="ssh-config-info">
+      <div>SSH config: {{ store.sshConfigPath || 'not found' }}</div>
+      <div v-if="store.sshConfigAliases.length">
+        Detected aliases:
+        <button
+          v-for="alias in store.sshConfigAliases"
+          :key="alias"
+          class="alias-badge"
+          type="button"
+          :title="'Click to populate ' + alias"
+          @click="fillFormWithCandidate(store.sshConfigCandidates.find(c => c.host === alias) ?? { id: alias, label: alias, host: alias, monitored: true, passwordless: true })"
+        >
+          {{ alias }}
+        </button>
+      </div>
+      <div v-else-if="store.sshConfigError" class="error-text">Read error: {{ store.sshConfigError }}</div>
+      <div v-else>No concrete Host aliases detected.</div>
+    </div>
+
+    <!-- Candidate discovery section matching legacy ServerPulse candidate discovery -->
+    <section v-if="store.unaddedCandidates.length" class="candidate-section">
+      <div class="candidate-header">
+        <strong>Discovered from SSH config ({{ store.unaddedCandidates.length }} available)</strong>
+        <button type="button" @click="importAllCandidates">Import all ({{ store.unaddedCandidates.length }})</button>
+      </div>
+      <div class="candidate-list">
+        <div v-for="candidate in store.unaddedCandidates" :key="candidate.id" class="candidate-item">
+          <div>
+            <strong>{{ candidate.label }}</strong>
+            <span class="muted"> · {{ candidate.host }}<template v-if="candidate.user"> · {{ candidate.user }}</template><template v-if="candidate.port"> :{{ candidate.port }}</template></span>
+          </div>
+          <div class="candidate-actions">
+            <button type="button" @click="importCandidate(candidate)">+ Add to monitor</button>
+            <button type="button" @click="fillFormWithCandidate(candidate)">Edit</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <form v-if="showForm" class="editor-card" @submit.prevent="submit">
       <h2>Add SSH server</h2>

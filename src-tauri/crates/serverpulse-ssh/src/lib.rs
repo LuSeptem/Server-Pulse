@@ -39,6 +39,15 @@ pub struct CommandOutput {
     pub stderr: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshResolvedTarget {
+    pub alias: String,
+    pub host_name: String,
+    pub port: u16,
+    pub user: String,
+}
+
 #[async_trait]
 pub trait SshTransport: Send + Sync {
     async fn execute_short_command(
@@ -158,7 +167,7 @@ impl SystemOpenSsh {
         command.spawn().map_err(ServerPulseError::Io)
     }
 
-    pub async fn resolve_config(&self, alias: &str) -> Result<SshTarget, ServerPulseError> {
+    pub async fn resolve_config(&self, alias: &str) -> Result<SshResolvedTarget, ServerPulseError> {
         let mut command = Command::new(&self.executable);
         command.args(["-G", "--", alias]);
         command.stdout(Stdio::piped());
@@ -175,21 +184,34 @@ impl SystemOpenSsh {
         }
         let mut user = None;
         let mut hostname = alias.to_owned();
-        let mut port = None;
+        let mut port = 22u16;
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let mut parts = line.split_whitespace();
             match parts.next() {
                 Some("user") => user = parts.next().map(str::to_owned),
-                Some("hostname") => hostname = parts.next().unwrap_or(alias).to_owned(),
-                Some("port") => port = parts.next().and_then(|value| value.parse().ok()),
+                Some("hostname") => {
+                    if let Some(h) = parts.next() {
+                        hostname = h.to_owned();
+                    }
+                }
+                Some("port") => {
+                    if let Some(p) = parts.next().and_then(|value| value.parse().ok()) {
+                        port = p;
+                    }
+                }
                 _ => {}
             }
         }
-        Ok(SshTarget {
-            alias: hostname,
-            user,
+        let user = user.unwrap_or_else(|| {
+            std::env::var("USERNAME")
+                .or_else(|_| std::env::var("USER"))
+                .unwrap_or_else(|_| "default".to_owned())
+        });
+        Ok(SshResolvedTarget {
+            alias: alias.to_owned(),
+            host_name: hostname,
             port,
-            credential_identity: None,
+            user,
         })
     }
 }
@@ -231,20 +253,30 @@ fn read_config_file(
         if line.is_empty() {
             continue;
         }
-        let mut fields = line.split_whitespace();
-        let Some(directive) = fields.next() else {
-            continue;
+        let (directive, rest) = if let Some((dir, args)) = line.split_once('=') {
+            let dir = dir.trim();
+            if dir.contains(char::is_whitespace) {
+                line.split_once(char::is_whitespace).unwrap_or((line, ""))
+            } else {
+                (dir, args)
+            }
+        } else {
+            line.split_once(char::is_whitespace).unwrap_or((line, ""))
         };
+
         if directive.eq_ignore_ascii_case("host") {
-            for pattern in fields {
-                let pattern = pattern.trim_matches(['"', '\'']);
-                if is_literal_alias(pattern) && !aliases.iter().any(|value| value == pattern) {
+            for pattern in rest.split(|c: char| c.is_whitespace() || c == ',') {
+                let pattern = pattern.trim_matches(['"', '\'']).trim();
+                if is_literal_alias(pattern) && !aliases.iter().any(|value| value.eq_ignore_ascii_case(pattern)) {
                     aliases.push(pattern.to_owned());
                 }
             }
         } else if directive.eq_ignore_ascii_case("include") {
-            for include in fields {
-                let include = include.trim_matches(['"', '\'']);
+            for include in rest.split(|c: char| c.is_whitespace() || c == ',') {
+                let include = include.trim_matches(['"', '\'']).trim();
+                if include.is_empty() || include == "=" {
+                    continue;
+                }
                 for candidate in expand_include_path(include, base) {
                     if candidate.is_file() {
                         read_config_file(&candidate, visited, aliases)?;
@@ -275,30 +307,37 @@ fn decode_config_text(bytes: &[u8]) -> String {
 }
 
 fn expand_include_path(value: &str, base: &Path) -> Vec<PathBuf> {
-    let value = if value == "~" {
-        default_config_path()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| PathBuf::from(value))
-    } else if let Some(rest) = value.strip_prefix("~/") {
-        default_config_path()
-            .and_then(|path| path.parent().map(|parent| parent.join(rest)))
-            .unwrap_or_else(|| PathBuf::from(value))
+    let mut resolved_str = value.to_owned();
+    if cfg!(windows) && resolved_str.contains('%') {
+        for (key, val) in std::env::vars() {
+            let placeholder = format!("%{}%", key);
+            if resolved_str.contains(&placeholder) {
+                resolved_str = resolved_str.replace(&placeholder, &val);
+            }
+        }
+    }
+
+    let home = home_directory();
+    let value_path = if resolved_str == "~" {
+        home.unwrap_or_else(|| PathBuf::from(&resolved_str))
+    } else if let Some(rest) = resolved_str.strip_prefix("~/").or_else(|| resolved_str.strip_prefix("~\\")) {
+        home.map(|h| h.join(rest)).unwrap_or_else(|| PathBuf::from(&resolved_str))
     } else {
-        let path = PathBuf::from(value);
-        if path.is_absolute() {
-            path
+        let p = PathBuf::from(&resolved_str);
+        if p.is_absolute() {
+            p
         } else {
-            base.join(path)
+            base.join(p)
         }
     };
 
-    if !value.to_string_lossy().contains(['*', '?']) {
-        return vec![value];
+    if !value_path.to_string_lossy().contains(['*', '?']) {
+        return vec![value_path];
     }
-    let Some(parent) = value.parent() else {
+    let Some(parent) = value_path.parent() else {
         return Vec::new();
     };
-    let Some(file_pattern) = value.file_name().and_then(|name| name.to_str()) else {
+    let Some(file_pattern) = value_path.file_name().and_then(|name| name.to_str()) else {
         return Vec::new();
     };
     let Ok(entries) = fs::read_dir(parent) else {
@@ -433,11 +472,11 @@ mod tests {
         let path = root.join("config");
         fs::write(
             &path,
-            "Host *\n  User default\nHost gpu-01 gpu-02\nHost !excluded *-backup\n",
+            "Host *\n  User default\nHost gpu-01 gpu-02\nHost = gpu-03\nHost \"gpu-04\", 'gpu-05'\nHost !excluded *-backup\n",
         )
         .expect("config file");
         read_config_file(&path, &mut visited, &mut aliases).expect("read config");
-        assert_eq!(aliases, vec!["gpu-01", "gpu-02"]);
+        assert_eq!(aliases, vec!["gpu-01", "gpu-02", "gpu-03", "gpu-04", "gpu-05"]);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -456,5 +495,14 @@ mod tests {
     fn decodes_utf16_and_bom_config_text() {
         assert_eq!(decode_config_text(&[0xff, 0xfe, b'H', 0, b'i', 0]), "Hi");
         assert_eq!(decode_config_text(&[0xef, 0xbb, 0xbf, b'H', b'i']), "Hi");
+    }
+
+    #[test]
+    fn resolves_home_tilde_in_include_path() {
+        let home = home_directory().unwrap_or_else(|| PathBuf::from("."));
+        let base = home.join(".ssh");
+        let expanded = expand_include_path("~/.ssh/config", &base);
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0], home.join(".ssh").join("config"));
     }
 }

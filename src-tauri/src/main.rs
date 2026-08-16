@@ -64,6 +64,7 @@ struct HistoryResponse {
 struct SshConfigInfo {
     path: Option<String>,
     aliases: Vec<String>,
+    candidates: Vec<ServerConfig>,
     error: Option<String>,
 }
 
@@ -86,7 +87,7 @@ fn discovered_servers() -> Vec<ServerConfig> {
             host: alias,
             user: None,
             port: None,
-            monitored: true,
+            monitored: false,
             passwordless: true,
         })
         .collect()
@@ -315,19 +316,43 @@ async fn list_servers() -> Result<Vec<ServerConfig>, String> {
 
 #[tauri::command]
 async fn inspect_ssh_config() -> Result<SshConfigInfo, String> {
+    let ssh = SystemOpenSsh::default();
     let path = SystemOpenSsh::config_path().map(|path| path.to_string_lossy().into_owned());
-    match SystemOpenSsh::default().discover_config_aliases() {
-        Ok(aliases) => Ok(SshConfigInfo {
-            path,
-            aliases,
-            error: None,
-        }),
-        Err(error) => Ok(SshConfigInfo {
-            path,
-            aliases: Vec::new(),
-            error: Some(to_command_error(error)),
-        }),
+    let aliases = match ssh.discover_config_aliases() {
+        Ok(aliases) => aliases,
+        Err(error) => {
+            return Ok(SshConfigInfo {
+                path,
+                aliases: Vec::new(),
+                candidates: Vec::new(),
+                error: Some(to_command_error(error)),
+            });
+        }
+    };
+
+    let mut candidates = Vec::new();
+    for alias in &aliases {
+        let (user, port) = match ssh.resolve_config(alias).await {
+            Ok(resolved) => (Some(resolved.user), Some(resolved.port)),
+            Err(_) => (None, None),
+        };
+        candidates.push(ServerConfig {
+            id: alias.clone(),
+            label: alias.clone(),
+            host: alias.clone(),
+            user,
+            port,
+            monitored: false,
+            passwordless: true,
+        });
     }
+
+    Ok(SshConfigInfo {
+        path,
+        aliases,
+        candidates,
+        error: None,
+    })
 }
 
 #[tauri::command]

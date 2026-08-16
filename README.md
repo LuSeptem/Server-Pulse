@@ -92,10 +92,10 @@ Open **Manage** beside the online count in the main window, or choose **SSH serv
 Candidates are merged from:
 
 1. the existing data-root `servers.json` (including the legacy Windows `Servers` / `SshTarget` / `HostName` schema);
-2. concrete, non-wildcard `Host` entries in the current Windows user's `~/.ssh/config` and simple `Include` files;
+2. concrete, non-wildcard `Host` entries in the current user's `~/.ssh/config` and `Include` files, automatically resolved via OpenSSH `ssh -G`;
 3. servers added manually in the manager.
 
-The manager now has an **Add server** form and a **Reload** action. It accepts an SSH alias or hostname, optional user/port, and lets you choose **Passwordless SSH (key or ssh-agent)** or an explicitly saved password in Windows Credential Manager. Passwords are never written to `servers.json`. The page shows the exact config path, discovered aliases, and any read error.
+The manager provides an **Add server** form, a **Reload** action, interactive discovered alias badges, and a **Discovered from SSH config** candidates section with one-click **+ Add to monitor** and **Import all**. Discovered aliases automatically resolve default hostnames, ports, and usernames. Passwords are never written to `servers.json`. The page shows the exact config path, discovered aliases, candidates, and any read error.
 
 The **Monitor** checkbox controls whether a server produces a live card. A server that is not authenticated remains paused and does not block other servers.
 

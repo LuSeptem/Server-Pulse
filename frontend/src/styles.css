@@ -93,8 +93,18 @@ input { border: 1px solid #3b4840; border-radius: 7px; padding: 8px; color: #e7e
 .danger-button { color: #ffb0a8; background: #321c1b; }
 .history-chart { height: 360px; width: 100%; }
 .empty-state { display: grid; place-items: center; min-height: 180px; text-align: center; color: #9eaaa2; }
+.alias-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 4px; background: #233026; color: #a4e5bb; border: 1px solid #334a3b; cursor: pointer; font-size: 11px; margin: 2px 4px 2px 0; }
+.alias-badge:hover { background: #2f4335; border-color: #5bb37d; }
+.candidate-section { margin: 12px 0 16px; padding: 12px; border: 1px dashed #3a4b3f; border-radius: 8px; background: rgba(22, 31, 25, 0.45); }
+.candidate-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.candidate-header strong { font-size: 12px; color: #a8d5b8; }
+.candidate-list { display: grid; gap: 6px; }
+.candidate-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #1b251e; border: 1px solid #28372c; border-radius: 6px; font-size: 12px; }
+.candidate-actions { display: flex; gap: 6px; }
+.candidate-actions button { padding: 3px 8px; font-size: 11px; }
 @media (max-width: 600px) {
   .app-shell { padding: 8px; }
   .widget-window, .page-window { padding: 12px; }
   .form-grid { grid-template-columns: 1fr; }
+  .candidate-item { flex-direction: column; align-items: flex-start; gap: 6px; }
 }

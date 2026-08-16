@@ -67,3 +67,10 @@ export interface HistoryEntry {
   Version: number
   Record: Record<string, unknown>
 }
+
+export interface SshConfigInfo {
+  path: string | null
+  aliases: string[]
+  candidates: ServerConfig[]
+  error: string | null
+}
