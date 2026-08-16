@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { MetricSnapshot, ServerConfig } from '../types'
+import type { GpuMetric, MetricSnapshot, ServerConfig } from '../types'
 
 defineProps<{
   server: ServerConfig
@@ -17,6 +17,13 @@ defineEmits<{
 function formatGpuName(name: string) {
   if (!name) return 'GPU'
   return name.replace(/^NVIDIA\s+GeForce\s+/i, 'NVIDIA ').replace(/^NVIDIA\s+/i, 'NVIDIA ')
+}
+
+function getVramPercent(gpu: GpuMetric) {
+  if (gpu.memoryUsedMib != null && gpu.memoryTotalMib && gpu.memoryTotalMib > 0) {
+    return Math.min(Math.max((gpu.memoryUsedMib / gpu.memoryTotalMib) * 100, 0), 100)
+  }
+  return 0
 }
 </script>
 
@@ -49,23 +56,29 @@ function formatGpuName(name: string) {
       </div>
     </div>
 
-    <!-- GPU Mini Cards Grid -->
+    <!-- GPU Mini Cards Grid (Multi-column responsive) -->
     <div v-if="snapshot && snapshot.gpus && snapshot.gpus.length" class="gpu-cards-grid">
       <div v-for="gpu in snapshot.gpus" :key="gpu.index" class="gpu-mini-card">
         <div class="gpu-card-header">
-          <span class="gpu-name-tag">GPU {{ gpu.index }} · {{ formatGpuName(gpu.name) }}</span>
+          <span class="gpu-name-tag" :title="gpu.name">GPU {{ gpu.index }} · {{ formatGpuName(gpu.name) }}</span>
           <span v-if="gpu.temperatureC != null" class="gpu-temp-tag" :class="{ 'temp-warm': gpu.temperatureC >= 80 }">
             {{ gpu.temperatureC }}°C
           </span>
         </div>
 
         <div class="gpu-card-util">
-          <span class="gpu-util-value">{{ gpu.utilization != null ? gpu.utilization.toFixed(0) + '%' : '—' }}</span>
+          <span
+            class="gpu-util-value"
+            :class="{ 'util-high-text': gpu.utilization != null && gpu.utilization >= 80 }"
+          >
+            {{ gpu.utilization != null ? gpu.utilization.toFixed(0) + '%' : '—' }}
+          </span>
         </div>
 
         <div class="gpu-bar-track">
           <div
             class="gpu-bar-fill util-bar"
+            :class="{ 'is-high': gpu.utilization != null && gpu.utilization >= 80 }"
             :style="{ width: (gpu.utilization != null ? Math.min(Math.max(gpu.utilization, 0), 100) : 0) + '%' }"
           />
         </div>
@@ -73,16 +86,15 @@ function formatGpuName(name: string) {
         <div class="gpu-card-vram-row">
           <span class="vram-label">显存</span>
           <span class="vram-val">
-            {{ gpu.memoryUsedMib != null ? (gpu.memoryUsedMib / 1024).toFixed(1) : '—' }} GB / {{ gpu.memoryTotalMib != null ? (gpu.memoryTotalMib / 1024).toFixed(1) : '—' }} GB
+            {{ gpu.memoryUsedMib != null ? (gpu.memoryUsedMib / 1024).toFixed(1) : '—' }} / {{ gpu.memoryTotalMib != null ? (gpu.memoryTotalMib / 1024).toFixed(1) : '—' }} GB
           </span>
         </div>
 
         <div class="gpu-bar-track">
           <div
             class="gpu-bar-fill vram-bar"
-            :style="{
-              width: (gpu.memoryUsedMib != null && gpu.memoryTotalMib ? Math.min(Math.max((gpu.memoryUsedMib / gpu.memoryTotalMib) * 100, 0), 100) : 0) + '%'
-            }"
+            :class="{ 'is-high': getVramPercent(gpu) >= 80 }"
+            :style="{ width: getVramPercent(gpu) + '%' }"
           />
         </div>
       </div>
