@@ -170,6 +170,13 @@ export const useMonitorStore = defineStore('monitor', {
         await this.stop(server.id)
       }
     },
+    async toggleServerMonitored(server: ServerConfig) {
+      const updated: ServerConfig = {
+        ...server,
+        monitored: !server.monitored,
+      }
+      await this.saveServer(updated)
+    },
     async deleteServer(serverId: string) {
       await this.stop(serverId).catch(() => undefined)
       this.servers = await invoke<ServerConfig[]>('delete_server', { serverId })

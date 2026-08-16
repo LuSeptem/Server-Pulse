@@ -62,16 +62,19 @@ pub trait SshTransport: Send + Sync {
         script: &str,
     ) -> Result<MetricSnapshot, ServerPulseError> {
         let output = self.execute_short_command(target, script).await?;
-        if output.status != Some(0) {
-            return Err(ServerPulseError::Io(std::io::Error::other(
-                if output.stderr.is_empty() {
-                    "ssh exited with a failure status".to_owned()
-                } else {
-                    output.stderr
-                },
-            )));
+        if output.status == Some(0) {
+            return parse_metric_output(&output.stdout);
         }
-        parse_metric_output(&output.stdout)
+        if let Ok(snapshot) = parse_metric_output(&output.stdout) {
+            return Ok(snapshot);
+        }
+        Err(ServerPulseError::Io(std::io::Error::other(
+            if output.stderr.is_empty() {
+                format!("ssh exited with status {:?}", output.status)
+            } else {
+                output.stderr
+            },
+        )))
     }
 }
 
@@ -112,12 +115,15 @@ impl SystemOpenSsh {
     pub fn build_arguments(&self, target: &SshTarget) -> Vec<String> {
         let batch_mode = if target.credential_identity.is_some() { "no" } else { "yes" };
         let mut args = vec![
+            "-T".to_owned(),
             "-o".to_owned(),
             format!("BatchMode={batch_mode}"),
             "-o".to_owned(),
             format!("ConnectTimeout={}", self.timeout.as_secs().max(1)),
             "-o".to_owned(),
             "StrictHostKeyChecking=yes".to_owned(),
+            "-o".to_owned(),
+            "NumberOfPasswordPrompts=1".to_owned(),
         ];
         if let Some(port) = target.port {
             args.push("-p".to_owned());
@@ -131,6 +137,8 @@ impl SystemOpenSsh {
         } else {
             args.push(target.alias.clone());
         }
+        args.push("sh".to_owned());
+        args.push("-s".to_owned());
         args
     }
 
@@ -401,9 +409,12 @@ impl SshTransport for SystemOpenSsh {
     ) -> Result<CommandOutput, ServerPulseError> {
         let mut child = self.spawn_command(target).await?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(script.replace("\r\n", "\n").as_bytes()).await?;
+            let clean = script.replace("\r\n", "\n").replace('\r', "");
+            stdin.write_all(clean.as_bytes()).await?;
+            stdin.flush().await?;
+            drop(stdin);
         }
-        let output = timeout(self.timeout + Duration::from_secs(2), child.wait_with_output())
+        let output = timeout(self.timeout + Duration::from_secs(4), child.wait_with_output())
             .await
             .map_err(|_| ServerPulseError::Timeout("SSH command timed out".to_owned()))?
             .map_err(ServerPulseError::Io)?;
@@ -431,8 +442,9 @@ mod tests {
         assert_eq!(
             ssh.build_arguments(&target),
             vec![
-                "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-                "-o", "StrictHostKeyChecking=yes", "-p", "2222", "--", "alice@3090"
+                "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                "-o", "StrictHostKeyChecking=yes", "-o", "NumberOfPasswordPrompts=1",
+                "-p", "2222", "--", "alice@3090", "sh", "-s"
             ]
         );
     }

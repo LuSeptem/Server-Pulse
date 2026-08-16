@@ -123,6 +123,15 @@ async function reloadServers() {
   }
 }
 
+async function toggleMonitored(server: ServerConfig) {
+  formError.value = ''
+  try {
+    await store.toggleServerMonitored(server)
+  } catch (error) {
+    formError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
 async function remove(server: ServerConfig) {
   if (!window.confirm(`Remove ${server.label}?`)) return
   try {
@@ -237,9 +246,18 @@ async function remove(server: ServerConfig) {
 
     <div v-if="store.servers.length" class="manage-list">
       <article v-for="server in store.servers" :key="server.id" class="manage-row">
-        <div>
-          <strong>{{ server.label }}</strong>
-          <span class="muted">{{ server.host }} · {{ server.user ?? 'SSH config user' }}<template v-if="server.port"> · {{ server.port }}</template></span>
+        <div class="manage-main">
+          <label class="monitor-checkbox" :title="server.monitored ? 'Currently monitored (click to pause)' : 'Paused (click to monitor)'">
+            <input
+              type="checkbox"
+              :checked="server.monitored"
+              @change="toggleMonitored(server)"
+            />
+          </label>
+          <div class="server-meta">
+            <strong>{{ server.label }}</strong>
+            <span class="muted">{{ server.host }} · {{ server.user ?? 'SSH config user' }}<template v-if="server.port"> · {{ server.port }}</template></span>
+          </div>
         </div>
         <div class="manage-actions">
           <span class="auth-mode">{{ server.passwordless ? 'Passwordless' : 'Saved password' }}</span>
