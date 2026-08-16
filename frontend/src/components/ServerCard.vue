@@ -13,6 +13,11 @@ defineEmits<{
   stop: []
   recheck: []
 }>()
+
+function formatGpuName(name: string) {
+  if (!name) return 'GPU'
+  return name.replace(/^NVIDIA\s+GeForce\s+/i, 'NVIDIA ').replace(/^NVIDIA\s+/i, 'NVIDIA ')
+}
 </script>
 
 <template>
@@ -44,14 +49,42 @@ defineEmits<{
       </div>
     </div>
 
-    <!-- Detailed GPU breakdown if GPUs are present -->
-    <div v-if="snapshot && snapshot.gpus && snapshot.gpus.length" class="gpu-summary-list">
-      <div v-for="gpu in snapshot.gpus" :key="gpu.index" class="gpu-summary-row">
-        <span class="gpu-label">GPU {{ gpu.index }}: {{ gpu.name }}</span>
-        <span class="gpu-usage">
-          {{ gpu.utilization != null ? gpu.utilization.toFixed(0) + '%' : '—' }} · 
-          {{ gpu.memoryUsedMib != null ? (gpu.memoryUsedMib / 1024).toFixed(1) : '—' }}/{{ gpu.memoryTotalMib != null ? (gpu.memoryTotalMib / 1024).toFixed(0) : '—' }} GB
-        </span>
+    <!-- GPU Mini Cards Grid -->
+    <div v-if="snapshot && snapshot.gpus && snapshot.gpus.length" class="gpu-cards-grid">
+      <div v-for="gpu in snapshot.gpus" :key="gpu.index" class="gpu-mini-card">
+        <div class="gpu-card-header">
+          <span class="gpu-name-tag">GPU {{ gpu.index }} · {{ formatGpuName(gpu.name) }}</span>
+          <span v-if="gpu.temperatureC != null" class="gpu-temp-tag" :class="{ 'temp-warm': gpu.temperatureC >= 80 }">
+            {{ gpu.temperatureC }}°C
+          </span>
+        </div>
+
+        <div class="gpu-card-util">
+          <span class="gpu-util-value">{{ gpu.utilization != null ? gpu.utilization.toFixed(0) + '%' : '—' }}</span>
+        </div>
+
+        <div class="gpu-bar-track">
+          <div
+            class="gpu-bar-fill util-bar"
+            :style="{ width: (gpu.utilization != null ? Math.min(Math.max(gpu.utilization, 0), 100) : 0) + '%' }"
+          />
+        </div>
+
+        <div class="gpu-card-vram-row">
+          <span class="vram-label">显存</span>
+          <span class="vram-val">
+            {{ gpu.memoryUsedMib != null ? (gpu.memoryUsedMib / 1024).toFixed(1) : '—' }} GB / {{ gpu.memoryTotalMib != null ? (gpu.memoryTotalMib / 1024).toFixed(1) : '—' }} GB
+          </span>
+        </div>
+
+        <div class="gpu-bar-track">
+          <div
+            class="gpu-bar-fill vram-bar"
+            :style="{
+              width: (gpu.memoryUsedMib != null && gpu.memoryTotalMib ? Math.min(Math.max((gpu.memoryUsedMib / gpu.memoryTotalMib) * 100, 0), 100) : 0) + '%'
+            }"
+          />
+        </div>
       </div>
     </div>
 

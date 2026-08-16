@@ -37,6 +37,7 @@
 - 修复管理界面（Manage）与历史界面（History）被主浮窗遮挡的问题：由于主浮窗设置了 `alwaysOnTop: true`，在创建与唤起管理及历史窗口时为其同步配置 `always_on_top(true)`、`set_focus()` 与居中呈现，确保管理与历史窗口始终位于最上层。
 - 重构历史界面（History）：将历史数据全面改为**分服务器（Per-Server）结构化展示**与**分 GPU（Per-GPU）独立图表呈现**。支持日期快速翻页与今日跳转、多服务器过滤药丸胶囊（Filter Pills）、服务器峰值/均值指标徽章、CPU/内存时序图以及每块 GPU 的核心利用率（%）和显存占用（GB）独立折线图表与缩放交互，保持与主界面一致的深色黑曜石设计语言。
 - 主浮窗按需仅展示已勾选监控的服务器：在主浮窗（Main Window）中仅渲染 `monitored === true` 的服务器卡片，未勾选的服务器直接不占位显示；当管理界面切换勾选状态时，通过 `servers.changed` 事件实时跨窗口同步刷新主浮窗列表与在线统计。
+- 主浮窗服务器卡片增加独立 GPU 迷你卡片（GPU Mini-Cards）：重构主界面每台服务器的 GPU 呈现形式，为每块显卡设计独立的圆角卡片，包含显卡型号标签、温度徽标（如 `67°C`）、大号核心利用率百分比（如 `93%`）与红色平滑进度条、显存占用数值（如 `显存 12.6 GB / 24.0 GB`）与青色显存进度条。
 
 #### 未完成
 
@@ -77,6 +78,7 @@
 - Fixed window z-order hierarchy so Manage and History windows stay in front of the main widget: configured `always_on_top(true)` and focus targeting on secondary windows so they are not obscured by the floating main window.
 - Redesigned History view with per-server segmentation and per-GPU breakdown charts: added server filter pills, date navigation controls, peak/avg summary chips, CPU/RAM timeline charts, and dedicated per-GPU core utilization (%) and VRAM memory (GB) series with pan/zoom interactions and cohesive dark obsidian styling.
 - Display only checked/monitored servers on the main floating dashboard: filtered server cards by `monitored === true` and added cross-window `servers.changed` broadcast so changes in Manage reflect immediately on the main dashboard without showing unselected servers.
+- Added dedicated GPU mini-cards to main dashboard server cards: rendered each GPU as a styled rounded card with model name, temperature badge, high-contrast utilization percentage with coral progress bar, and VRAM memory display with cyan progress bar matching modern hardware monitor aesthetics.
 
 #### Remaining
 
