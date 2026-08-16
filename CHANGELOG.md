@@ -39,7 +39,7 @@
 - 主浮窗按需仅展示已勾选监控的服务器：在主浮窗（Main Window）中仅渲染 `monitored === true` 的服务器卡片，未勾选的服务器直接不占位显示；当管理界面切换勾选状态时，通过 `servers.changed` 事件实时跨窗口同步刷新主浮窗列表与在线统计。
 - 主浮窗服务器卡片增加独立 GPU 迷你卡片（GPU Mini-Cards）：重构主界面每台服务器的 GPU 呈现形式，为每块显卡设计独立的圆角卡片，包含显卡型号标签、温度徽标（如 `67°C`）、大号核心利用率百分比与双进度条。
 - GPU 迷你卡片支持动态阈值色彩与自适应多列并排布局：
-  - 动态阈值变色：GPU 利用率默认使用绿色（`#4ade80`），负荷高于 80% 时自动切换为珊瑚红警示（`#f87171`）；显存进度条默认使用天青色（`#38bdf8`），高于 80% 时同步变红；
+  - 动态阈值变色：GPU 利用率默认使用绿色（`#4ade80`），负荷高于 80% 时自动切换为珊瑚红警示（`#f87171`）；显存进度条默认使用天青色（`#38bdf8`），高于 80% 时同步变红；数字文字保持恒定纯白色（`#ffffff`），保持统一与高辨识度；
   - 自适应多列布局：采用 CSS 响应式网格布局，在默认宽度及自由拉伸窗口时支持每行并排展示 2 张（或更多）显卡迷你卡片，大幅缩减竖向高度占用。
 
 #### 未完成
@@ -81,7 +81,7 @@
 - Fixed window z-order hierarchy so Manage and History windows stay in front of the main widget: configured `always_on_top(true)` and focus targeting on secondary windows so they are not obscured by the floating main window.
 - Redesigned History view with per-server segmentation and per-GPU breakdown charts: added server filter pills, date navigation controls, peak/avg summary chips, CPU/RAM timeline charts, and dedicated per-GPU core utilization (%) and VRAM memory (GB) series with pan/zoom interactions and cohesive dark obsidian styling.
 - Display only checked/monitored servers on the main floating dashboard: filtered server cards by `monitored === true` and added cross-window `servers.changed` broadcast so changes in Manage reflect immediately on the main dashboard without showing unselected servers.
-- Added responsive multi-column layout and dynamic utilization threshold colors for GPU mini-cards: rendered GPU cards in 2+ columns responsive to window resize, using green default for GPU core utilization with automatic coral red transition when exceeding 80%, and cyan for VRAM with red overflow alerts.
+- Added responsive multi-column layout and dynamic utilization threshold colors for GPU mini-cards: rendered GPU cards in 2+ columns responsive to window resize, using green default for GPU core utilization with automatic coral red transition when exceeding 80%, cyan for VRAM, and clean white numbers consistently.
 
 #### Remaining
 

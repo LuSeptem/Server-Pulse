@@ -67,10 +67,7 @@ function getVramPercent(gpu: GpuMetric) {
         </div>
 
         <div class="gpu-card-util">
-          <span
-            class="gpu-util-value"
-            :class="{ 'util-high-text': gpu.utilization != null && gpu.utilization >= 80 }"
-          >
+          <span class="gpu-util-value">
             {{ gpu.utilization != null ? gpu.utilization.toFixed(0) + '%' : '—' }}
           </span>
         </div>

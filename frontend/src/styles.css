@@ -350,14 +350,10 @@ button:active { transform: translateY(1px); }
 .gpu-util-value {
   font-size: 22px;
   font-weight: 800;
-  color: #f5f8f6;
+  color: #ffffff;
   letter-spacing: -0.02em;
   line-height: 1.1;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  transition: color 0.2s ease;
-}
-.gpu-util-value.util-high-text {
-  color: #ff9890;
 }
 .gpu-bar-track {
   height: 4px;
