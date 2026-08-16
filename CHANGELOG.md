@@ -18,6 +18,7 @@
 - Preview 为未签名内部版本；macOS 透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验证。
 - Windows Release 桌面进程改为 GUI subsystem，SSH/askpass 子进程使用无控制台启动，避免 Preview 启动时额外弹出终端。
 - 主浮窗增加可靠的拖拽与关闭按钮；管理页增加 SSH 配置诊断/重新加载和免密 SSH（密钥或 ssh-agent）选项。
+- 移除 `codex/tauri-port` 分支中的旧版 PowerShell/WPF 主机脚本与历史代码（旧版代码由 `main` / `legacy/v1.1.0` 完整保留），并生成独立便携版 `ServerPulse.exe`。
 
 #### 修复
 
@@ -44,6 +45,7 @@
 - The Preview is unsigned and for internal testing; macOS transparency, tray, edge docking, and sleep/resume remain unverified on physical hardware.
 - The Windows Release desktop process now uses the GUI subsystem, and SSH/askpass children use no-console creation flags so the Preview does not open an extra terminal on startup.
 - Added reliable main-window dragging and close controls, SSH config diagnostics/reload, and an explicit passwordless SSH (key or ssh-agent) option in Manage.
+- Removed legacy PowerShell/WPF host scripts and files from `codex/tauri-port` (all preserved on `main` / `legacy/v1.1.0`), and built the standalone portable `ServerPulse.exe`.
 
 #### Fixed
 

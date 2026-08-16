@@ -59,22 +59,25 @@ npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --c
 
 ### 环境要求
 
-- Windows 10 或 Windows 11。
-- 系统自带 Windows PowerShell 5.1 和 WPF。
-- 本机可以调用 OpenSSH 客户端 `ssh.exe`。
+- Windows 10/11 x64 或 macOS (Intel / Apple Silicon)。
+- 本机可以调用 OpenSSH 客户端 `ssh.exe`（Windows）或 `ssh`（macOS）。
 - 远端 Linux 提供 `/proc`、POSIX `sh` 和 `nvidia-smi`。没有 NVIDIA GPU 时，CPU 和内存仍可监控。
 
-### 启动
+### 启动与运行
 
-双击 `ServerPulse.exe` 即可。也可以双击 `Start Server Pulse.vbs`；它会优先启动 EXE，在 EXE 不存在时回退到 PowerShell 脚本。
-
-需要查看启动错误时，在项目目录执行：
-
-```powershell
-.\ServerPulse.exe
-# 或直接运行脚本
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
-```
+- **便携版直接运行**：双击根目录的 `ServerPulse.exe`（已编译的独立便携版）。
+- **开发模式**：
+  ```powershell
+  # 启动 Tauri 桌面开发窗口
+  npm run tauri dev --prefix frontend
+  # 或仅启动前端浏览器预览
+  npm run dev --prefix frontend
+  ```
+- **生产构建**：
+  ```powershell
+  npm run build --prefix frontend
+  cargo build --release --manifest-path src-tauri/Cargo.toml
+  ```
 
 首次运行前可以验证现有免密配置：
 

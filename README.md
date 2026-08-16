@@ -59,22 +59,25 @@ The images in `demo/` are sanitized examples; host addresses and usernames are b
 
 ### Requirements
 
-- Windows 10 or Windows 11.
-- Windows PowerShell 5.1 and WPF (included with Windows).
-- An OpenSSH client available as `ssh.exe`.
+- Windows 10/11 x64 or macOS (Intel / Apple Silicon).
+- An OpenSSH client available as `ssh.exe` (Windows) or `ssh` (macOS).
 - A Linux remote host with `/proc`, POSIX `sh`, and `nvidia-smi`. Without NVIDIA GPUs, CPU and memory monitoring still works.
 
 ### Start the application
 
-Double-click `ServerPulse.exe`. You can also double-click `Start Server Pulse.vbs`; it prefers the EXE and falls back to the PowerShell entry point when the EXE is absent.
-
-To see startup errors from a terminal:
-
-```powershell
-.\ServerPulse.exe
-# or run the script directly
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
-```
+- **Direct Portable Run**: Double-click `ServerPulse.exe` (standalone portable build).
+- **Development Mode**:
+  ```powershell
+  # Start desktop dev window
+  npm run tauri dev --prefix frontend
+  # Or start frontend browser preview
+  npm run dev --prefix frontend
+  ```
+- **Build Release Bundle**:
+  ```powershell
+  npm run build --prefix frontend
+  cargo build --release --manifest-path src-tauri/Cargo.toml
+  ```
 
 Before the first run, check existing passwordless SSH aliases:
 
