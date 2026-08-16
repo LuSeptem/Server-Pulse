@@ -586,13 +586,18 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
         window.set_focus().map_err(to_command_error)?;
         return Ok(());
     }
+    let (width, height) = match kind.as_str() {
+        "history" => (940.0, 700.0),
+        _ => (760.0, 600.0),
+    };
     WebviewWindowBuilder::new(
         &app,
         label,
         WebviewUrl::App(format!("index.html?view={kind}").into()),
     )
     .title(title)
-    .inner_size(720.0, 560.0)
+    .inner_size(width, height)
+    .min_inner_size(500.0, 400.0)
     .resizable(true)
     .always_on_top(true)
     .center()
