@@ -34,6 +34,7 @@
 - 支持自主配置监控刷新采样频率（Cadence / Refresh Interval）：新增全局/单机自定义采样间隔设置（预设 2s、5s、10s、30s、60s 及 1~300s 自定义输入），并在主浮窗展示当前刷新间隔徽标，修改后即时更新后台采集器。
 - 支持多窗口采样频率实时同步与主界面直接修改：后端增加 `interval_seconds` 状态注册与 `interval.changed` 多窗口广播事件，前端主窗口增加交互式下拉选择菜单（支持直接点选 1s、2s、3s、5s、10s、30s、60s 档位），管理窗口与主浮窗双向无缝秒级联动。
 - 修复主浮窗无边框透明模式下无法拖动窗口的问题：排查并移除导致 WebView2 鼠标事件拦截失效的 Electron 专有样式 `-webkit-app-region`，在 Rust 后端补充 `drag_window` 原生拖拽指令，并在前端主浮窗所有空白与标题区域增加全域拖拽响应与精准交互元素穿透过滤。
+- 修复管理界面（Manage）与历史界面（History）被主浮窗遮挡的问题：由于主浮窗设置了 `alwaysOnTop: true`，在创建与唤起管理及历史窗口时为其同步配置 `always_on_top(true)`、`set_focus()` 与居中呈现，确保管理与历史窗口始终位于最上层。
 
 #### 未完成
 
@@ -71,6 +72,7 @@
 - Added user-configurable monitoring refresh interval (cadence): provided presets (2s, 5s default, 10s, 30s, 60s) and a custom 1–300s input in Manage view with live indicator on the main dashboard, immediately updating background collection tasks.
 - Added cross-window interval synchronization and direct inline cadence modification on the main dashboard: broadcasted `interval.changed` events across Tauri windows and added a quick popover selector directly on the main floating widget (1s, 2s, 3s, 5s, 10s, 30s, 60s).
 - Fixed main floating window dragging on Windows frameless/transparent mode: removed conflicting `-webkit-app-region` styles that intercepted WebView2 DOM events, added dedicated native `drag_window` IPC command, and enabled comprehensive blank-area and header drag hit-testing with button exclusions.
+- Fixed window z-order hierarchy so Manage and History windows stay in front of the main widget: configured `always_on_top(true)` and focus targeting on secondary windows so they are not obscured by the floating main window.
 
 #### Remaining
 

@@ -581,6 +581,7 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
         _ => return Err("unknown window kind".to_owned()),
     };
     if let Some(window) = app.get_webview_window(label) {
+        let _ = window.set_always_on_top(true);
         window.show().map_err(to_command_error)?;
         window.set_focus().map_err(to_command_error)?;
         return Ok(());
@@ -593,6 +594,8 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
     .title(title)
     .inner_size(720.0, 560.0)
     .resizable(true)
+    .always_on_top(true)
+    .center()
     .build()
     .map(|_| ())
     .map_err(to_command_error)
