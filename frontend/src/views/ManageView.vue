@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useMonitorStore } from '../stores/monitor'
 import type { ServerConfig } from '../types'
 
 const store = useMonitorStore()
+
+onMounted(async () => {
+  if (!store.initialized) {
+    await store.init()
+  } else {
+    await store.refreshSshConfig()
+  }
+})
 const showForm = ref(false)
 const formError = ref('')
 const savedNotice = ref('')
@@ -134,36 +142,39 @@ async function remove(server: ServerConfig) {
       </div>
       <div class="page-actions">
         <button title="Reload SSH config" @click="reloadServers">Reload</button>
-        <button @click="showForm = !showForm">{{ showForm ? 'Cancel' : 'Add server' }}</button>
+        <button class="primary-button" @click="showForm = !showForm">{{ showForm ? 'Cancel' : '+ Add server' }}</button>
         <button @click="closeWindow">Close</button>
       </div>
     </header>
 
-    <p class="muted">Existing OpenSSH aliases are detected from your user SSH config. Add a hostname or alias here to save it to Server Pulse.</p>
-    <div class="ssh-config-info">
-      <div>SSH config: {{ store.sshConfigPath || 'not found' }}</div>
-      <div v-if="store.sshConfigAliases.length">
-        Detected aliases:
-        <button
-          v-for="alias in store.sshConfigAliases"
-          :key="alias"
-          class="alias-badge"
-          type="button"
-          :title="'Click to populate ' + alias"
-          @click="fillFormWithCandidate(store.sshConfigCandidates.find(c => c.host === alias) ?? { id: alias, label: alias, host: alias, monitored: true, passwordless: true })"
-        >
-          {{ alias }}
-        </button>
+    <div class="info-card">
+      <div class="ssh-config-info">
+        <div><strong>SSH config:</strong> {{ store.sshConfigPath || 'not found' }}</div>
+        <div v-if="store.sshConfigAliases.length">
+          <span>Detected aliases (click to fill):</span>
+          <div>
+            <button
+              v-for="alias in store.sshConfigAliases"
+              :key="alias"
+              class="alias-badge"
+              type="button"
+              :title="'Click to populate ' + alias"
+              @click="fillFormWithCandidate(store.sshConfigCandidates.find(c => c.host === alias) ?? { id: alias, label: alias, host: alias, monitored: true, passwordless: true })"
+            >
+              {{ alias }}
+            </button>
+          </div>
+        </div>
+        <div v-else-if="store.sshConfigError" class="error-text">Read error: {{ store.sshConfigError }}</div>
+        <div v-else class="muted">No concrete Host aliases detected.</div>
       </div>
-      <div v-else-if="store.sshConfigError" class="error-text">Read error: {{ store.sshConfigError }}</div>
-      <div v-else>No concrete Host aliases detected.</div>
     </div>
 
     <!-- Candidate discovery section matching legacy ServerPulse candidate discovery -->
     <section v-if="store.unaddedCandidates.length" class="candidate-section">
       <div class="candidate-header">
         <strong>Discovered from SSH config ({{ store.unaddedCandidates.length }} available)</strong>
-        <button type="button" @click="importAllCandidates">Import all ({{ store.unaddedCandidates.length }})</button>
+        <button class="primary-button" type="button" @click="importAllCandidates">Import all ({{ store.unaddedCandidates.length }})</button>
       </div>
       <div class="candidate-list">
         <div v-for="candidate in store.unaddedCandidates" :key="candidate.id" class="candidate-item">
@@ -172,7 +183,7 @@ async function remove(server: ServerConfig) {
             <span class="muted"> · {{ candidate.host }}<template v-if="candidate.user"> · {{ candidate.user }}</template><template v-if="candidate.port"> :{{ candidate.port }}</template></span>
           </div>
           <div class="candidate-actions">
-            <button type="button" @click="importCandidate(candidate)">+ Add to monitor</button>
+            <button class="primary-button" type="button" @click="importCandidate(candidate)">+ Add to monitor</button>
             <button type="button" @click="fillFormWithCandidate(candidate)">Edit</button>
           </div>
         </div>

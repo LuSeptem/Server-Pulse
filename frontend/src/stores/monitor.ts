@@ -68,30 +68,43 @@ export const useMonitorStore = defineStore('monitor', {
     async init() {
       if (this.initialized) return
       try {
-        this.servers = await invoke<ServerConfig[]>('list_servers')
-        this.dataRoot = await invoke<string>('get_data_root')
+        const [servers, dataRoot] = await Promise.all([
+          invoke<ServerConfig[]>('list_servers').catch((err) => {
+            console.error('Failed to list servers:', err)
+            this.errors._app = err instanceof Error ? err.message : String(err)
+            return []
+          }),
+          invoke<string>('get_data_root').catch((err) => {
+            console.error('Failed to get data root:', err)
+            return ''
+          }),
+        ])
+        this.servers = servers
+        this.dataRoot = dataRoot
       } catch (error) {
-        // Keep the web preview and Playwright shell usable outside Tauri.
-        this.servers = []
-        this.dataRoot = 'Tauri runtime required for live data'
-        this.errors._app = error instanceof Error ? error.message : String(error)
-        this.initialized = true
-        return
+        console.error('Store init error:', error)
       }
+
       await this.refreshSshConfig()
-      unlisteners.forEach((unlisten) => unlisten())
-      unlisteners = [
-        await listen<SnapshotEvent>('server.snapshot', (event) => {
-          this.snapshots[event.payload.serverId] = event.payload.payload
-          this.statuses[event.payload.serverId] = 'online'
-        }),
-        await listen<StatusEvent>('server.status', (event) => {
-          this.statuses[event.payload.serverId] = event.payload.payload.status
-          if (event.payload.payload.detail?.detail) {
-            this.errors[event.payload.serverId] = event.payload.payload.detail.detail
-          }
-        }),
-      ]
+
+      try {
+        unlisteners.forEach((unlisten) => unlisten())
+        unlisteners = [
+          await listen<SnapshotEvent>('server.snapshot', (event) => {
+            this.snapshots[event.payload.serverId] = event.payload.payload
+            this.statuses[event.payload.serverId] = 'online'
+          }),
+          await listen<StatusEvent>('server.status', (event) => {
+            this.statuses[event.payload.serverId] = event.payload.payload.status
+            if (event.payload.payload.detail?.detail) {
+              this.errors[event.payload.serverId] = event.payload.payload.detail.detail
+            }
+          }),
+        ]
+      } catch (error) {
+        console.warn('Event listen not available:', error)
+      }
+
       await Promise.all(this.servers.filter((server) => server.monitored).map((server) => this.start(server)))
       this.initialized = true
     },

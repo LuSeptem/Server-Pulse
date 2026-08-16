@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1"
+dirs = "6.0"
 serverpulse-core = { path = "../serverpulse-core" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "process", "time"] }
 thiserror = "2"
+

@@ -22,8 +22,9 @@
 
 #### 修复
 
-- 修复 `~/.ssh/config` 别名未作为候选服务器加载的问题：优化配置解析支持 `Host = alias`、引号与多主机名模式，修复 `~` 包含路径展开，并使用 `ssh -G` 自动解析候选主机的用户名与端口。
-- 增强管理窗口的候选发现体验：提供可点击预填的别名标签、候选列表单键“+ 加入监控”以及“全部导入”功能。
+- 统一主界面、管理界面与历史界面的暗色设计语言：去除管理窗口多余外边距与背景色差，采用一致的深曜石绿主题色彩、卡片质感、状态徽标与交互按钮。
+- 修复 Tauri 2 窗口权限配置：添加 `src-tauri/capabilities/default.json` 完整赋权，避免多窗口事件监听与 IPC 调用失败导致前端数据加载受阻。
+- 强化 SSH 配置与别名解析可靠性：集成 `dirs::home_dir()` Win32 原生主目录定位，优化 Pinia Store 初始化与容灾逻辑，确保 `~/.ssh/config` 别名与候选主机始终稳定加载。
 
 #### 未完成
 
@@ -49,8 +50,9 @@
 
 #### Fixed
 
-- Fixed SSH alias candidate discovery from `~/.ssh/config`: corrected `~` include expansion, supported `Host = alias`, quotes, and multi-alias lines, and used `ssh -G` to automatically resolve target usernames, ports, and hostnames.
-- Enhanced SSH candidate management UI: added interactive alias badges for instant form pre-filling, single-click "+ Add to monitor" candidate cards, and an "Import all" action matching the legacy ServerPulse experience.
+- Unified the visual language between the Main, Manage, and History windows: eliminated inconsistent window padding and background mismatch, applying a cohesive deep obsidian green palette, card borders, status pills, and action buttons.
+- Configured Tauri 2 capabilities in `src-tauri/capabilities/default.json` for full window permissions, multi-window events, and IPC calls.
+- Hardened SSH config alias and candidate loading: integrated `dirs::home_dir()` Win32 native home resolution, and made store initialization resilient so `~/.ssh/config` aliases are always discovered and displayed.
 
 #### Remaining
 

@@ -222,18 +222,20 @@ fn default_config_path() -> Option<PathBuf> {
 }
 
 fn home_directory() -> Option<PathBuf> {
-    if cfg!(windows) {
-        std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .or_else(|| {
-                let drive = std::env::var_os("HOMEDRIVE")?;
-                let path = std::env::var_os("HOMEPATH")?;
-                Some(format!("{}{}", drive.to_string_lossy(), path.to_string_lossy()).into())
-            })
-            .map(PathBuf::from)
-    } else {
-        std::env::var_os("HOME").map(PathBuf::from)
-    }
+    dirs::home_dir().or_else(|| {
+        if cfg!(windows) {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .or_else(|| {
+                    let drive = std::env::var_os("HOMEDRIVE")?;
+                    let path = std::env::var_os("HOMEPATH")?;
+                    Some(format!("{}{}", drive.to_string_lossy(), path.to_string_lossy()).into())
+                })
+                .map(PathBuf::from)
+        } else {
+            std::env::var_os("HOME").map(PathBuf::from)
+        }
+    })
 }
 
 fn read_config_file(
