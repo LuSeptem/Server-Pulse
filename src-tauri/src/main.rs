@@ -628,6 +628,80 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
     .map_err(to_command_error)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowMonitorBounds {
+    monitor_x: i32,
+    monitor_y: i32,
+    monitor_width: i32,
+    monitor_height: i32,
+    scale_factor: f64,
+    window_x: i32,
+    window_y: i32,
+    window_width: i32,
+    window_height: i32,
+}
+
+#[tauri::command]
+async fn get_window_monitor_bounds(app: AppHandle) -> Result<WindowMonitorBounds, String> {
+    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let win_pos = window.outer_position().map_err(to_command_error)?;
+    let win_size = window.outer_size().map_err(to_command_error)?;
+
+    let monitor = window
+        .current_monitor()
+        .map_err(to_command_error)?
+        .ok_or("No monitor found for window")?;
+    let mon_pos = monitor.position();
+    let mon_size = monitor.size();
+
+    Ok(WindowMonitorBounds {
+        monitor_x: mon_pos.x,
+        monitor_y: mon_pos.y,
+        monitor_width: mon_size.width as i32,
+        monitor_height: mon_size.height as i32,
+        scale_factor: scale,
+        window_x: win_pos.x,
+        window_y: win_pos.y,
+        window_width: win_size.width as i32,
+        window_height: win_size.height as i32,
+    })
+}
+
+#[tauri::command]
+async fn set_main_window_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    window
+        .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
+        .map_err(to_command_error)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn animate_main_window_position(
+    app: AppHandle,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    duration_ms: u64,
+) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let steps = 15;
+    let step_delay = Duration::from_millis((duration_ms / steps as u64).max(1));
+    for i in 1..=steps {
+        let progress = i as f64 / steps as f64;
+        let ease = 1.0 - (1.0 - progress).powi(3);
+        let curr_x = from_x + ((to_x - from_x) as f64 * ease).round() as i32;
+        let curr_y = from_y + ((to_y - from_y) as f64 * ease).round() as i32;
+        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: curr_x, y: curr_y }));
+        tokio::time::sleep(step_delay).await;
+    }
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: to_x, y: to_y }));
+    Ok(())
+}
+
 #[tauri::command]
 async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(to_command_error)
@@ -721,7 +795,10 @@ fn main() {
             open_window,
             drag_window,
             hide_main_window,
-            close_main_window
+            close_main_window,
+            get_window_monitor_bounds,
+            set_main_window_position,
+            animate_main_window_position
         ])
         .run(tauri::generate_context!())
         .expect("error while running Server Pulse");

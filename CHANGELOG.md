@@ -44,6 +44,11 @@
 - 优化服务器卡片头部信息排布与紧凑度：将原本独立占据整行卡片的 GPU 数量（如 `4 GPUs`）与主机名（如 `amax-BD4908P`）整合收敛至服务器名称下方的副标题小字（`server_host · hostname · X GPUs`），主指标区精简聚焦为 CPU 与 MEM 双列并排，极大地节省了卡片垂直空间。
 - 精简管理界面（Manage View）：由于主界面已内置交互式下拉菜单支持秒级点选刷新频率，管理界面移除了冗余的“采样刷新频率”控制卡片，使管理界面纯粹聚焦于 SSH 别名发现与服务器列表管理。
 - 增强管理界面添加服务器字段提示：在 SSH alias / hostname 输入框中增加明确的 IP 与别名示例提示（`123.23.23.23 / gpu-01`），支持用户直接输入远程服务器 IP 或别名。
+- 实现主窗口贴靠屏幕上、左、右三边自动吸附与隐藏（Edge Auto-Hide）：
+  - 贴边探测与吸附：当拖动主窗口靠近屏幕左边、右边或顶部（<= 25px）时自动吸附贴边，鼠标移出 600ms 后自动平滑缩进隐藏，在屏幕边缘保留 6px 绿色发光呼出手柄；
+  - 触碰唤出与平滑动画：鼠标滑过边缘 6px 把手时立即执行 150ms 缓动平滑位移动画快速展开；
+  - Pin 固定锁定按钮：主界面右上角新增图钉（`📌` / `📍`）固定按钮，支持随时锁定窗口在桌面不隐藏，并自动持久化保存状态；
+  - 防误触与拖离解除：下拉菜单处于展开操作状态时暂停自动收起，窗口被拖离边缘（> 25px）时自动解除贴边状态。
 
 #### 未完成
 
@@ -88,6 +93,7 @@
 - Streamlined server card header metadata and metrics layout: consolidated GPU count and host name into a clean, muted subtitle line under the server name (`server_host · hostname · X GPUs`), focusing the main metric grid into a compact, balanced 2-column CPU and MEM display.
 - Decluttered Manage window: removed the redundant monitoring interval setting card from Manage view since cadence can now be configured directly and interactively on the main floating widget.
 - Added clear IP address and hostname example hints to the Add Server form: updated field label to `SSH alias / Hostname / IP` and placeholder to `123.23.23.23 / gpu-01`.
+- Implemented top, left, and right screen edge docking and auto-hide: added 25px threshold edge detection, 6px visible reveal handles with edge glowing styling, 150ms smooth sliding animations, hover-to-reveal with 600ms debounce hide, dropdown interaction protection, and persistent Pin desktop lock toggle.
 
 #### Remaining
 

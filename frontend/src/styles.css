@@ -50,6 +50,44 @@ button:active { transform: translateY(1px); }
   border-radius: 12px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   padding: 16px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.widget-window.is-hidden {
+  border-color: rgba(74, 222, 128, 0.55);
+  box-shadow: 0 0 20px rgba(74, 222, 128, 0.25);
+  cursor: pointer;
+}
+.widget-window.is-hidden.dock-left {
+  border-left-width: 4px;
+  border-left-color: #4ade80;
+}
+.widget-window.is-hidden.dock-right {
+  border-right-width: 4px;
+  border-right-color: #4ade80;
+}
+.widget-window.is-hidden.dock-top {
+  border-top-width: 4px;
+  border-top-color: #4ade80;
+}
+
+.pin-btn {
+  padding: 4px 7px;
+  font-size: 11px;
+  background: #18221b;
+  border-color: #2b392f;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.pin-btn:hover {
+  background: #243428;
+  border-color: #3f6149;
+}
+.pin-btn.active {
+  background: #193822;
+  border-color: #428056;
+  color: #8fd3a8;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.2);
 }
 
 /* Full page windows (Manage & History) */

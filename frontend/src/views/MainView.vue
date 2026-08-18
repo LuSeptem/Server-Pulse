@@ -1,13 +1,32 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useMonitorStore } from '../stores/monitor'
+import { useEdgeDocking } from '../composables/useEdgeDocking'
 import ServerCard from '../components/ServerCard.vue'
 
 const store = useMonitorStore()
 const showIntervalMenu = ref(false)
 const presets = [1, 2, 3, 5, 10, 30, 60]
+
+const {
+  isPinned,
+  dockSide,
+  isHidden,
+  togglePinned,
+  onMouseEnter,
+  onMouseLeave,
+  onDragStart,
+  onDragEnd,
+  checkDocking,
+} = useEdgeDocking({
+  isMenuOpen: () => showIntervalMenu.value,
+})
+
+onMounted(() => {
+  void checkDocking()
+})
 
 const startDragging = async (event: MouseEvent) => {
   if (event.button !== 0) return
@@ -16,10 +35,13 @@ const startDragging = async (event: MouseEvent) => {
   if (target.closest('button, input, select, textarea, a, .card-actions, .cadence-dropdown, .no-drag')) {
     return
   }
+  onDragStart()
   try {
     await invoke('drag_window')
   } catch {
     void getCurrentWindow().startDragging().catch(() => undefined)
+  } finally {
+    await onDragEnd()
   }
 }
 
@@ -30,13 +52,32 @@ const selectInterval = async (val: number) => {
 </script>
 
 <template>
-  <section class="widget-window" @mousedown="startDragging" @click="showIntervalMenu = false">
+  <section
+    class="widget-window"
+    :class="{
+      'is-docked': dockSide !== 'none',
+      'is-hidden': isHidden,
+      ['dock-' + dockSide]: dockSide !== 'none'
+    }"
+    @mouseenter="onMouseEnter"
+    @mouseleave="onMouseLeave"
+    @mousedown="startDragging"
+    @click="showIntervalMenu = false"
+  >
     <header class="window-header drag-region" data-tauri-drag-region @mousedown="startDragging">
       <div data-tauri-drag-region>
         <span class="eyebrow" data-tauri-drag-region>SERVER PULSE</span>
         <h1 data-tauri-drag-region>Server monitor</h1>
       </div>
       <div class="header-actions no-drag">
+        <button
+          class="pin-btn"
+          :class="{ active: isPinned }"
+          :title="isPinned ? 'Window pinned to desktop (click to allow auto-hide on edges)' : 'Auto-hide on edges enabled (click to pin)'"
+          @click="togglePinned"
+        >
+          {{ isPinned ? '📌' : '📍' }}
+        </button>
         <button title="History" @click="store.openWindow('history')">History</button>
         <button title="Manage" @click="store.openWindow('manage')">Manage</button>
         <button title="Hide" @click="store.hideMain()">—</button>
