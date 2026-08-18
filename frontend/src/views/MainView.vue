@@ -15,14 +15,7 @@ const {
   dockSide,
   isHidden,
   toggleAutoHide,
-  onMouseEnter,
-  onMouseLeave,
-  onDragStart,
-  onDragEnd,
-  checkDocking,
-} = useEdgeDocking({
-  isMenuOpen: () => showIntervalMenu.value,
-})
+} = useEdgeDocking()
 
 const startDragging = async (event: MouseEvent) => {
   if (event.button !== 0) return
@@ -31,13 +24,10 @@ const startDragging = async (event: MouseEvent) => {
   if (target.closest('button, input, select, textarea, a, .card-actions, .cadence-dropdown, .no-drag')) {
     return
   }
-  onDragStart()
   try {
     await invoke('drag_window')
   } catch {
     void getCurrentWindow().startDragging().catch(() => undefined)
-  } finally {
-    await onDragEnd()
   }
 }
 
@@ -55,9 +45,6 @@ const selectInterval = async (val: number) => {
       'is-hidden': isHidden,
       ['dock-' + dockSide]: dockSide !== 'none'
     }"
-    @mouseenter="onMouseEnter"
-    @mousemove="onMouseEnter"
-    @mouseleave="onMouseLeave"
     @mousedown="startDragging"
     @click="showIntervalMenu = false"
   >

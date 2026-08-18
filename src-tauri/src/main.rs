@@ -22,12 +22,40 @@ use tokio::task::JoinHandle;
 const SAMPLE_SCRIPT: &str = include_str!("../../assets/serverpulse-sample.sh");
 const SEED_SERVERS: &str = include_str!("../../config/servers.json");
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EdgeDockState {
+    dock_side: String, // "none" | "left" | "right" | "top"
+    is_hidden: bool,
+    auto_hide_enabled: bool,
+    shown_x: i32,
+    shown_y: i32,
+    win_width: i32,
+    win_height: i32,
+}
+
+impl Default for EdgeDockState {
+    fn default() -> Self {
+        Self {
+            dock_side: "none".to_string(),
+            is_hidden: false,
+            auto_hide_enabled: true,
+            shown_x: 0,
+            shown_y: 0,
+            win_width: 320,
+            win_height: 480,
+        }
+    }
+}
+
 struct AppState {
     tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     snapshots: Arc<Mutex<HashMap<String, MetricSnapshot>>>,
     statuses: Arc<Mutex<HashMap<String, String>>>,
     errors: Arc<Mutex<HashMap<String, String>>>,
     interval_seconds: Arc<Mutex<u64>>,
+    edge_dock_state: Arc<Mutex<EdgeDockState>>,
+    edge_dock_enabled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for AppState {
@@ -38,6 +66,8 @@ impl Default for AppState {
             statuses: Arc::new(Mutex::new(HashMap::new())),
             errors: Arc::new(Mutex::new(HashMap::new())),
             interval_seconds: Arc::new(Mutex::new(5)),
+            edge_dock_state: Arc::new(Mutex::new(EdgeDockState::default())),
+            edge_dock_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 }
@@ -715,6 +745,337 @@ async fn get_cursor_position() -> Result<(i32, i32), String> {
     Err("Cursor position not available on this platform".to_owned())
 }
 
+#[cfg(target_os = "windows")]
+fn start_edge_dock_worker(
+    app: AppHandle,
+    enabled: Arc<std::sync::atomic::AtomicBool>,
+    state_lock: Arc<Mutex<EdgeDockState>>,
+) {
+    use std::sync::atomic::Ordering;
+    use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetWindowRect, IsIconic, IsWindowVisible, SetWindowPos, HWND_TOPMOST,
+        SWP_SHOWWINDOW,
+    };
+
+    tauri::async_runtime::spawn(async move {
+        let mut hide_countdown_ticks: i32 = 0; // Each tick = 50ms (600ms = 12 ticks)
+
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let auto_hide_on = enabled.load(Ordering::Relaxed);
+
+            let Some(window) = app.get_webview_window("main") else {
+                continue;
+            };
+
+            let Ok(hwnd_raw) = window.hwnd() else {
+                continue;
+            };
+            let hwnd_isize = hwnd_raw.0 as isize;
+
+            let (visible, cur_pos, rect, work_left, work_top, work_right) = unsafe {
+                let hwnd = hwnd_isize as HWND;
+                if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+                    (false, POINT { x: 0, y: 0 }, RECT { left: 0, top: 0, right: 0, bottom: 0 }, 0, 0, 0)
+                } else {
+                    let mut cur = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut cur);
+                    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    GetWindowRect(hwnd, &mut r);
+                    let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                    let mut mi: MONITORINFO = std::mem::zeroed();
+                    mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                    if !hmon.is_null() && GetMonitorInfoW(hmon, &mut mi) != 0 {
+                        (true, cur, r, mi.rcWork.left, mi.rcWork.top, mi.rcWork.right)
+                    } else {
+                        (false, cur, r, 0, 0, 0)
+                    }
+                }
+            };
+
+            if !visible {
+                continue;
+            }
+
+            let win_w = rect.right - rect.left;
+            let win_h = rect.bottom - rect.top;
+
+            let mut state = state_lock.lock().await;
+            state.auto_hide_enabled = auto_hide_on;
+
+            if !auto_hide_on {
+                if state.is_hidden {
+                    state.is_hidden = false;
+                    unsafe {
+                        SetWindowPos(
+                            hwnd_isize as HWND,
+                            HWND_TOPMOST,
+                            state.shown_x,
+                            state.shown_y,
+                            win_w,
+                            win_h,
+                            SWP_SHOWWINDOW,
+                        );
+                    }
+                    let _ = app.emit("edge_dock_state", state.clone());
+                }
+                state.dock_side = "none".to_string();
+                continue;
+            }
+
+            // If currently not docked:
+            if state.dock_side == "none" {
+                let threshold = 35;
+                let left_dist = rect.left - work_left;
+                let right_dist = work_right - rect.right;
+                let top_dist = rect.top - work_top;
+
+                if left_dist <= threshold && left_dist >= -win_w / 2 {
+                    state.dock_side = "left".to_string();
+                    state.shown_x = work_left;
+                    state.shown_y = rect.top;
+                    state.win_width = win_w;
+                    state.win_height = win_h;
+                    state.is_hidden = false;
+                    hide_countdown_ticks = 12; // 600ms
+                    unsafe {
+                        SetWindowPos(
+                            hwnd_isize as HWND,
+                            HWND_TOPMOST,
+                            work_left,
+                            rect.top,
+                            win_w,
+                            win_h,
+                            SWP_SHOWWINDOW,
+                        );
+                    }
+                    let _ = app.emit("edge_dock_state", state.clone());
+                } else if right_dist <= threshold && right_dist >= -win_w / 2 {
+                    state.dock_side = "right".to_string();
+                    state.shown_x = work_right - win_w;
+                    state.shown_y = rect.top;
+                    state.win_width = win_w;
+                    state.win_height = win_h;
+                    state.is_hidden = false;
+                    hide_countdown_ticks = 12;
+                    unsafe {
+                        SetWindowPos(
+                            hwnd_isize as HWND,
+                            HWND_TOPMOST,
+                            work_right - win_w,
+                            rect.top,
+                            win_w,
+                            win_h,
+                            SWP_SHOWWINDOW,
+                        );
+                    }
+                    let _ = app.emit("edge_dock_state", state.clone());
+                } else if top_dist <= threshold && top_dist >= -win_h / 2 {
+                    state.dock_side = "top".to_string();
+                    state.shown_x = rect.left;
+                    state.shown_y = work_top;
+                    state.win_width = win_w;
+                    state.win_height = win_h;
+                    state.is_hidden = false;
+                    hide_countdown_ticks = 12;
+                    unsafe {
+                        SetWindowPos(
+                            hwnd_isize as HWND,
+                            HWND_TOPMOST,
+                            rect.left,
+                            work_top,
+                            win_w,
+                            win_h,
+                            SWP_SHOWWINDOW,
+                        );
+                    }
+                    let _ = app.emit("edge_dock_state", state.clone());
+                }
+                continue;
+            }
+
+            // If currently docked:
+            if !state.is_hidden {
+                // Check if dragged away from edge (> 40px)
+                let moved_away = match state.dock_side.as_str() {
+                    "left" => (rect.left - work_left).abs() > 40,
+                    "right" => (work_right - rect.right).abs() > 40,
+                    "top" => (rect.top - work_top).abs() > 40,
+                    _ => false,
+                };
+                if moved_away {
+                    state.dock_side = "none".to_string();
+                    state.is_hidden = false;
+                    let _ = app.emit("edge_dock_state", state.clone());
+                    continue;
+                }
+
+                // Check if cursor is inside shown window
+                let inside = cur_pos.x >= state.shown_x
+                    && cur_pos.x <= state.shown_x + state.win_width
+                    && cur_pos.y >= state.shown_y
+                    && cur_pos.y <= state.shown_y + state.win_height;
+
+                if inside {
+                    hide_countdown_ticks = 12; // 600ms
+                } else {
+                    if hide_countdown_ticks > 0 {
+                        hide_countdown_ticks -= 1;
+                    } else {
+                        // Hide!
+                        state.is_hidden = true;
+                        let _ = app.emit("edge_dock_state", state.clone());
+
+                        let handle_px = 8;
+                        let (to_x, to_y) = match state.dock_side.as_str() {
+                            "left" => (work_left - state.win_width + handle_px, state.shown_y),
+                            "right" => (work_right - handle_px, state.shown_y),
+                            "top" => (state.shown_x, work_top - state.win_height + handle_px),
+                            _ => (state.shown_x, state.shown_y),
+                        };
+
+                        let from_x = rect.left;
+                        let from_y = rect.top;
+                        let steps = 8;
+                        for i in 1..=steps {
+                            let prog = i as f64 / steps as f64;
+                            let ease = 1.0 - (1.0 - prog).powi(2);
+                            let cx = from_x + ((to_x - from_x) as f64 * ease).round() as i32;
+                            let cy = from_y + ((to_y - from_y) as f64 * ease).round() as i32;
+                            unsafe {
+                                SetWindowPos(
+                                    hwnd_isize as HWND,
+                                    HWND_TOPMOST,
+                                    cx,
+                                    cy,
+                                    state.win_width,
+                                    state.win_height,
+                                    SWP_SHOWWINDOW,
+                                );
+                            }
+                            tokio::time::sleep(Duration::from_millis(15)).await;
+                        }
+                        unsafe {
+                            SetWindowPos(
+                                hwnd_isize as HWND,
+                                HWND_TOPMOST,
+                                to_x,
+                                to_y,
+                                state.win_width,
+                                state.win_height,
+                                SWP_SHOWWINDOW,
+                            );
+                        }
+                    }
+                }
+            } else {
+                // Window is hidden! Check if cursor touches dock edge
+                let trigger_px = 24;
+                let touches = match state.dock_side.as_str() {
+                    "right" => {
+                        cur_pos.x >= work_right - trigger_px
+                            && cur_pos.y >= state.shown_y - 30
+                            && cur_pos.y <= state.shown_y + state.win_height + 30
+                    }
+                    "left" => {
+                        cur_pos.x <= work_left + trigger_px
+                            && cur_pos.y >= state.shown_y - 30
+                            && cur_pos.y <= state.shown_y + state.win_height + 30
+                    }
+                    "top" => {
+                        cur_pos.y <= work_top + trigger_px
+                            && cur_pos.x >= state.shown_x - 30
+                            && cur_pos.x <= state.shown_x + state.win_width + 30
+                    }
+                    _ => false,
+                };
+
+                if touches {
+                    // Reveal!
+                    state.is_hidden = false;
+                    hide_countdown_ticks = 16; // 800ms
+                    let _ = app.emit("edge_dock_state", state.clone());
+
+                    let from_x = rect.left;
+                    let from_y = rect.top;
+                    let to_x = state.shown_x;
+                    let to_y = state.shown_y;
+                    let steps = 8;
+                    for i in 1..=steps {
+                        let prog = i as f64 / steps as f64;
+                        let ease = 1.0 - (1.0 - prog).powi(2);
+                        let cx = from_x + ((to_x - from_x) as f64 * ease).round() as i32;
+                        let cy = from_y + ((to_y - from_y) as f64 * ease).round() as i32;
+                        unsafe {
+                            SetWindowPos(
+                                hwnd_isize as HWND,
+                                HWND_TOPMOST,
+                                cx,
+                                cy,
+                                state.win_width,
+                                state.win_height,
+                                SWP_SHOWWINDOW,
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(15)).await;
+                    }
+                    unsafe {
+                        SetWindowPos(
+                            hwnd_isize as HWND,
+                            HWND_TOPMOST,
+                            to_x,
+                            to_y,
+                            state.win_width,
+                            state.win_height,
+                            SWP_SHOWWINDOW,
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[tauri::command]
+async fn get_edge_dock_state(state: State<'_, AppState>) -> Result<EdgeDockState, String> {
+    let s = state.edge_dock_state.lock().await;
+    Ok(s.clone())
+}
+
+#[tauri::command]
+async fn set_edge_dock_autohide(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<EdgeDockState, String> {
+    use std::sync::atomic::Ordering;
+    state.edge_dock_enabled.store(enabled, Ordering::Relaxed);
+    let mut s = state.edge_dock_state.lock().await;
+    s.auto_hide_enabled = enabled;
+    let _ = app.emit("edge_dock_state", s.clone());
+    Ok(s.clone())
+}
+
+#[tauri::command]
+async fn toggle_edge_dock_autohide(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<EdgeDockState, String> {
+    use std::sync::atomic::Ordering;
+    let prev = state.edge_dock_enabled.load(Ordering::Relaxed);
+    let new_val = !prev;
+    state.edge_dock_enabled.store(new_val, Ordering::Relaxed);
+    let mut s = state.edge_dock_state.lock().await;
+    s.auto_hide_enabled = new_val;
+    let _ = app.emit("edge_dock_state", s.clone());
+    Ok(s.clone())
+}
+
 #[tauri::command]
 async fn set_main_window_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("Main window not found")?;
@@ -770,18 +1131,30 @@ async fn close_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
-    let hide = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
+    let show = MenuItemBuilder::with_id("show", "Show Server Pulse").build(app)?;
+    let hide = MenuItemBuilder::with_id("hide", "Hide to Tray").build(app)?;
+    let servers = MenuItemBuilder::with_id("servers", "SSH Servers...").build(app)?;
+    let history = MenuItemBuilder::with_id("history", "History...").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Exit").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&show, &hide, &quit]).build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&show, &hide, &servers, &history, &quit])
+        .build()?;
     TrayIconBuilder::new()
+        .tooltip("Server Pulse")
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            }
+            "servers" => {
+                let _ = open_window(app.clone(), "manage".to_string());
+            }
+            "history" => {
+                let _ = open_window(app.clone(), "history".to_string());
             }
             "hide" => {
                 if let Some(window) = app.get_webview_window("main") {
@@ -818,6 +1191,15 @@ fn main() {
         .manage(AppState::default())
         .setup(|app| {
             setup_tray(app)?;
+            #[cfg(target_os = "windows")]
+            {
+                let state = app.state::<AppState>();
+                start_edge_dock_worker(
+                    app.handle().clone(),
+                    state.edge_dock_enabled.clone(),
+                    state.edge_dock_state.clone(),
+                );
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -845,7 +1227,10 @@ fn main() {
             get_window_monitor_bounds,
             get_cursor_position,
             set_main_window_position,
-            animate_main_window_position
+            animate_main_window_position,
+            get_edge_dock_state,
+            set_edge_dock_autohide,
+            toggle_edge_dock_autohide
         ])
         .run(tauri::generate_context!())
         .expect("error while running Server Pulse");
