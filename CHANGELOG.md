@@ -45,9 +45,9 @@
 - 精简管理界面（Manage View）：由于主界面已内置交互式下拉菜单支持秒级点选刷新频率，管理界面移除了冗余的“采样刷新频率”控制卡片，使管理界面纯粹聚焦于 SSH 别名发现与服务器列表管理。
 - 增强管理界面添加服务器字段提示：在 SSH alias / hostname 输入框中增加明确的 IP 与别名示例提示（`123.23.23.23 / gpu-01`），支持用户直接输入远程服务器 IP 或别名。
 - 实现主窗口贴靠屏幕上、左、右三边自动吸附与隐藏（Edge Auto-Hide）：
-  - 贴边探测与吸附：引入 Tauri 原生 `onMoved` 移动事件监听与 120ms 停止拖动防抖判定，支持更宽松的边界识别（<= 35px 阈值及屏幕外拖拽自适应），拖动靠近屏幕边缘释放时自动精准对齐；
-  - 自动缩进隐藏与手柄呼出：鼠标移出窗口 600ms（或失焦 300ms）后自动平滑缩进隐藏至边缘，在屏幕边缘保留 6px 发光呼出手柄；鼠标滑过手柄区域立即以 150ms 缓动平滑展开；
-  - Pin 固定锁定按钮：主界面右上角新增图钉（`📌` / `📍`）固定按钮，支持随时锁定窗口在桌面不隐藏，并自动持久化保存状态；
+  - 严格对齐老版本贴边逻辑与按钮交互：默认开启贴边自动隐藏（`autoHide = true`），右上角按钮显示为贴边按钮（`⇥` / `⇤`），高亮绿色代表“已开启贴边隐藏”（点击可关闭）；
+  - 贴边探测与自适应对齐：引入 Tauri 原生 `onMoved` 移动事件监听与 120ms 停止拖动防抖判定，辅以 300ms 后台周期性巡检，支持宽容的边界识别（<= 35px 阈值及超出边界自适应回弹），拖动靠近屏幕上、左、右边缘时自动精准吸附；
+  - 自动缩进隐藏与手柄呼出：鼠标移出窗口 600ms（或失焦 300ms）后自动平滑缩进隐藏至边缘，在屏幕边缘保留 7px 发光呼出手柄；鼠标滑过手柄区域立即以 150ms 缓动平滑展开；
   - 防误触与拖离解除：下拉菜单处于展开操作状态时暂停自动收起，窗口被拖离边缘（> 35px）时自动解除贴边状态。
 
 #### 未完成
@@ -93,7 +93,7 @@
 - Streamlined server card header metadata and metrics layout: consolidated GPU count and host name into a clean, muted subtitle line under the server name (`server_host · hostname · X GPUs`), focusing the main metric grid into a compact, balanced 2-column CPU and MEM display.
 - Decluttered Manage window: removed the redundant monitoring interval setting card from Manage view since cadence can now be configured directly and interactively on the main floating widget.
 - Added clear IP address and hostname example hints to the Add Server form: updated field label to `SSH alias / Hostname / IP` and placeholder to `123.23.23.23 / gpu-01`.
-- Implemented top, left, and right screen edge docking and auto-hide: integrated Tauri native `onMoved` window event tracking with 120ms drag stop debounce, 35px threshold snapping, 6px visible reveal handles with edge glowing styling, 150ms smooth sliding animations, hover-to-reveal with 600ms debounce hide, dropdown interaction protection, and persistent Pin desktop lock toggle.
+- Implemented top, left, and right screen edge docking and auto-hide: aligned 1:1 with legacy PowerShell/WPF behavior with auto-hide enabled by default, 35px threshold edge detection, 7px visible reveal handles with edge glowing styling, 150ms smooth sliding animations, hover-to-reveal with 600ms debounce hide, dropdown interaction protection, and persistent EdgeButton toggle.
 
 #### Remaining
 

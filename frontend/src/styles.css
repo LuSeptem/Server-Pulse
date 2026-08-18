@@ -71,19 +71,21 @@ button:active { transform: translateY(1px); }
   border-top-color: #4ade80;
 }
 
-.pin-btn {
-  padding: 4px 7px;
-  font-size: 11px;
+.edge-btn, .pin-btn {
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
   background: #18221b;
   border-color: #2b392f;
   transition: all 0.15s ease;
   user-select: none;
 }
-.pin-btn:hover {
+.edge-btn:hover, .pin-btn:hover {
   background: #243428;
   border-color: #3f6149;
 }
-.pin-btn.active {
+.edge-btn.active, .pin-btn.active {
   background: #193822;
   border-color: #428056;
   color: #8fd3a8;

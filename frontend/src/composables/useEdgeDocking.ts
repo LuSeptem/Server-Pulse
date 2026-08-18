@@ -20,7 +20,8 @@ export type DockSide = 'none' | 'left' | 'right' | 'top'
 export function useEdgeDocking(options?: {
   isMenuOpen?: () => boolean
 }) {
-  const isPinned = ref(localStorage.getItem('serverpulse_pinned') === 'true')
+  // Default to true (auto-hide enabled), aligned with legacy version
+  const autoHideEnabled = ref(localStorage.getItem('serverpulse_autohide') !== 'false')
   const dockSide = ref<DockSide>('none')
   const isHidden = ref(false)
   const isHovering = ref(false)
@@ -30,8 +31,10 @@ export function useEdgeDocking(options?: {
   const shownPos = ref<{ x: number; y: number } | null>(null)
   let hideTimer: number | null = null
   let moveDebounceTimer: number | null = null
+  let pollInterval: number | null = null
   let isInternalMove = false
   let unlistenMove: UnlistenFn | null = null
+  let lastCheckedPos: { x: number; y: number } | null = null
 
   function clearHideTimer() {
     if (hideTimer !== null) {
@@ -40,23 +43,41 @@ export function useEdgeDocking(options?: {
     }
   }
 
-  function togglePinned() {
-    isPinned.value = !isPinned.value
-    localStorage.setItem('serverpulse_pinned', isPinned.value ? 'true' : 'false')
-    if (isPinned.value) {
+  function toggleAutoHide() {
+    autoHideEnabled.value = !autoHideEnabled.value
+    localStorage.setItem('serverpulse_autohide', autoHideEnabled.value ? 'true' : 'false')
+    if (!autoHideEnabled.value) {
       clearHideTimer()
       if (isHidden.value) {
         void reveal()
       }
     } else {
-      void checkDocking()
+      void checkDocking(true)
     }
   }
 
-  async function checkDocking() {
-    if (isPinned.value || isDragging.value || isInternalMove || isAnimating.value) return
+  async function checkDocking(force = false) {
+    if (isDragging.value || isInternalMove || isAnimating.value) return
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
+      if (
+        !force &&
+        lastCheckedPos &&
+        lastCheckedPos.x === bounds.windowX &&
+        lastCheckedPos.y === bounds.windowY &&
+        dockSide.value !== 'none'
+      ) {
+        // Position has not changed
+        return
+      }
+      lastCheckedPos = { x: bounds.windowX, y: bounds.windowY }
+
+      if (!autoHideEnabled.value) {
+        dockSide.value = 'none'
+        clearHideTimer()
+        return
+      }
+
       const scale = bounds.scaleFactor || 1.0
       const threshold = Math.max(35, Math.round(35 * scale))
 
@@ -68,13 +89,18 @@ export function useEdgeDocking(options?: {
       let targetX = bounds.windowX
       let targetY = bounds.windowY
 
-      if (leftDist <= threshold && leftDist >= -Math.round(bounds.windowWidth / 2)) {
+      // Check left edge (within 35px or past left edge)
+      if (leftDist <= threshold && leftDist >= -Math.round(bounds.windowWidth * 0.8)) {
         side = 'left'
         targetX = bounds.monitorX
-      } else if (rightDist <= threshold && rightDist >= -Math.round(bounds.windowWidth / 2)) {
+      }
+      // Check right edge (within 35px or past right edge)
+      else if (rightDist <= threshold && rightDist >= -Math.round(bounds.windowWidth * 0.8)) {
         side = 'right'
         targetX = bounds.monitorX + bounds.monitorWidth - bounds.windowWidth
-      } else if (topDist <= threshold && topDist >= -Math.round(bounds.windowHeight / 2)) {
+      }
+      // Check top edge (within 35px or past top edge)
+      else if (topDist <= threshold && topDist >= -Math.round(bounds.windowHeight * 0.8)) {
         side = 'top'
         targetY = bounds.monitorY
       }
@@ -83,11 +109,12 @@ export function useEdgeDocking(options?: {
 
       if (side !== 'none') {
         shownPos.value = { x: targetX, y: targetY }
-        isInternalMove = true
-        await invoke('set_main_window_position', { x: targetX, y: targetY })
-        isInternalMove = false
-
-        if (!isHovering.value && !options?.isMenuOpen?.()) {
+        if (bounds.windowX !== targetX || bounds.windowY !== targetY) {
+          isInternalMove = true
+          await invoke('set_main_window_position', { x: targetX, y: targetY })
+          isInternalMove = false
+        }
+        if (!isHovering.value && !options?.isMenuOpen?.() && !isHidden.value) {
           scheduleHide(600)
         }
       } else {
@@ -100,7 +127,7 @@ export function useEdgeDocking(options?: {
   }
 
   async function hide() {
-    if (isPinned.value || dockSide.value === 'none' || isHidden.value || isDragging.value || isAnimating.value) {
+    if (!autoHideEnabled.value || dockSide.value === 'none' || isHidden.value || isDragging.value || isAnimating.value) {
       return
     }
     if (isHovering.value || options?.isMenuOpen?.()) {
@@ -109,7 +136,7 @@ export function useEdgeDocking(options?: {
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       const scale = bounds.scaleFactor || 1.0
-      const handlePx = Math.max(6, Math.round(6 * scale))
+      const handlePx = Math.max(7, Math.round(7 * scale))
 
       let hiddenX = bounds.windowX
       let hiddenY = bounds.windowY
@@ -172,7 +199,7 @@ export function useEdgeDocking(options?: {
 
   function scheduleHide(delayMs = 600) {
     clearHideTimer()
-    if (isPinned.value || dockSide.value === 'none' || isHidden.value || isDragging.value) {
+    if (!autoHideEnabled.value || dockSide.value === 'none' || isHidden.value || isDragging.value) {
       return
     }
     hideTimer = window.setTimeout(() => {
@@ -190,7 +217,7 @@ export function useEdgeDocking(options?: {
 
   function onMouseLeave() {
     isHovering.value = false
-    if (!isPinned.value && dockSide.value !== 'none' && !options?.isMenuOpen?.()) {
+    if (autoHideEnabled.value && dockSide.value !== 'none' && !options?.isMenuOpen?.()) {
       scheduleHide(600)
     }
   }
@@ -205,12 +232,12 @@ export function useEdgeDocking(options?: {
 
   async function onDragEnd() {
     isDragging.value = false
-    await checkDocking()
+    await checkDocking(true)
   }
 
   const handleWindowBlur = () => {
     isHovering.value = false
-    if (!isPinned.value && dockSide.value !== 'none' && !options?.isMenuOpen?.()) {
+    if (autoHideEnabled.value && dockSide.value !== 'none' && !options?.isMenuOpen?.()) {
       scheduleHide(300)
     }
   }
@@ -224,13 +251,21 @@ export function useEdgeDocking(options?: {
           clearTimeout(moveDebounceTimer)
         }
         moveDebounceTimer = window.setTimeout(() => {
-          void checkDocking()
+          void checkDocking(true)
         }, 120)
       })
     } catch {
       // Listener fallback
     }
-    void checkDocking()
+
+    // Periodic safety check every 300ms
+    pollInterval = window.setInterval(() => {
+      if (!isDragging.value && !isHidden.value && !isAnimating.value) {
+        void checkDocking(false)
+      }
+    }, 300)
+
+    void checkDocking(true)
   })
 
   onUnmounted(() => {
@@ -239,6 +274,9 @@ export function useEdgeDocking(options?: {
     if (moveDebounceTimer !== null) {
       clearTimeout(moveDebounceTimer)
     }
+    if (pollInterval !== null) {
+      clearInterval(pollInterval)
+    }
     if (unlistenMove) {
       unlistenMove()
       unlistenMove = null
@@ -246,11 +284,11 @@ export function useEdgeDocking(options?: {
   })
 
   return {
-    isPinned,
+    autoHideEnabled,
     dockSide,
     isHidden,
     isHovering,
-    togglePinned,
+    toggleAutoHide,
     checkDocking,
     onMouseEnter,
     onMouseLeave,

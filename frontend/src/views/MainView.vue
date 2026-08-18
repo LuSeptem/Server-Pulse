@@ -11,10 +11,10 @@ const showIntervalMenu = ref(false)
 const presets = [1, 2, 3, 5, 10, 30, 60]
 
 const {
-  isPinned,
+  autoHideEnabled,
   dockSide,
   isHidden,
-  togglePinned,
+  toggleAutoHide,
   onMouseEnter,
   onMouseLeave,
   onDragStart,
@@ -22,10 +22,6 @@ const {
   checkDocking,
 } = useEdgeDocking({
   isMenuOpen: () => showIntervalMenu.value,
-})
-
-onMounted(() => {
-  void checkDocking()
 })
 
 const startDragging = async (event: MouseEvent) => {
@@ -72,12 +68,12 @@ const selectInterval = async (val: number) => {
       </div>
       <div class="header-actions no-drag">
         <button
-          class="pin-btn"
-          :class="{ active: isPinned }"
-          :title="isPinned ? 'Window pinned to desktop (click to allow auto-hide on edges)' : 'Auto-hide on edges enabled (click to pin)'"
-          @click="togglePinned"
+          class="edge-btn"
+          :class="{ active: autoHideEnabled }"
+          :title="autoHideEnabled ? '贴边自动隐藏：已开启 (点击关闭) / Edge auto-hide: Enabled' : '贴边自动隐藏：已关闭 (点击开启) / Edge auto-hide: Disabled'"
+          @click="toggleAutoHide"
         >
-          {{ isPinned ? '📌' : '📍' }}
+          {{ autoHideEnabled ? '⇥' : '⇤' }}
         </button>
         <button title="History" @click="store.openWindow('history')">History</button>
         <button title="Manage" @click="store.openWindow('manage')">Manage</button>
