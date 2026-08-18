@@ -926,12 +926,12 @@ fn start_edge_dock_worker(
                 } else {
                     if hide_countdown_ticks > 0 {
                         hide_countdown_ticks -= 1;
-                    } else {
                         // Hide!
                         state.is_hidden = true;
                         let _ = app.emit("edge_dock_state", state.clone());
+                        tokio::time::sleep(Duration::from_millis(30)).await;
 
-                        let handle_px = 8;
+                        let handle_px = 10;
                         let (to_x, to_y) = match state.dock_side.as_str() {
                             "left" => (work_left - state.win_width + handle_px, state.shown_y),
                             "right" => (work_right - handle_px, state.shown_y),

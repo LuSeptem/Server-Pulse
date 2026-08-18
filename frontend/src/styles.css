@@ -45,39 +45,63 @@ button:active { transform: translateY(1px); }
 /* Floating widget styling */
 .widget-window {
   min-height: 100vh;
-  background: rgba(14, 19, 16, 0.94);
-  border: 1px solid rgba(143, 211, 168, 0.22);
+  background: #0d100e;
+  border: 1px solid rgba(143, 211, 168, 0.25);
   border-radius: 12px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
   padding: 16px;
+  position: relative;
+  overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.widget-window.is-docked.dock-left {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.widget-window.is-docked.dock-right {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.widget-window.is-docked.dock-top {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .widget-window.is-hidden {
   border-radius: 0 !important;
   background: #0d100e !important;
   border-color: #343a36 !important;
-  box-shadow: 0 0 14px rgba(0, 0, 0, 0.95), 0 0 10px rgba(74, 222, 128, 0.4) !important;
+  box-shadow: 0 0 16px rgba(0, 0, 0, 0.95), 0 0 12px rgba(74, 222, 128, 0.5) !important;
   cursor: pointer;
   opacity: 1 !important;
 }
-.widget-window.is-hidden.dock-left {
-  border-right: 4px solid #4ade80 !important;
-  border-left: none !important;
-  border-top: none !important;
-  border-bottom: none !important;
+
+/* Crisp neon green edge handle bar */
+.edge-dock-indicator {
+  position: absolute;
+  background: #4ade80;
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.9), 0 0 3px #4ade80;
+  z-index: 99999;
+  pointer-events: none;
 }
-.widget-window.is-hidden.dock-right {
-  border-left: 4px solid #4ade80 !important;
-  border-right: none !important;
-  border-top: none !important;
-  border-bottom: none !important;
+.edge-dock-indicator.left {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 5px;
 }
-.widget-window.is-hidden.dock-top {
-  border-bottom: 4px solid #4ade80 !important;
-  border-top: none !important;
-  border-left: none !important;
-  border-right: none !important;
+.edge-dock-indicator.right {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 5px;
+}
+.edge-dock-indicator.top {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
 }
 
 .edge-btn, .pin-btn {
