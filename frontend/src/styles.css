@@ -77,32 +77,6 @@ button:active { transform: translateY(1px); }
   opacity: 1 !important;
 }
 
-/* Crisp neon green edge handle bar */
-.edge-dock-indicator {
-  position: absolute;
-  background: #4ade80;
-  box-shadow: 0 0 6px rgba(74, 222, 128, 0.9);
-  z-index: 99999;
-  pointer-events: none;
-}
-.edge-dock-indicator.left {
-  top: 0;
-  bottom: 0;
-  right: 0;
-  width: 6px;
-}
-.edge-dock-indicator.right {
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 6px;
-}
-.edge-dock-indicator.top {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 6px;
-}
 
 .edge-btn, .pin-btn {
   padding: 4px 8px;

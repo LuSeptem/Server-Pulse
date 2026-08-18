@@ -931,7 +931,7 @@ fn start_edge_dock_worker(
                     let _ = app.emit("edge_dock_state", state.clone());
                     tokio::time::sleep(Duration::from_millis(30)).await;
 
-                    let handle_px = 16;
+                    let handle_px = 8;
                     let (to_x, to_y) = match state.dock_side.as_str() {
                         "left" => (work_left - state.win_width + handle_px, state.shown_y),
                         "right" => (work_right - handle_px, state.shown_y),
