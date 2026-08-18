@@ -323,6 +323,25 @@ button:active { transform: translateY(1px); }
 .metric span { color: #85968b; font-size: 11px; }
 .metric strong { margin-top: 3px; font-size: 15px; color: #f2f7f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+.metric.is-interactive {
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.metric.is-interactive:hover {
+  background: #152019;
+  border-color: #385942;
+}
+.metric.is-interactive.is-active {
+  background: #18281e;
+  border-color: #4ade80;
+}
+.metric.is-interactive.is-pinned {
+  background: #15272a;
+  border-color: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.25);
+}
+
 /* GPU Mini Cards (Main Dashboard) */
 .gpu-cards-grid {
   display: grid;
@@ -410,6 +429,27 @@ button:active { transform: translateY(1px); }
   font-size: 10.5px;
   color: #a4b5aa;
   gap: 4px;
+}
+.gpu-card-vram-row.is-interactive {
+  cursor: pointer;
+  padding: 2px 4px;
+  margin-left: -4px;
+  margin-right: -4px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.gpu-card-vram-row.is-interactive:hover {
+  background: #18271e;
+}
+.gpu-card-vram-row.is-interactive.is-active {
+  background: #1a3224;
+}
+.gpu-card-vram-row.is-interactive.is-pinned {
+  background: #152c34;
+}
+.gpu-card-vram-row.is-pinned .vram-val {
+  color: #38bdf8;
 }
 .vram-label {
   color: #8da194;
@@ -812,4 +852,208 @@ input:focus {
   .page-window { padding: 14px; }
   .form-grid { grid-template-columns: 1fr; }
   .candidate-item { flex-direction: column; align-items: flex-start; gap: 8px; }
+}
+
+/* User Resource Breakdown Popup */
+.user-usage-popup {
+  position: fixed;
+  z-index: 10000;
+  width: 290px;
+  max-width: calc(100vw - 16px);
+  background: rgba(17, 23, 19, 0.98);
+  backdrop-filter: blur(12px);
+  border: 1px solid #2e3e33;
+  border-radius: 9px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  padding: 12px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: inherit;
+  color: #e6ece8;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  pointer-events: auto;
+}
+
+.user-usage-popup.is-pinned {
+  border-color: #38bdf8;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+.user-popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.user-popup-title-area {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.user-popup-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #f2f7f4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
+.user-popup-mode-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #7a8c80;
+  letter-spacing: 0.3px;
+}
+
+.user-popup-mode-badge.pinned {
+  color: #38bdf8;
+}
+
+.user-popup-close-btn {
+  background: transparent;
+  border: none;
+  color: #7a8c80;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.12s ease;
+}
+
+.user-popup-close-btn:hover {
+  color: #ffffff;
+  background: #253328;
+}
+
+.user-popup-status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #7e9185;
+  padding-bottom: 2px;
+  border-bottom: 1px solid #1f2c22;
+}
+
+.user-popup-status {
+  font-weight: 600;
+}
+.user-popup-status.status-ok { color: #85e89d; }
+.user-popup-status.status-partial { color: #ffd37a; }
+.user-popup-status.status-unavailable { color: #ffa198; }
+
+.user-popup-count {
+  color: #6d7e73;
+}
+
+.user-popup-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.user-popup-empty {
+  font-size: 11px;
+  color: #728377;
+  padding: 8px 0;
+  text-align: center;
+}
+
+.user-rows-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.user-usage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #141c16;
+  gap: 8px;
+}
+
+.user-usage-row:hover {
+  background: #1a251d;
+}
+
+.user-usage-row.is-system {
+  background: #101612;
+  color: #7e8f83;
+}
+
+.user-usage-row .user-name {
+  font-weight: 500;
+  color: #d8e2dc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.user-usage-row.is-system .user-name {
+  color: #7e8f83;
+  font-style: italic;
+}
+
+.user-usage-row .user-value {
+  font-weight: 700;
+  font-feature-settings: "tnum";
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.user-usage-row.is-system .user-value {
+  color: #92a497;
+  font-weight: 600;
+}
+
+.user-expand-toggle {
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: #162219;
+  border: 1px solid #283a2c;
+  color: #85e89d;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s ease;
+  width: 100%;
+}
+
+.user-expand-toggle:hover {
+  background: #1e3023;
+  border-color: #3b5842;
+  color: #aff5c8;
+}
+
+.user-popup-divider {
+  height: 1px;
+  background: #1f2c22;
+  margin: 2px 0;
+}
+
+.user-popup-footer {
+  font-size: 9px;
+  color: #63756a;
+  line-height: 1.3;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed #1a251d;
 }

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useMonitorStore } from '../stores/monitor'
 import { useEdgeDocking } from '../composables/useEdgeDocking'
+import { useUserUsagePopup } from '../composables/useUserUsagePopup'
 import ServerCard from '../components/ServerCard.vue'
+import UserUsagePopup from '../components/UserUsagePopup.vue'
 
 const store = useMonitorStore()
 const showIntervalMenu = ref(false)
@@ -16,6 +18,22 @@ const {
   isHidden,
   toggleAutoHide,
 } = useEdgeDocking()
+
+const {
+  currentTarget,
+  isPinned,
+  isExpanded,
+  popupCoords,
+  close: closePopup,
+  toggleExpand: togglePopupExpand,
+  onPopupMouseEnter,
+  onPopupMouseLeave,
+} = useUserUsagePopup()
+
+const currentSnapshot = computed(() => {
+  if (!currentTarget.value) return undefined
+  return store.snapshots[currentTarget.value.serverId]
+})
 
 const startDragging = async (event: MouseEvent) => {
   if (event.button !== 0) return
@@ -127,5 +145,18 @@ const selectInterval = async (val: number) => {
         <button @click="store.openWindow('manage')">Open Manage</button>
       </div>
     </section>
+
+    <!-- User Resource Usage Breakdown Popup -->
+    <UserUsagePopup
+      :target="currentTarget"
+      :snapshot="currentSnapshot"
+      :is-pinned="isPinned"
+      :expanded="isExpanded"
+      :coords="popupCoords"
+      @close="closePopup(true)"
+      @toggle-expand="togglePopupExpand"
+      @mouseenter="onPopupMouseEnter"
+      @mouseleave="onPopupMouseLeave"
+    />
   </section>
 </template>
