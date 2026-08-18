@@ -190,57 +190,6 @@ button:active { transform: translateY(1px); }
 }
 .muted { color: #85968b; font-size: 12px; }
 
-.interval-badge {
-  background: #18291d;
-  color: #8fd3a8;
-  border: 1px solid #2b5437;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-}
-.interval-controls {
-  display: grid;
-  gap: 10px;
-  margin-top: 10px;
-}
-.preset-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.preset-buttons button {
-  padding: 5px 12px;
-  font-size: 12px;
-  background: #17201a;
-  border: 1px solid #253329;
-  border-radius: 6px;
-  cursor: pointer;
-  color: #cdd9d1;
-  transition: all 0.15s ease;
-}
-.preset-buttons button:hover {
-  border-color: #3f5f49;
-  background: #1f2b23;
-}
-.preset-buttons button.active {
-  background: #1b3824;
-  border-color: #488b5d;
-  color: #85e89d;
-  font-weight: 600;
-}
-.custom-interval {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #9bb0a2;
-}
-.custom-interval input {
-  width: 70px;
-  padding: 4px 8px;
-}
-
 .server-list, .manage-list { display: grid; gap: 10px; }
 
 .server-card, .manage-row {

@@ -42,6 +42,7 @@
   - 动态阈值变色：GPU 利用率默认使用绿色（`#4ade80`），负荷高于 80% 时自动切换为珊瑚红警示（`#f87171`）；显存进度条默认使用天青色（`#38bdf8`），高于 80% 时同步变红；数字文字保持恒定纯白色（`#ffffff`），保持统一与高辨识度；
   - 自适应多列布局：采用 CSS 响应式网格布局，在默认宽度及自由拉伸窗口时支持每行并排展示 2 张（或更多）显卡迷你卡片，大幅缩减竖向高度占用。
 - 优化服务器卡片头部信息排布与紧凑度：将原本独立占据整行卡片的 GPU 数量（如 `4 GPUs`）与主机名（如 `amax-BD4908P`）整合收敛至服务器名称下方的副标题小字（`server_host · hostname · X GPUs`），主指标区精简聚焦为 CPU 与 MEM 双列并排，极大地节省了卡片垂直空间。
+- 精简管理界面（Manage View）：由于主界面已内置交互式下拉菜单支持秒级点选刷新频率，管理界面移除了冗余的“采样刷新频率”控制卡片，使管理界面纯粹聚焦于 SSH 别名发现与服务器列表管理。
 
 #### 未完成
 
@@ -84,6 +85,7 @@
 - Display only checked/monitored servers on the main floating dashboard: filtered server cards by `monitored === true` and added cross-window `servers.changed` broadcast so changes in Manage reflect immediately on the main dashboard without showing unselected servers.
 - Added responsive multi-column layout and dynamic utilization threshold colors for GPU mini-cards: rendered GPU cards in 2+ columns responsive to window resize, using green default for GPU core utilization with automatic coral red transition when exceeding 80%, cyan for VRAM, and clean white numbers consistently.
 - Streamlined server card header metadata and metrics layout: consolidated GPU count and host name into a clean, muted subtitle line under the server name (`server_host · hostname · X GPUs`), focusing the main metric grid into a compact, balanced 2-column CPU and MEM display.
+- Decluttered Manage window: removed the redundant monitoring interval setting card from Manage view since cadence can now be configured directly and interactively on the main floating widget.
 
 #### Remaining
 
