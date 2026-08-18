@@ -54,22 +54,30 @@ button:active { transform: translateY(1px); }
 }
 
 .widget-window.is-hidden {
-  border-color: rgba(74, 222, 128, 0.7);
-  box-shadow: 0 0 16px rgba(74, 222, 128, 0.4);
+  border-radius: 0 !important;
+  background: #0d100e !important;
+  border-color: #343a36 !important;
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.95), 0 0 10px rgba(74, 222, 128, 0.4) !important;
   cursor: pointer;
-  background: #111512 !important;
+  opacity: 1 !important;
 }
 .widget-window.is-hidden.dock-left {
-  border-right-width: 5px;
-  border-right-color: #4ade80;
+  border-right: 4px solid #4ade80 !important;
+  border-left: none !important;
+  border-top: none !important;
+  border-bottom: none !important;
 }
 .widget-window.is-hidden.dock-right {
-  border-left-width: 5px;
-  border-left-color: #4ade80;
+  border-left: 4px solid #4ade80 !important;
+  border-right: none !important;
+  border-top: none !important;
+  border-bottom: none !important;
 }
 .widget-window.is-hidden.dock-top {
-  border-bottom-width: 5px;
-  border-bottom-color: #4ade80;
+  border-bottom: 4px solid #4ade80 !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
 }
 
 .edge-btn, .pin-btn {

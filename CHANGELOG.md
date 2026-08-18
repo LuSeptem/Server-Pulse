@@ -46,8 +46,8 @@
 - 增强管理界面添加服务器字段提示：在 SSH alias / hostname 输入框中增加明确的 IP 与别名示例提示（`123.23.23.23 / gpu-01`），支持用户直接输入远程服务器 IP 或别名。
 - 实现主窗口贴靠屏幕上、左、右三边自动吸附与隐藏（Edge Auto-Hide）：
   - 严格对齐老版本贴边逻辑与按钮交互：默认开启贴边自动隐藏（`autoHide = true`），右上角按钮显示为贴边按钮（`⇥` / `⇤`），高亮绿色代表“已开启贴边隐藏”（点击可关闭）；
-  - Win32 原生工作区与贴边探测：在 Windows 原生层利用 `GetMonitorInfoW` 与 `MonitorFromWindow` 准确获取排除任务栏的有效工作区，并在拖拽时实现 35px 阈值及超出边界自适应回弹吸附；
-  - Win32 全局光标追踪（Global Cursor Tracking）与 8px 深色顶层边缘把手：引入原生 `GetCursorPos` 每 80ms 周期巡检全局鼠标物理位置，并在屏幕边缘保留 8px 顶层深黑发光把手；同时严格加锁隐藏态下的坐标保护，防止异步移动事件覆盖正常唤出位置；鼠标靠近屏幕边缘（<= 16px）必定立即唤出并置顶主窗口；
+  - 屏幕有效工作区缓存（`savedWorkArea`）与贴边探测：在吸附时刻准确锁定当前显示器的有效工作区与窗口尺寸，杜绝隐藏后多屏或屏幕外判定跳变导致坐标错位；
+  - Win32 全局光标追踪（Global Cursor Tracking）与 8px 无圆角深黑发光手柄：引入原生 `GetCursorPos` 每 75ms 周期巡检全局物理光标，隐藏时在屏幕边缘呈现 8px 纯色直角黑边手柄（`#0d100e` 搭配 `4px #4ade80` 亮绿发光外框）；光标靠近屏幕边缘 24px 范围内必定 100% 触发平滑展开并激活置顶；
   - 移出自动收起与动画：鼠标离开窗口区域 600ms（或失焦 300ms）后自动平滑缩进隐藏；下拉菜单处于展开操作状态时暂停自动收起，窗口被拖离边缘（> 35px）时自动解除贴边状态。
 
 #### 未完成
@@ -93,7 +93,7 @@
 - Streamlined server card header metadata and metrics layout: consolidated GPU count and host name into a clean, muted subtitle line under the server name (`server_host · hostname · X GPUs`), focusing the main metric grid into a compact, balanced 2-column CPU and MEM display.
 - Decluttered Manage window: removed the redundant monitoring interval setting card from Manage view since cadence can now be configured directly and interactively on the main floating widget.
 - Added clear IP address and hostname example hints to the Add Server form: updated field label to `SSH alias / Hostname / IP` and placeholder to `123.23.23.23 / gpu-01`.
-- Implemented top, left, and right screen edge docking and auto-hide: integrated Win32 `GetMonitorInfoW` work area calculation, native `GetCursorPos` global cursor tracking, 8px topmost visible edge handles, strict hidden-state position protection, 150ms smooth sliding animations, hover-to-reveal with 600ms debounce hide, dropdown interaction protection, and persistent EdgeButton toggle.
+- Implemented top, left, and right screen edge docking and auto-hide: integrated locked `savedWorkArea` caching, native `GetCursorPos` global cursor tracking, 8px topmost solid sharp edge handles, 150ms smooth sliding animations, hover-to-reveal with 600ms debounce hide, dropdown interaction protection, and persistent EdgeButton toggle.
 
 #### Remaining
 

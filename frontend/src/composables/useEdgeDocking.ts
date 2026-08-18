@@ -29,6 +29,8 @@ export function useEdgeDocking(options?: {
   const isAnimating = ref(false)
 
   const shownPos = ref<{ x: number; y: number } | null>(null)
+  const savedWorkArea = ref<{ x: number; y: number; width: number; height: number; windowWidth: number; windowHeight: number } | null>(null)
+
   let hideTimer: number | null = null
   let moveDebounceTimer: number | null = null
   let pollInterval: number | null = null
@@ -56,7 +58,7 @@ export function useEdgeDocking(options?: {
   }
 
   async function checkDocking(force = false) {
-    // CRITICAL: Never evaluate or overwrite docking positions while hidden, dragging, or animating!
+    // Never evaluate or overwrite docking positions while hidden, dragging, or animating!
     if (isHidden.value || isDragging.value || isInternalMove || isAnimating.value) return
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
@@ -98,6 +100,14 @@ export function useEdgeDocking(options?: {
 
       if (side !== 'none') {
         shownPos.value = { x: targetX, y: targetY }
+        savedWorkArea.value = {
+          x: bounds.monitorX,
+          y: bounds.monitorY,
+          width: bounds.monitorWidth,
+          height: bounds.monitorHeight,
+          windowWidth: bounds.windowWidth,
+          windowHeight: bounds.windowHeight,
+        }
         if (bounds.windowX !== targetX || bounds.windowY !== targetY) {
           isInternalMove = true
           await invoke('set_main_window_position', { x: targetX, y: targetY })
@@ -108,6 +118,7 @@ export function useEdgeDocking(options?: {
         }
       } else {
         shownPos.value = { x: bounds.windowX, y: bounds.windowY }
+        savedWorkArea.value = null
         clearHideTimer()
       }
     } catch {
@@ -125,22 +136,31 @@ export function useEdgeDocking(options?: {
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       const scale = bounds.scaleFactor || 1.0
-      // Retain 8px dark handle on the visible screen edge, matching legacy WPF baseline
+      // 8px visible handle strip at the edge (matching legacy WPF 7-8px)
       const handlePx = Math.max(8, Math.round(8 * scale))
 
       const basePos = shownPos.value || { x: bounds.windowX, y: bounds.windowY }
+      const workArea = savedWorkArea.value || {
+        x: bounds.monitorX,
+        y: bounds.monitorY,
+        width: bounds.monitorWidth,
+        height: bounds.monitorHeight,
+        windowWidth: bounds.windowWidth,
+        windowHeight: bounds.windowHeight,
+      }
+
       let hiddenX = basePos.x
       let hiddenY = basePos.y
 
       if (dockSide.value === 'left') {
-        hiddenX = bounds.monitorX - bounds.windowWidth + handlePx
+        hiddenX = workArea.x - workArea.windowWidth + handlePx
         hiddenY = basePos.y
       } else if (dockSide.value === 'right') {
-        hiddenX = bounds.monitorX + bounds.monitorWidth - handlePx
+        hiddenX = workArea.x + workArea.width - handlePx
         hiddenY = basePos.y
       } else if (dockSide.value === 'top') {
         hiddenX = basePos.x
-        hiddenY = bounds.monitorY - bounds.windowHeight + handlePx
+        hiddenY = workArea.y - workArea.windowHeight + handlePx
       }
 
       isAnimating.value = true
@@ -241,40 +261,41 @@ export function useEdgeDocking(options?: {
     if (isDragging.value || isAnimating.value) return
     try {
       const [cx, cy] = await invoke<[number, number]>('get_cursor_position')
-      const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
-      const scale = bounds.scaleFactor || 1.0
-      const edgeHitThreshold = Math.max(16, Math.round(16 * scale))
+      const workArea = savedWorkArea.value
+      const pos = shownPos.value
 
-      if (isHidden.value && dockSide.value !== 'none' && shownPos.value) {
+      if (isHidden.value && dockSide.value !== 'none' && workArea && pos) {
         let touches = false
+        const edgeThreshold = 24
+
         if (dockSide.value === 'right') {
           touches =
-            cx >= bounds.monitorX + bounds.monitorWidth - edgeHitThreshold &&
-            cy >= shownPos.value.y - 20 &&
-            cy <= shownPos.value.y + bounds.windowHeight + 20
+            cx >= workArea.x + workArea.width - edgeThreshold &&
+            cy >= pos.y - 30 &&
+            cy <= pos.y + workArea.windowHeight + 30
         } else if (dockSide.value === 'left') {
           touches =
-            cx <= bounds.monitorX + edgeHitThreshold &&
-            cy >= shownPos.value.y - 20 &&
-            cy <= shownPos.value.y + bounds.windowHeight + 20
+            cx <= workArea.x + edgeThreshold &&
+            cy >= pos.y - 30 &&
+            cy <= pos.y + workArea.windowHeight + 30
         } else if (dockSide.value === 'top') {
           touches =
-            cy <= bounds.monitorY + edgeHitThreshold &&
-            cx >= shownPos.value.x - 20 &&
-            cx <= shownPos.value.x + bounds.windowWidth + 20
+            cy <= workArea.y + edgeThreshold &&
+            cx >= pos.x - 30 &&
+            cx <= pos.x + workArea.windowWidth + 30
         }
 
         if (touches) {
           isHovering.value = true
           void reveal()
         }
-      } else if (!isHidden.value && dockSide.value !== 'none' && shownPos.value) {
+      } else if (!isHidden.value && dockSide.value !== 'none' && workArea && pos) {
         // When shown, check if cursor is inside the window
         const insideWindow =
-          cx >= shownPos.value.x &&
-          cx <= shownPos.value.x + bounds.windowWidth &&
-          cy >= shownPos.value.y &&
-          cy <= shownPos.value.y + bounds.windowHeight
+          cx >= pos.x &&
+          cx <= pos.x + workArea.windowWidth &&
+          cy >= pos.y &&
+          cy <= pos.y + workArea.windowHeight
 
         if (insideWindow) {
           isHovering.value = true
@@ -307,10 +328,10 @@ export function useEdgeDocking(options?: {
       // Listener fallback
     }
 
-    // High precision polling for global cursor tracking (80ms), matching legacy $cursorTimer
+    // High precision polling for global cursor tracking (75ms), matching legacy $cursorTimer
     pollInterval = window.setInterval(() => {
       void pollGlobalCursor()
-    }, 80)
+    }, 75)
 
     void checkDocking(true)
   })
