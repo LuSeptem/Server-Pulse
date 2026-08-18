@@ -34,7 +34,6 @@ export function useEdgeDocking(options?: {
   let pollInterval: number | null = null
   let isInternalMove = false
   let unlistenMove: UnlistenFn | null = null
-  let lastCheckedPos: { x: number; y: number } | null = null
 
   function clearHideTimer() {
     if (hideTimer !== null) {
@@ -57,19 +56,10 @@ export function useEdgeDocking(options?: {
   }
 
   async function checkDocking(force = false) {
-    if (isDragging.value || isInternalMove || isAnimating.value) return
+    // CRITICAL: Never evaluate or overwrite docking positions while hidden, dragging, or animating!
+    if (isHidden.value || isDragging.value || isInternalMove || isAnimating.value) return
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
-      if (
-        !force &&
-        lastCheckedPos &&
-        lastCheckedPos.x === bounds.windowX &&
-        lastCheckedPos.y === bounds.windowY &&
-        dockSide.value !== 'none'
-      ) {
-        return
-      }
-      lastCheckedPos = { x: bounds.windowX, y: bounds.windowY }
 
       if (!autoHideEnabled.value) {
         dockSide.value = 'none'
@@ -135,20 +125,21 @@ export function useEdgeDocking(options?: {
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       const scale = bounds.scaleFactor || 1.0
-      // Leave 12px visible handle on screen
-      const handlePx = Math.max(12, Math.round(12 * scale))
+      // Retain 8px dark handle on the visible screen edge, matching legacy WPF baseline
+      const handlePx = Math.max(8, Math.round(8 * scale))
 
-      let hiddenX = bounds.windowX
-      let hiddenY = bounds.windowY
+      const basePos = shownPos.value || { x: bounds.windowX, y: bounds.windowY }
+      let hiddenX = basePos.x
+      let hiddenY = basePos.y
 
       if (dockSide.value === 'left') {
         hiddenX = bounds.monitorX - bounds.windowWidth + handlePx
-        hiddenY = shownPos.value ? shownPos.value.y : bounds.windowY
+        hiddenY = basePos.y
       } else if (dockSide.value === 'right') {
         hiddenX = bounds.monitorX + bounds.monitorWidth - handlePx
-        hiddenY = shownPos.value ? shownPos.value.y : bounds.windowY
+        hiddenY = basePos.y
       } else if (dockSide.value === 'top') {
-        hiddenX = shownPos.value ? shownPos.value.x : bounds.windowX
+        hiddenX = basePos.x
         hiddenY = bounds.monitorY - bounds.windowHeight + handlePx
       }
 
@@ -172,7 +163,7 @@ export function useEdgeDocking(options?: {
 
   async function reveal() {
     clearHideTimer()
-    if (!shownPos.value || isAnimating.value) {
+    if (!isHidden.value || !shownPos.value || isAnimating.value) {
       isHidden.value = false
       return
     }
@@ -190,6 +181,10 @@ export function useEdgeDocking(options?: {
       })
       isAnimating.value = false
       isInternalMove = false
+      try {
+        await getCurrentWindow().setAlwaysOnTop(true)
+        await getCurrentWindow().setFocus()
+      } catch {}
     } catch {
       isAnimating.value = false
       isInternalMove = false
@@ -248,25 +243,25 @@ export function useEdgeDocking(options?: {
       const [cx, cy] = await invoke<[number, number]>('get_cursor_position')
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       const scale = bounds.scaleFactor || 1.0
-      const edgeHitThreshold = Math.max(20, Math.round(20 * scale))
+      const edgeHitThreshold = Math.max(16, Math.round(16 * scale))
 
       if (isHidden.value && dockSide.value !== 'none' && shownPos.value) {
         let touches = false
         if (dockSide.value === 'right') {
           touches =
             cx >= bounds.monitorX + bounds.monitorWidth - edgeHitThreshold &&
-            cy >= shownPos.value.y - 30 &&
-            cy <= shownPos.value.y + bounds.windowHeight + 30
+            cy >= shownPos.value.y - 20 &&
+            cy <= shownPos.value.y + bounds.windowHeight + 20
         } else if (dockSide.value === 'left') {
           touches =
             cx <= bounds.monitorX + edgeHitThreshold &&
-            cy >= shownPos.value.y - 30 &&
-            cy <= shownPos.value.y + bounds.windowHeight + 30
+            cy >= shownPos.value.y - 20 &&
+            cy <= shownPos.value.y + bounds.windowHeight + 20
         } else if (dockSide.value === 'top') {
           touches =
             cy <= bounds.monitorY + edgeHitThreshold &&
-            cx >= shownPos.value.x - 30 &&
-            cx <= shownPos.value.x + bounds.windowWidth + 30
+            cx >= shownPos.value.x - 20 &&
+            cx <= shownPos.value.x + bounds.windowWidth + 20
         }
 
         if (touches) {
@@ -298,22 +293,24 @@ export function useEdgeDocking(options?: {
     window.addEventListener('blur', handleWindowBlur)
     try {
       unlistenMove = await getCurrentWindow().onMoved(() => {
-        if (isInternalMove || isAnimating.value) return
+        if (isHidden.value || isInternalMove || isAnimating.value) return
         if (moveDebounceTimer !== null) {
           clearTimeout(moveDebounceTimer)
         }
         moveDebounceTimer = window.setTimeout(() => {
-          void checkDocking(true)
+          if (!isHidden.value && !isInternalMove && !isAnimating.value) {
+            void checkDocking(true)
+          }
         }, 120)
       })
     } catch {
       // Listener fallback
     }
 
-    // High precision polling for global cursor tracking (100ms), matching legacy $cursorTimer
+    // High precision polling for global cursor tracking (80ms), matching legacy $cursorTimer
     pollInterval = window.setInterval(() => {
       void pollGlobalCursor()
-    }, 100)
+    }, 80)
 
     void checkDocking(true)
   })
