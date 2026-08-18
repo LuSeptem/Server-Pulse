@@ -1,5 +1,7 @@
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 
 export interface WindowMonitorBounds {
   monitorX: number
@@ -27,6 +29,9 @@ export function useEdgeDocking(options?: {
 
   const shownPos = ref<{ x: number; y: number } | null>(null)
   let hideTimer: number | null = null
+  let moveDebounceTimer: number | null = null
+  let isInternalMove = false
+  let unlistenMove: UnlistenFn | null = null
 
   function clearHideTimer() {
     if (hideTimer !== null) {
@@ -49,11 +54,11 @@ export function useEdgeDocking(options?: {
   }
 
   async function checkDocking() {
-    if (isPinned.value || isDragging.value) return
+    if (isPinned.value || isDragging.value || isInternalMove || isAnimating.value) return
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       const scale = bounds.scaleFactor || 1.0
-      const threshold = Math.round(25 * scale)
+      const threshold = Math.max(35, Math.round(35 * scale))
 
       const leftDist = bounds.windowX - bounds.monitorX
       const rightDist = (bounds.monitorX + bounds.monitorWidth) - (bounds.windowX + bounds.windowWidth)
@@ -63,13 +68,13 @@ export function useEdgeDocking(options?: {
       let targetX = bounds.windowX
       let targetY = bounds.windowY
 
-      if (leftDist <= threshold && leftDist >= -100) {
+      if (leftDist <= threshold && leftDist >= -Math.round(bounds.windowWidth / 2)) {
         side = 'left'
         targetX = bounds.monitorX
-      } else if (rightDist <= threshold && rightDist >= -100) {
+      } else if (rightDist <= threshold && rightDist >= -Math.round(bounds.windowWidth / 2)) {
         side = 'right'
         targetX = bounds.monitorX + bounds.monitorWidth - bounds.windowWidth
-      } else if (topDist <= threshold && topDist >= -100) {
+      } else if (topDist <= threshold && topDist >= -Math.round(bounds.windowHeight / 2)) {
         side = 'top'
         targetY = bounds.monitorY
       }
@@ -78,7 +83,10 @@ export function useEdgeDocking(options?: {
 
       if (side !== 'none') {
         shownPos.value = { x: targetX, y: targetY }
+        isInternalMove = true
         await invoke('set_main_window_position', { x: targetX, y: targetY })
+        isInternalMove = false
+
         if (!isHovering.value && !options?.isMenuOpen?.()) {
           scheduleHide(600)
         }
@@ -87,7 +95,7 @@ export function useEdgeDocking(options?: {
         clearHideTimer()
       }
     } catch {
-      // Window might not be ready or closed
+      isInternalMove = false
     }
   }
 
@@ -101,7 +109,7 @@ export function useEdgeDocking(options?: {
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       const scale = bounds.scaleFactor || 1.0
-      const handlePx = Math.round(6 * scale)
+      const handlePx = Math.max(6, Math.round(6 * scale))
 
       let hiddenX = bounds.windowX
       let hiddenY = bounds.windowY
@@ -118,6 +126,7 @@ export function useEdgeDocking(options?: {
       }
 
       isAnimating.value = true
+      isInternalMove = true
       isHidden.value = true
       await invoke('animate_main_window_position', {
         fromX: bounds.windowX,
@@ -127,8 +136,10 @@ export function useEdgeDocking(options?: {
         durationMs: 150,
       })
       isAnimating.value = false
+      isInternalMove = false
     } catch {
       isAnimating.value = false
+      isInternalMove = false
     }
   }
 
@@ -141,6 +152,7 @@ export function useEdgeDocking(options?: {
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       isAnimating.value = true
+      isInternalMove = true
       isHidden.value = false
       await invoke('animate_main_window_position', {
         fromX: bounds.windowX,
@@ -150,8 +162,10 @@ export function useEdgeDocking(options?: {
         durationMs: 150,
       })
       isAnimating.value = false
+      isInternalMove = false
     } catch {
       isAnimating.value = false
+      isInternalMove = false
       isHidden.value = false
     }
   }
@@ -193,6 +207,43 @@ export function useEdgeDocking(options?: {
     isDragging.value = false
     await checkDocking()
   }
+
+  const handleWindowBlur = () => {
+    isHovering.value = false
+    if (!isPinned.value && dockSide.value !== 'none' && !options?.isMenuOpen?.()) {
+      scheduleHide(300)
+    }
+  }
+
+  onMounted(async () => {
+    window.addEventListener('blur', handleWindowBlur)
+    try {
+      unlistenMove = await getCurrentWindow().onMoved(() => {
+        if (isInternalMove || isAnimating.value) return
+        if (moveDebounceTimer !== null) {
+          clearTimeout(moveDebounceTimer)
+        }
+        moveDebounceTimer = window.setTimeout(() => {
+          void checkDocking()
+        }, 120)
+      })
+    } catch {
+      // Listener fallback
+    }
+    void checkDocking()
+  })
+
+  onUnmounted(() => {
+    window.removeEventListener('blur', handleWindowBlur)
+    clearHideTimer()
+    if (moveDebounceTimer !== null) {
+      clearTimeout(moveDebounceTimer)
+    }
+    if (unlistenMove) {
+      unlistenMove()
+      unlistenMove = null
+    }
+  })
 
   return {
     isPinned,

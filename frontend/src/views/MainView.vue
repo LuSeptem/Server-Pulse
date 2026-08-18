@@ -60,6 +60,7 @@ const selectInterval = async (val: number) => {
       ['dock-' + dockSide]: dockSide !== 'none'
     }"
     @mouseenter="onMouseEnter"
+    @mousemove="onMouseEnter"
     @mouseleave="onMouseLeave"
     @mousedown="startDragging"
     @click="showIntervalMenu = false"
