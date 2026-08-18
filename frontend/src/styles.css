@@ -71,8 +71,8 @@ button:active { transform: translateY(1px); }
 .widget-window.is-hidden {
   border-radius: 0 !important;
   background: #0d100e !important;
-  border-color: #343a36 !important;
-  box-shadow: 0 0 16px rgba(0, 0, 0, 0.95), 0 0 12px rgba(74, 222, 128, 0.5) !important;
+  border: 1px solid #343a36 !important;
+  box-shadow: none !important;
   cursor: pointer;
   opacity: 1 !important;
 }
@@ -81,7 +81,7 @@ button:active { transform: translateY(1px); }
 .edge-dock-indicator {
   position: absolute;
   background: #4ade80;
-  box-shadow: 0 0 10px rgba(74, 222, 128, 0.9), 0 0 3px #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.9);
   z-index: 99999;
   pointer-events: none;
 }
@@ -89,19 +89,19 @@ button:active { transform: translateY(1px); }
   top: 0;
   bottom: 0;
   right: 0;
-  width: 5px;
+  width: 6px;
 }
 .edge-dock-indicator.right {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 5px;
+  width: 6px;
 }
 .edge-dock-indicator.top {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 5px;
+  height: 6px;
 }
 
 .edge-btn, .pin-btn {

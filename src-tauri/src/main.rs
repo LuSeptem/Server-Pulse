@@ -923,54 +923,53 @@ fn start_edge_dock_worker(
 
                 if inside {
                     hide_countdown_ticks = 12; // 600ms
+                } else if hide_countdown_ticks > 0 {
+                    hide_countdown_ticks -= 1;
                 } else {
-                    if hide_countdown_ticks > 0 {
-                        hide_countdown_ticks -= 1;
-                        // Hide!
-                        state.is_hidden = true;
-                        let _ = app.emit("edge_dock_state", state.clone());
-                        tokio::time::sleep(Duration::from_millis(30)).await;
+                    // Hide!
+                    state.is_hidden = true;
+                    let _ = app.emit("edge_dock_state", state.clone());
+                    tokio::time::sleep(Duration::from_millis(30)).await;
 
-                        let handle_px = 10;
-                        let (to_x, to_y) = match state.dock_side.as_str() {
-                            "left" => (work_left - state.win_width + handle_px, state.shown_y),
-                            "right" => (work_right - handle_px, state.shown_y),
-                            "top" => (state.shown_x, work_top - state.win_height + handle_px),
-                            _ => (state.shown_x, state.shown_y),
-                        };
+                    let handle_px = 16;
+                    let (to_x, to_y) = match state.dock_side.as_str() {
+                        "left" => (work_left - state.win_width + handle_px, state.shown_y),
+                        "right" => (work_right - handle_px, state.shown_y),
+                        "top" => (state.shown_x, work_top - state.win_height + handle_px),
+                        _ => (state.shown_x, state.shown_y),
+                    };
 
-                        let from_x = rect.left;
-                        let from_y = rect.top;
-                        let steps = 8;
-                        for i in 1..=steps {
-                            let prog = i as f64 / steps as f64;
-                            let ease = 1.0 - (1.0 - prog).powi(2);
-                            let cx = from_x + ((to_x - from_x) as f64 * ease).round() as i32;
-                            let cy = from_y + ((to_y - from_y) as f64 * ease).round() as i32;
-                            unsafe {
-                                SetWindowPos(
-                                    hwnd_isize as HWND,
-                                    HWND_TOPMOST,
-                                    cx,
-                                    cy,
-                                    state.win_width,
-                                    state.win_height,
-                                    SWP_SHOWWINDOW,
-                                );
-                            }
-                            tokio::time::sleep(Duration::from_millis(15)).await;
-                        }
+                    let from_x = rect.left;
+                    let from_y = rect.top;
+                    let steps = 8;
+                    for i in 1..=steps {
+                        let prog = i as f64 / steps as f64;
+                        let ease = 1.0 - (1.0 - prog).powi(2);
+                        let cx = from_x + ((to_x - from_x) as f64 * ease).round() as i32;
+                        let cy = from_y + ((to_y - from_y) as f64 * ease).round() as i32;
                         unsafe {
                             SetWindowPos(
                                 hwnd_isize as HWND,
                                 HWND_TOPMOST,
-                                to_x,
-                                to_y,
+                                cx,
+                                cy,
                                 state.win_width,
                                 state.win_height,
                                 SWP_SHOWWINDOW,
                             );
                         }
+                        tokio::time::sleep(Duration::from_millis(15)).await;
+                    }
+                    unsafe {
+                        SetWindowPos(
+                            hwnd_isize as HWND,
+                            HWND_TOPMOST,
+                            to_x,
+                            to_y,
+                            state.win_width,
+                            state.win_height,
+                            SWP_SHOWWINDOW,
+                        );
                     }
                 }
             } else {
