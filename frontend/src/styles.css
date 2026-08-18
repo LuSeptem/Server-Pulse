@@ -54,21 +54,22 @@ button:active { transform: translateY(1px); }
 }
 
 .widget-window.is-hidden {
-  border-color: rgba(74, 222, 128, 0.55);
-  box-shadow: 0 0 20px rgba(74, 222, 128, 0.25);
+  border-color: rgba(74, 222, 128, 0.7);
+  box-shadow: 0 0 16px rgba(74, 222, 128, 0.4);
   cursor: pointer;
+  background: #111512 !important;
 }
 .widget-window.is-hidden.dock-left {
-  border-left-width: 4px;
-  border-left-color: #4ade80;
-}
-.widget-window.is-hidden.dock-right {
-  border-right-width: 4px;
+  border-right-width: 5px;
   border-right-color: #4ade80;
 }
+.widget-window.is-hidden.dock-right {
+  border-left-width: 5px;
+  border-left-color: #4ade80;
+}
 .widget-window.is-hidden.dock-top {
-  border-top-width: 4px;
-  border-top-color: #4ade80;
+  border-bottom-width: 5px;
+  border-bottom-color: #4ade80;
 }
 
 .edge-btn, .pin-btn {

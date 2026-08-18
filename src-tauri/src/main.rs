@@ -649,6 +649,36 @@ async fn get_window_monitor_bounds(app: AppHandle) -> Result<WindowMonitorBounds
     let win_pos = window.outer_position().map_err(to_command_error)?;
     let win_size = window.outer_size().map_err(to_command_error)?;
 
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        if let Ok(hwnd) = window.hwnd() {
+            unsafe {
+                let hmon = MonitorFromWindow(hwnd.0 as HWND, MONITOR_DEFAULTTONEAREST);
+                if !hmon.is_null() {
+                    let mut mi: MONITORINFO = std::mem::zeroed();
+                    mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                    if GetMonitorInfoW(hmon, &mut mi) != 0 {
+                        return Ok(WindowMonitorBounds {
+                            monitor_x: mi.rcWork.left,
+                            monitor_y: mi.rcWork.top,
+                            monitor_width: mi.rcWork.right - mi.rcWork.left,
+                            monitor_height: mi.rcWork.bottom - mi.rcWork.top,
+                            scale_factor: scale,
+                            window_x: win_pos.x,
+                            window_y: win_pos.y,
+                            window_width: win_size.width as i32,
+                            window_height: win_size.height as i32,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     let monitor = window
         .current_monitor()
         .map_err(to_command_error)?
@@ -667,6 +697,22 @@ async fn get_window_monitor_bounds(app: AppHandle) -> Result<WindowMonitorBounds
         window_width: win_size.width as i32,
         window_height: win_size.height as i32,
     })
+}
+
+#[tauri::command]
+async fn get_cursor_position() -> Result<(i32, i32), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        use windows_sys::Win32::Foundation::POINT;
+        let mut pt = POINT { x: 0, y: 0 };
+        unsafe {
+            if GetCursorPos(&mut pt) != 0 {
+                return Ok((pt.x, pt.y));
+            }
+        }
+    }
+    Err("Cursor position not available on this platform".to_owned())
 }
 
 #[tauri::command]
@@ -797,6 +843,7 @@ fn main() {
             hide_main_window,
             close_main_window,
             get_window_monitor_bounds,
+            get_cursor_position,
             set_main_window_position,
             animate_main_window_position
         ])

@@ -20,7 +20,7 @@ export type DockSide = 'none' | 'left' | 'right' | 'top'
 export function useEdgeDocking(options?: {
   isMenuOpen?: () => boolean
 }) {
-  // Default to true (auto-hide enabled), aligned with legacy version
+  // Default to true (auto-hide enabled), aligned 1:1 with legacy version
   const autoHideEnabled = ref(localStorage.getItem('serverpulse_autohide') !== 'false')
   const dockSide = ref<DockSide>('none')
   const isHidden = ref(false)
@@ -67,7 +67,6 @@ export function useEdgeDocking(options?: {
         lastCheckedPos.y === bounds.windowY &&
         dockSide.value !== 'none'
       ) {
-        // Position has not changed
         return
       }
       lastCheckedPos = { x: bounds.windowX, y: bounds.windowY }
@@ -136,7 +135,8 @@ export function useEdgeDocking(options?: {
     try {
       const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
       const scale = bounds.scaleFactor || 1.0
-      const handlePx = Math.max(7, Math.round(7 * scale))
+      // Leave 12px visible handle on screen
+      const handlePx = Math.max(12, Math.round(12 * scale))
 
       let hiddenX = bounds.windowX
       let hiddenY = bounds.windowY
@@ -172,7 +172,7 @@ export function useEdgeDocking(options?: {
 
   async function reveal() {
     clearHideTimer()
-    if (!isHidden.value || !shownPos.value || isAnimating.value) {
+    if (!shownPos.value || isAnimating.value) {
       isHidden.value = false
       return
     }
@@ -242,6 +242,58 @@ export function useEdgeDocking(options?: {
     }
   }
 
+  async function pollGlobalCursor() {
+    if (isDragging.value || isAnimating.value) return
+    try {
+      const [cx, cy] = await invoke<[number, number]>('get_cursor_position')
+      const bounds = await invoke<WindowMonitorBounds>('get_window_monitor_bounds')
+      const scale = bounds.scaleFactor || 1.0
+      const edgeHitThreshold = Math.max(20, Math.round(20 * scale))
+
+      if (isHidden.value && dockSide.value !== 'none' && shownPos.value) {
+        let touches = false
+        if (dockSide.value === 'right') {
+          touches =
+            cx >= bounds.monitorX + bounds.monitorWidth - edgeHitThreshold &&
+            cy >= shownPos.value.y - 30 &&
+            cy <= shownPos.value.y + bounds.windowHeight + 30
+        } else if (dockSide.value === 'left') {
+          touches =
+            cx <= bounds.monitorX + edgeHitThreshold &&
+            cy >= shownPos.value.y - 30 &&
+            cy <= shownPos.value.y + bounds.windowHeight + 30
+        } else if (dockSide.value === 'top') {
+          touches =
+            cy <= bounds.monitorY + edgeHitThreshold &&
+            cx >= shownPos.value.x - 30 &&
+            cx <= shownPos.value.x + bounds.windowWidth + 30
+        }
+
+        if (touches) {
+          isHovering.value = true
+          void reveal()
+        }
+      } else if (!isHidden.value && dockSide.value !== 'none' && shownPos.value) {
+        // When shown, check if cursor is inside the window
+        const insideWindow =
+          cx >= shownPos.value.x &&
+          cx <= shownPos.value.x + bounds.windowWidth &&
+          cy >= shownPos.value.y &&
+          cy <= shownPos.value.y + bounds.windowHeight
+
+        if (insideWindow) {
+          isHovering.value = true
+          clearHideTimer()
+        } else if (isHovering.value && !options?.isMenuOpen?.()) {
+          isHovering.value = false
+          scheduleHide(600)
+        }
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
   onMounted(async () => {
     window.addEventListener('blur', handleWindowBlur)
     try {
@@ -258,12 +310,10 @@ export function useEdgeDocking(options?: {
       // Listener fallback
     }
 
-    // Periodic safety check every 300ms
+    // High precision polling for global cursor tracking (100ms), matching legacy $cursorTimer
     pollInterval = window.setInterval(() => {
-      if (!isDragging.value && !isHidden.value && !isAnimating.value) {
-        void checkDocking(false)
-      }
-    }, 300)
+      void pollGlobalCursor()
+    }, 100)
 
     void checkDocking(true)
   })
