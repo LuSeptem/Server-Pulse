@@ -83,7 +83,7 @@ async function submit() {
   const host = form.host.trim()
   const label = form.label.trim() || host
   if (!host) {
-    formError.value = 'SSH alias or hostname is required.'
+    formError.value = 'SSH alias, hostname, or IP address is required.'
     return
   }
   const port = form.port.trim() ? Number.parseInt(form.port.trim(), 10) : null
@@ -207,8 +207,8 @@ async function remove(server: ServerConfig) {
           <input v-model="form.label" placeholder="RTX 3090" autocomplete="off" />
         </label>
         <label class="field">
-          <span>SSH alias / hostname</span>
-          <input v-model="form.host" placeholder="gpu-01" autocomplete="off" required />
+          <span>SSH alias / Hostname / IP</span>
+          <input v-model="form.host" placeholder="123.23.23.23 / gpu-01" autocomplete="off" required />
         </label>
         <label class="field">
           <span>User (optional)</span>
