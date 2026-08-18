@@ -48,6 +48,13 @@ const selectInterval = async (val: number) => {
     @mousedown="startDragging"
     @click="showIntervalMenu = false"
   >
+    <!-- Visual edge dock indicator handle bar -->
+    <div
+      v-if="dockSide !== 'none'"
+      class="edge-dock-indicator"
+      :class="[dockSide, { 'is-hidden': isHidden }]"
+    />
+
     <header class="window-header drag-region" data-tauri-drag-region @mousedown="startDragging">
       <div data-tauri-drag-region>
         <span class="eyebrow" data-tauri-drag-region>SERVER PULSE</span>
