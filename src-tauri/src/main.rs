@@ -1142,6 +1142,25 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .tooltip("Server Pulse")
         .menu(&menu)
         .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
+                    let is_visible = window.is_visible().unwrap_or(false);
+                    if is_visible {
+                        let _ = window.set_focus();
+                    } else {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        })
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
@@ -1190,6 +1209,9 @@ fn main() {
         .manage(AppState::default())
         .setup(|app| {
             setup_tray(app)?;
+            if let Some(main_win) = app.get_webview_window("main") {
+                let _ = main_win.set_skip_taskbar(true);
+            }
             #[cfg(target_os = "windows")]
             {
                 let state = app.state::<AppState>();
