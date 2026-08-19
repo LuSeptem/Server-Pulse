@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, reactive } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { LineChart } from 'echarts/charts'
 import {
@@ -493,13 +493,64 @@ interface PinnedHistoryPopupData {
 
 const pinnedPopup = ref<PinnedHistoryPopupData | null>(null)
 const pinnedExpanded = ref(false)
+const chartLegendState = reactive<Record<string, Record<string, boolean>>>({})
+
+function isSeriesVisible(serverId: string, kind: HistoryChartKind, seriesName: string): boolean {
+  const key = `${serverId}_${kind}`
+  const state = chartLegendState[key]
+  if (!state) return true
+  return state[seriesName] !== false
+}
+
+function handleLegendSelectChange(event: any, serverId: string, kind: HistoryChartKind) {
+  if (!event || !event.selected) return
+  const key = `${serverId}_${kind}`
+  chartLegendState[key] = { ...event.selected }
+
+  // If a popup is currently pinned for this server & chartKind, refresh its filtered data immediately!
+  if (pinnedPopup.value && pinnedPopup.value.server.id === serverId && pinnedPopup.value.chartKind === kind) {
+    const s = pinnedPopup.value.server
+    const idx = pinnedPopup.value.dataIndex
+    const coords = pinnedPopup.value.coords
+    openPinnedPopup(s, idx, kind, coords.x, coords.y)
+  }
+}
 
 function handleChartClick(event: any, server: ServerHistoryRecord, kind: HistoryChartKind) {
   if (!event) return
 
+  // 1. Ignore clicks on legend or non-grid/series components
+  if (event.componentType && event.componentType !== 'series' && event.componentType !== 'grid') {
+    return
+  }
+
+  // 2. Check ZRender target properties (if user clicked on legend text or symbol)
+  if (event.target) {
+    const t = event.target as any
+    if (
+      t.type === 'legend' ||
+      t.__legendItem != null ||
+      t.name === 'legend' ||
+      t.parent?.name === 'legend' ||
+      t.parent?.__legendItem != null
+    ) {
+      return
+    }
+  }
+
   const mouseEvent = (event.event?.event || event.event || event) as MouseEvent
   const clientX = typeof mouseEvent.clientX === 'number' ? mouseEvent.clientX : window.innerWidth / 2 - 150
   const clientY = typeof mouseEvent.clientY === 'number' ? mouseEvent.clientY : 150
+
+  const target = (mouseEvent.target as HTMLElement) || document.querySelector('.history-chart-canvas')
+  const canvas = target?.closest('canvas') || target?.closest('.history-chart-canvas')
+  const rect = canvas ? canvas.getBoundingClientRect() : { width: 600, height: 260 }
+  const offsetY = typeof event.offsetY === 'number' ? event.offsetY : (mouseEvent.offsetY ?? 50)
+
+  // 3. Ignore click if it's in the legend bar (top: 0..36px) or bottom datazoom slider (bottom: 38px)
+  if (offsetY < 36 || (rect.height && offsetY > rect.height - 38)) {
+    return
+  }
 
   let dataIdx: number | null = null
 
@@ -507,10 +558,6 @@ function handleChartClick(event: any, server: ServerHistoryRecord, kind: History
     dataIdx = event.dataIndex
   } else {
     const offsetX = typeof event.offsetX === 'number' ? event.offsetX : (mouseEvent.offsetX ?? 0)
-    const target = (mouseEvent.target as HTMLElement) || document.querySelector('.history-chart-canvas')
-    const canvas = target?.closest('canvas') || target?.closest('.history-chart-canvas')
-    const rect = canvas ? canvas.getBoundingClientRect() : { width: 600 }
-
     const gridLeft = 45
     const gridRight = 20
     const gridWidth = Math.max(10, rect.width - gridLeft - gridRight)
@@ -544,6 +591,13 @@ function handleChartClick(event: any, server: ServerHistoryRecord, kind: History
   const x = Math.min(Math.max(16, clientX + 12), window.innerWidth - popupWidth - 24)
   const y = Math.min(Math.max(16, clientY - 20), Math.max(16, window.innerHeight - popupHeight - 24))
 
+  openPinnedPopup(server, dataIdx, kind, x, y)
+}
+
+function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: HistoryChartKind, x: number, y: number) {
+  const timestamp = server.timestamps[dataIdx]
+  if (!timestamp) return
+
   let title = ''
   let statusLabel = '完整'
   let countLabel = ''
@@ -557,17 +611,35 @@ function handleChartClick(event: any, server: ServerHistoryRecord, kind: History
   let userVrams: { name: string; vramGb: number }[] | undefined
 
   if (kind === 'cpu') {
-    title = `${server.label} · CPU & 内存`
-    cpu = server.cpu[dataIdx]
-    memory = server.memory[dataIdx]
-    cpuUsers = server.cpuUsers[dataIdx]?.users || []
-    memoryUsers = server.memoryUsers[dataIdx]?.users || []
-    statusLabel = `CPU ${cpu != null ? cpu.toFixed(1) + '%' : '—'} · 内存 ${memory != null ? memory.toFixed(1) + '%' : '—'}`
-    const activeCount = (cpuUsers.length > 0 ? cpuUsers.length : 0) + (memoryUsers.length > 0 ? memoryUsers.length : 0)
-    countLabel = `${activeCount} 项用户占用`
+    const isCpuVisible = isSeriesVisible(server.id, 'cpu', 'CPU Utilization')
+    const isMemVisible = isSeriesVisible(server.id, 'cpu', 'System Memory')
+
+    cpu = isCpuVisible ? server.cpu[dataIdx] : null
+    memory = isMemVisible ? server.memory[dataIdx] : null
+    cpuUsers = isCpuVisible ? (server.cpuUsers[dataIdx]?.users || []) : []
+    memoryUsers = isMemVisible ? (server.memoryUsers[dataIdx]?.users || []) : []
+
+    if (isCpuVisible && isMemVisible) {
+      title = `${server.label} · CPU & 内存`
+      statusLabel = `CPU ${cpu != null ? cpu.toFixed(1) + '%' : '—'} · 内存 ${memory != null ? memory.toFixed(1) + '%' : '—'}`
+      countLabel = `${cpuUsers.length + memoryUsers.length} 项用户占用`
+    } else if (isCpuVisible) {
+      title = `${server.label} · CPU 使用率`
+      statusLabel = `CPU ${cpu != null ? cpu.toFixed(1) + '%' : '—'}`
+      countLabel = `${cpuUsers.length} 项 CPU 占用`
+    } else if (isMemVisible) {
+      title = `${server.label} · 系统内存`
+      statusLabel = `内存 ${memory != null ? memory.toFixed(1) + '%' : '—'}`
+      countLabel = `${memoryUsers.length} 项内存占用`
+    } else {
+      title = `${server.label} · CPU & 内存`
+      statusLabel = `已隐藏所有曲线`
+      countLabel = `无可见数据`
+    }
   } else if (kind === 'gpu_vram') {
     title = `${server.label} · GPU 显存占用`
-    gpuVrams = server.gpus.map((g) => ({
+    const visibleGpus = server.gpus.filter((g) => isSeriesVisible(server.id, 'gpu_vram', `GPU ${g.index}: ${g.name}`))
+    gpuVrams = visibleGpus.map((g) => ({
       index: g.index,
       name: g.name,
       vram: g.memoryUsedGb[dataIdx],
@@ -575,26 +647,28 @@ function handleChartClick(event: any, server: ServerHistoryRecord, kind: History
       users: g.userMemory[dataIdx]?.users || [],
     }))
     const totalActiveUsers = gpuVrams.reduce((acc, g) => acc + g.users.length, 0)
-    statusLabel = `${server.gpus.length} 张 GPU`
+    statusLabel = `${visibleGpus.length} 张可见 GPU`
     countLabel = `${totalActiveUsers} 位用户活跃`
   } else if (kind === 'gpu_util') {
     title = `${server.label} · GPU 核心利用率`
-    gpuUtils = server.gpus.map((g) => ({
+    const visibleGpus = server.gpus.filter((g) => isSeriesVisible(server.id, 'gpu_util', `GPU ${g.index}: ${g.name}`))
+    gpuUtils = visibleGpus.map((g) => ({
       index: g.index,
       name: g.name,
       util: g.utilization[dataIdx],
     }))
-    statusLabel = `${server.gpus.length} 张 GPU`
+    statusLabel = `${visibleGpus.length} 张可见 GPU`
     countLabel = `${gpuUtils.filter((g) => (g.util ?? 0) > 1).length} 张运行中`
   } else if (kind === 'gpu_temp') {
     title = `${server.label} · GPU 温度明细`
-    gpuTemps = server.gpus.map((g) => ({
+    const visibleGpus = server.gpus.filter((g) => isSeriesVisible(server.id, 'gpu_temp', `GPU ${g.index}: ${g.name}`))
+    gpuTemps = visibleGpus.map((g) => ({
       index: g.index,
       name: g.name,
       temp: g.temperatureC[dataIdx],
     }))
-    const maxTemp = Math.max(...gpuTemps.map((g) => g.temp ?? 0), 0)
-    statusLabel = `${server.gpus.length} 张 GPU`
+    const maxTemp = gpuTemps.length ? Math.max(...gpuTemps.map((g) => g.temp ?? 0), 0) : 0
+    statusLabel = `${visibleGpus.length} 张可见 GPU`
     countLabel = `最高 ${maxTemp}°C`
   } else if (kind === 'users') {
     title = `${server.label} · 各用户显存占用`
@@ -608,10 +682,11 @@ function handleChartClick(event: any, server: ServerHistoryRecord, kind: History
         }
       }
     }
-    userVrams = Array.from(perUserVramThisTick.entries())
+    const allUserVrams = Array.from(perUserVramThisTick.entries())
       .map(([name, vramGb]) => ({ name, vramGb }))
       .filter((u) => u.vramGb > 0.01)
       .sort((a, b) => b.vramGb - a.vramGb)
+    userVrams = allUserVrams.filter((u) => isSeriesVisible(server.id, 'users', u.name))
     statusLabel = `用户显存`
     countLabel = `${userVrams.length} 位用户活跃`
   }
@@ -661,8 +736,11 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
           </div>`
         }
 
+        const isCpuVisible = params.some((p) => p.seriesName === 'CPU Utilization')
+        const isMemVisible = params.some((p) => p.seriesName === 'System Memory')
+
         const cpuU = server.cpuUsers[dataIdx]
-        if (cpuU && cpuU.users && cpuU.users.length > 0) {
+        if (isCpuVisible && cpuU && cpuU.users && cpuU.users.length > 0) {
           const topCpu = cpuU.users.slice(0, 6)
           html += `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#9cb0a2;">
             <div style="font-weight:600;color:#7dd3fc;margin-bottom:3px;display:flex;justify-content:space-between;">
@@ -682,7 +760,7 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
         }
 
         const memU = server.memoryUsers[dataIdx]
-        if (memU && memU.users && memU.users.length > 0) {
+        if (isMemVisible && memU && memU.users && memU.users.length > 0) {
           const topMem = memU.users.slice(0, 6)
           html += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#9cb0a2;">
             <div style="font-weight:600;color:#86efac;margin-bottom:3px;display:flex;justify-content:space-between;">
@@ -1465,6 +1543,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               :option="getCpuMemOption(server)"
               @click="handleChartClick($event, server, 'cpu')"
               @zr:click="handleChartClick($event, server, 'cpu')"
+              @legendselectchanged="handleLegendSelectChange($event, server.id, 'cpu')"
               autoresize
             />
           </div>
@@ -1481,6 +1560,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               :option="getGpuVramOption(server)"
               @click="handleChartClick($event, server, 'gpu_vram')"
               @zr:click="handleChartClick($event, server, 'gpu_vram')"
+              @legendselectchanged="handleLegendSelectChange($event, server.id, 'gpu_vram')"
               autoresize
             />
           </div>
@@ -1497,6 +1577,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               :option="getGpuUtilOption(server)"
               @click="handleChartClick($event, server, 'gpu_util')"
               @zr:click="handleChartClick($event, server, 'gpu_util')"
+              @legendselectchanged="handleLegendSelectChange($event, server.id, 'gpu_util')"
               autoresize
             />
           </div>
@@ -1513,6 +1594,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               :option="getGpuTempOption(server)"
               @click="handleChartClick($event, server, 'gpu_temp')"
               @zr:click="handleChartClick($event, server, 'gpu_temp')"
+              @legendselectchanged="handleLegendSelectChange($event, server.id, 'gpu_temp')"
               autoresize
             />
           </div>
@@ -1530,6 +1612,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
                 :option="getUserTimelineOption(server)"
                 @click="handleChartClick($event, server, 'users')"
                 @zr:click="handleChartClick($event, server, 'users')"
+                @legendselectchanged="handleLegendSelectChange($event, server.id, 'users')"
                 autoresize
               />
             </div>
