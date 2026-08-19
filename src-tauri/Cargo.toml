@@ -33,7 +33,7 @@ serverpulse-ssh = { path = "crates/serverpulse-ssh" }
 serverpulse-platform = { path = "crates/serverpulse-platform" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm"] }
 
 [features]
 default = ["custom-protocol"]

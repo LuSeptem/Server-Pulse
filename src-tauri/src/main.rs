@@ -1160,6 +1160,59 @@ async fn pull_and_merge_all_records(
     Ok(results)
 }
 
+#[cfg(target_os = "windows")]
+fn apply_window_dark_theme(window: &tauri::WebviewWindow) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE,
+    };
+    if let Ok(hwnd) = window.hwnd() {
+        let hwnd = hwnd.0 as HWND;
+        let dark: i32 = 1;
+        unsafe {
+            // Standard Windows 10 20H1+ and Windows 11 dark mode
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                &dark as *const _ as *const _,
+                std::mem::size_of::<i32>() as u32,
+            );
+            // Fallback attribute 19 for older Windows 10 (1809 - 1909)
+            let old_dark_mode_attr: u32 = 19;
+            DwmSetWindowAttribute(
+                hwnd,
+                old_dark_mode_attr,
+                &dark as *const _ as *const _,
+                std::mem::size_of::<i32>() as u32,
+            );
+            // Windows 11 build 22000+: set caption background to #111713 (COLORREF 0x00131711)
+            let caption_color: u32 = 0x00131711;
+            DwmSetWindowAttribute(
+                hwnd,
+                35, // DWMWA_CAPTION_COLOR
+                &caption_color as *const _ as *const _,
+                std::mem::size_of::<u32>() as u32,
+            );
+            // Title text color: #f2f7f4 (COLORREF 0x00F4F7F2)
+            let text_color: u32 = 0x00F4F7F2;
+            DwmSetWindowAttribute(
+                hwnd,
+                36, // DWMWA_TEXT_COLOR
+                &text_color as *const _ as *const _,
+                std::mem::size_of::<u32>() as u32,
+            );
+            // Window border outline color: #223226 (COLORREF 0x00263222)
+            let border_color: u32 = 0x00263222;
+            DwmSetWindowAttribute(
+                hwnd,
+                34, // DWMWA_BORDER_COLOR
+                &border_color as *const _ as *const _,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+    }
+}
+
 #[tauri::command]
 async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
     let (label, title) = match kind.as_str() {
@@ -1168,6 +1221,8 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
         _ => return Err("unknown window kind".to_owned()),
     };
     if let Some(window) = app.get_webview_window(label) {
+        #[cfg(target_os = "windows")]
+        apply_window_dark_theme(&window);
         let _ = window.set_always_on_top(true);
         window.show().map_err(to_command_error)?;
         window.set_focus().map_err(to_command_error)?;
@@ -1177,7 +1232,7 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
         "history" => (940.0, 700.0),
         _ => (760.0, 600.0),
     };
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         &app,
         label,
         WebviewUrl::App(format!("index.html?view={kind}").into()),
@@ -1185,12 +1240,17 @@ async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
     .title(title)
     .inner_size(width, height)
     .min_inner_size(500.0, 400.0)
+    .theme(Some(tauri::Theme::Dark))
     .resizable(true)
     .always_on_top(true)
     .center()
     .build()
-    .map(|_| ())
-    .map_err(to_command_error)
+    .map_err(to_command_error)?;
+
+    #[cfg(target_os = "windows")]
+    apply_window_dark_theme(&window);
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1757,6 +1817,8 @@ fn main() {
             setup_tray(app)?;
             if let Some(main_win) = app.get_webview_window("main") {
                 let _ = main_win.set_skip_taskbar(true);
+                #[cfg(target_os = "windows")]
+                apply_window_dark_theme(&main_win);
             }
             #[cfg(target_os = "windows")]
             {
