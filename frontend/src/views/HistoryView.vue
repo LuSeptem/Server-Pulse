@@ -128,11 +128,14 @@ function parseCpuUsers(s: any): CpuUserUsageInfo | null {
   if (!usage) return null
   const status = usage.Status || usage.status || 'ok'
   const rawList = Array.isArray(usage.Users) ? usage.Users : (Array.isArray(usage.users) ? usage.users : [])
-  const users: UserUsageEntry[] = rawList.map((u: any) => ({
-    uid: String(u.Uid ?? u.uid ?? ''),
-    name: String(u.Name ?? u.name ?? 'user'),
-    percent: typeof u.Percent === 'number' ? u.Percent : (typeof u.percent === 'number' ? u.percent : 0),
-  }))
+  const users: UserUsageEntry[] = rawList
+    .map((u: any): UserUsageEntry => ({
+      uid: String(u.Uid ?? u.uid ?? ''),
+      name: String(u.Name ?? u.name ?? 'user'),
+      percent: typeof u.Percent === 'number' ? u.Percent : (typeof u.percent === 'number' ? u.percent : 0),
+    }))
+    .filter((u: UserUsageEntry) => (u.percent ?? 0) > 0.01)
+    .sort((a: UserUsageEntry, b: UserUsageEntry) => (b.percent ?? 0) - (a.percent ?? 0))
   return { status, users }
 }
 
@@ -141,12 +144,20 @@ function parseMemoryUsers(s: any): MemoryUserUsageInfo | null {
   if (!usage) return null
   const status = usage.Status || usage.status || 'ok'
   const rawList = Array.isArray(usage.Users) ? usage.Users : (Array.isArray(usage.users) ? usage.users : [])
-  const users: UserUsageEntry[] = rawList.map((u: any) => ({
-    uid: String(u.Uid ?? u.uid ?? ''),
-    name: String(u.Name ?? u.name ?? 'user'),
-    usedMib: typeof u.UsedMiB === 'number' ? u.UsedMiB : (typeof u.usedMib === 'number' ? u.usedMib : 0),
-    percent: typeof u.Percent === 'number' ? u.Percent : (typeof u.percent === 'number' ? u.percent : 0),
-  }))
+  const totalMib = s.MemoryTotalMiB || s.memoryTotalMib || s.TotalMiB || 0
+  const users: UserUsageEntry[] = rawList
+    .map((u: any): UserUsageEntry => {
+      const usedMib = typeof u.UsedMiB === 'number' ? u.UsedMiB : (typeof u.usedMib === 'number' ? u.usedMib : 0)
+      const percent = typeof u.Percent === 'number' ? u.Percent : (typeof u.percent === 'number' ? u.percent : (totalMib > 0 ? (usedMib / totalMib) * 100 : 0))
+      return {
+        uid: String(u.Uid ?? u.uid ?? ''),
+        name: String(u.Name ?? u.name ?? 'user'),
+        usedMib,
+        percent,
+      }
+    })
+    .filter((u: UserUsageEntry) => (u.usedMib ?? 0) > 1 || (u.percent ?? 0) > 0.01)
+    .sort((a: UserUsageEntry, b: UserUsageEntry) => (b.usedMib ?? 0) - (a.usedMib ?? 0))
   return { status, users }
 }
 
@@ -155,12 +166,20 @@ function parseGpuUserMemory(g: any): GpuUserMemoryInfo | null {
   if (!usage) return null
   const status = usage.Status || usage.status || 'ok'
   const rawList = Array.isArray(usage.Users) ? usage.Users : (Array.isArray(usage.users) ? usage.users : [])
-  const users: UserUsageEntry[] = rawList.map((u: any) => ({
-    uid: String(u.Uid ?? u.uid ?? ''),
-    name: String(u.Name ?? u.name ?? 'user'),
-    usedMib: typeof u.UsedMiB === 'number' ? u.UsedMiB : (typeof u.usedMib === 'number' ? u.usedMib : 0),
-    percent: typeof u.Percent === 'number' ? u.Percent : (typeof u.percent === 'number' ? u.percent : 0),
-  }))
+  const totalMib = g.memoryTotalMib || g.MemoryTotalMiB || 0
+  const users: UserUsageEntry[] = rawList
+    .map((u: any): UserUsageEntry => {
+      const usedMib = typeof u.UsedMiB === 'number' ? u.UsedMiB : (typeof u.usedMib === 'number' ? u.usedMib : 0)
+      const percent = typeof u.Percent === 'number' ? u.Percent : (typeof u.percent === 'number' ? u.percent : (totalMib > 0 ? (usedMib / totalMib) * 100 : 0))
+      return {
+        uid: String(u.Uid ?? u.uid ?? ''),
+        name: String(u.Name ?? u.name ?? 'user'),
+        usedMib,
+        percent,
+      }
+    })
+    .filter((u: UserUsageEntry) => (u.usedMib ?? 0) > 1 || (u.percent ?? 0) > 0.01)
+    .sort((a: UserUsageEntry, b: UserUsageEntry) => (b.usedMib ?? 0) - (a.usedMib ?? 0))
   return { status, users }
 }
 
@@ -451,6 +470,76 @@ const filteredServers = computed(() => {
   return serverHistories.value.filter((s) => s.id === selectedServerFilter.value)
 })
 
+interface PinnedHistoryPopupData {
+  server: ServerHistoryRecord
+  dataIndex: number
+  timestamp: string
+  cpu: number | null
+  memory: number | null
+  cpuUsers: UserUsageEntry[]
+  memoryUsers: UserUsageEntry[]
+  gpuList: {
+    index: number
+    name: string
+    vram: number | null
+    totalGb: string
+    util: number | null
+    temp: number | null
+    users: UserUsageEntry[]
+  }[]
+  coords: { x: number; y: number }
+}
+
+const pinnedPopup = ref<PinnedHistoryPopupData | null>(null)
+const pinnedPopupExpanded = ref({
+  cpu: false,
+  mem: false,
+  gpu: false,
+})
+
+function handleChartClick(event: any, server: ServerHistoryRecord) {
+  if (!event || event.dataIndex == null) return
+  const dataIdx = event.dataIndex
+  const timestamp = server.timestamps[dataIdx]
+  if (!timestamp) return
+
+  if (pinnedPopup.value && pinnedPopup.value.server.id === server.id && pinnedPopup.value.dataIndex === dataIdx) {
+    pinnedPopup.value = null
+    return
+  }
+
+  const mouseEvent = (event.event?.event || event.event) as MouseEvent | undefined
+  const clientX = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2 - 160
+  const clientY = mouseEvent ? mouseEvent.clientY : 120
+
+  const popupWidth = 340
+  const popupHeight = 480
+  const x = Math.min(Math.max(16, clientX + 16), window.innerWidth - popupWidth - 24)
+  const y = Math.min(Math.max(16, clientY - 30), Math.max(16, window.innerHeight - popupHeight - 24))
+
+  const gpuList = server.gpus.map((g) => ({
+    index: g.index,
+    name: g.name,
+    vram: g.memoryUsedGb[dataIdx],
+    totalGb: g.totalMib ? (g.totalMib / 1024).toFixed(0) : '?',
+    util: g.utilization[dataIdx],
+    temp: g.temperatureC[dataIdx],
+    users: g.userMemory[dataIdx]?.users || [],
+  }))
+
+  pinnedPopup.value = {
+    server,
+    dataIndex: dataIdx,
+    timestamp,
+    cpu: server.cpu[dataIdx],
+    memory: server.memory[dataIdx],
+    cpuUsers: server.cpuUsers[dataIdx]?.users || [],
+    memoryUsers: server.memoryUsers[dataIdx]?.users || [],
+    gpuList,
+    coords: { x, y },
+  }
+}
+
 const getCpuMemOption = (server: ServerHistoryRecord) => {
   const zoom = getZoomRange(server.timestamps)
   return {
@@ -477,33 +566,47 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
 
         const cpuU = server.cpuUsers[dataIdx]
         if (cpuU && cpuU.users && cpuU.users.length > 0) {
-          const topCpu = cpuU.users.slice(0, 5)
+          const topCpu = cpuU.users.slice(0, 6)
           html += `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#9cb0a2;">
-            <div style="font-weight:600;color:#7dd3fc;margin-bottom:3px;">CPU 用户占用:</div>`
+            <div style="font-weight:600;color:#7dd3fc;margin-bottom:3px;display:flex;justify-content:space-between;">
+              <span>⚡ CPU 用户占用:</span>
+              <span style="font-size:10px;color:#627568;">(${cpuU.users.length} 位活跃)</span>
+            </div>`
           for (const u of topCpu) {
-            html += `<div style="display:flex;justify-content:space-between;gap:12px;color:#c9d6ce;margin:1px 0;">
-              <span>${u.name}${u.uid ? ' (' + u.uid + ')' : ''}</span>
+            html += `<div style="display:flex;justify-content:space-between;gap:12px;color:#c9d6ce;margin:2px 0;">
+              <span>${u.name}${u.uid ? ' <span style="color:#728579;font-size:10px;">(' + u.uid + ')</span>' : ''}</span>
               <span style="color:#e6ece8;font-weight:500;">${(u.percent || 0).toFixed(1)}%</span>
             </div>`
+          }
+          if (cpuU.users.length > 6) {
+            html += `<div style="font-size:10px;color:#627568;text-align:right;margin-top:2px;">点击图表查看全部 ${cpuU.users.length} 位用户</div>`
           }
           html += `</div>`
         }
 
         const memU = server.memoryUsers[dataIdx]
         if (memU && memU.users && memU.users.length > 0) {
-          const topMem = memU.users.slice(0, 5)
+          const topMem = memU.users.slice(0, 6)
           html += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#9cb0a2;">
-            <div style="font-weight:600;color:#86efac;margin-bottom:3px;">系统内存 用户占用:</div>`
+            <div style="font-weight:600;color:#86efac;margin-bottom:3px;display:flex;justify-content:space-between;">
+              <span>💾 系统内存 用户占用:</span>
+              <span style="font-size:10px;color:#627568;">(${memU.users.length} 位活跃)</span>
+            </div>`
           for (const u of topMem) {
             const gb = u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : (u.percent ? (u.percent).toFixed(1) + '%' : '0 GB')
-            html += `<div style="display:flex;justify-content:space-between;gap:12px;color:#c9d6ce;margin:1px 0;">
-              <span>${u.name}${u.uid ? ' (' + u.uid + ')' : ''}</span>
-              <span style="color:#e6ece8;font-weight:500;">${gb} ${u.percent ? '(' + u.percent.toFixed(1) + '%)' : ''}</span>
+            const pct = u.percent ? ` · ${u.percent.toFixed(1)}%` : ''
+            html += `<div style="display:flex;justify-content:space-between;gap:12px;color:#c9d6ce;margin:2px 0;">
+              <span>${u.name}${u.uid ? ' <span style="color:#728579;font-size:10px;">(' + u.uid + ')</span>' : ''}</span>
+              <span style="color:#e6ece8;font-weight:500;">${gb}${pct}</span>
             </div>`
+          }
+          if (memU.users.length > 6) {
+            html += `<div style="font-size:10px;color:#627568;text-align:right;margin-top:2px;">点击图表查看全部 ${memU.users.length} 位用户</div>`
           }
           html += `</div>`
         }
 
+        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
         return html
       },
     },
@@ -622,19 +725,24 @@ const getGpuVramOption = (server: ServerHistoryRecord) => {
             </div>`
 
           if (g && g.userMemory && g.userMemory[dataIdx]?.users?.length) {
+            const activeUsers = g.userMemory[dataIdx]!.users
             html += `<div style="padding-left:14px;margin-top:2px;font-size:11px;color:#9cb0a2;">`
-            for (const u of g.userMemory[dataIdx]!.users) {
+            for (const u of activeUsers.slice(0, 5)) {
               const gb = u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : ''
-              const pct = u.percent ? u.percent.toFixed(1) + '%' : ''
-              html += `<div style="display:flex;justify-content:space-between;gap:10px;color:#b8c7be;">
-                <span>👤 ${u.name}${u.uid ? ' (' + u.uid + ')' : ''}</span>
-                <span style="color:#85e89d;font-weight:500;">${gb} ${pct ? '(' + pct + ')' : ''}</span>
+              const pct = u.percent ? ` · ${u.percent.toFixed(1)}%` : ''
+              html += `<div style="display:flex;justify-content:space-between;gap:10px;color:#b8c7be;margin:1px 0;">
+                <span>👤 ${u.name}${u.uid ? ' <span style="color:#728579;font-size:10px;">(' + u.uid + ')</span>' : ''}</span>
+                <span style="color:#85e89d;font-weight:500;">${gb}${pct}</span>
               </div>`
+            }
+            if (activeUsers.length > 5) {
+              html += `<div style="font-size:10px;color:#627568;text-align:right;">+ 其它 ${activeUsers.length - 5} 位用户</div>`
             }
             html += `</div>`
           }
           html += `</div>`
         }
+        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
         return html
       },
     },
@@ -707,6 +815,7 @@ const getGpuUtilOption = (server: ServerHistoryRecord) => {
             <strong style="color:#ffffff;">${Number(p.value).toFixed(0)}%</strong>
           </div>`
         }
+        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
         return html
       },
     },
@@ -779,6 +888,7 @@ const getGpuTempOption = (server: ServerHistoryRecord) => {
             <strong style="color:#ffffff;">${Number(p.value).toFixed(0)}°C</strong>
           </div>`
         }
+        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
         return html
       },
     },
@@ -882,6 +992,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <strong style="color:#ffffff;">${Number(p.value).toFixed(2)} GB</strong>
           </div>`
         }
+        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
         return html
       },
     },
@@ -927,6 +1038,128 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
 
 <template>
   <section class="page-window history-window">
+    <!-- Pinned Detail Popup for Historical Samples -->
+    <div
+      v-if="pinnedPopup"
+      class="user-usage-popup history-pinned-popup is-pinned"
+      :style="{
+        left: `${pinnedPopup.coords.x}px`,
+        top: `${pinnedPopup.coords.y}px`,
+      }"
+    >
+      <div class="user-popup-header">
+        <div class="user-popup-title-area">
+          <div class="user-popup-title">{{ pinnedPopup.server.label }} · 历史采样明细</div>
+          <div class="user-popup-mode-badge pinned">📌 已固定 · {{ pinnedPopup.timestamp }}</div>
+        </div>
+        <button type="button" class="user-popup-close-btn" title="关闭固定" @click="pinnedPopup = null">✕</button>
+      </div>
+
+      <div class="user-popup-status-bar">
+        <span class="user-popup-status">CPU: {{ pinnedPopup.cpu != null ? pinnedPopup.cpu.toFixed(1) + '%' : '—' }} · 内存: {{ pinnedPopup.memory != null ? pinnedPopup.memory.toFixed(1) + '%' : '—' }}</span>
+        <span class="muted">{{ pinnedPopup.gpuList.length }} GPUs</span>
+      </div>
+
+      <div class="history-popup-scroll">
+        <!-- CPU Users -->
+        <div v-if="pinnedPopup.cpuUsers.length" class="popup-user-section">
+          <div class="popup-section-header">
+            <span class="popup-section-title">⚡ CPU 用户占用</span>
+            <span class="popup-count-badge">{{ pinnedPopup.cpuUsers.length }} 位活跃</span>
+          </div>
+          <div class="popup-user-list">
+            <div
+              v-for="u in (pinnedPopupExpanded.cpu ? pinnedPopup.cpuUsers : pinnedPopup.cpuUsers.slice(0, 5))"
+              :key="u.name"
+              class="user-row"
+            >
+              <div class="user-row-name">
+                <span>{{ u.name }}</span>
+                <span v-if="u.uid" class="user-uid-pill">{{ u.uid }}</span>
+              </div>
+              <strong class="user-row-value">{{ (u.percent || 0).toFixed(1) }}%</strong>
+            </div>
+            <button
+              v-if="pinnedPopup.cpuUsers.length > 5"
+              type="button"
+              class="user-expand-btn"
+              @click="pinnedPopupExpanded.cpu = !pinnedPopupExpanded.cpu"
+            >
+              {{ pinnedPopupExpanded.cpu ? '收起' : `+ 展开其它 ${pinnedPopup.cpuUsers.length - 5} 位用户` }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Memory Users -->
+        <div v-if="pinnedPopup.memoryUsers.length" class="popup-user-section">
+          <div class="popup-section-header">
+            <span class="popup-section-title">💾 系统内存 用户占用</span>
+            <span class="popup-count-badge">{{ pinnedPopup.memoryUsers.length }} 位活跃</span>
+          </div>
+          <div class="popup-user-list">
+            <div
+              v-for="u in (pinnedPopupExpanded.mem ? pinnedPopup.memoryUsers : pinnedPopup.memoryUsers.slice(0, 5))"
+              :key="u.name"
+              class="user-row"
+            >
+              <div class="user-row-name">
+                <span>{{ u.name }}</span>
+                <span v-if="u.uid" class="user-uid-pill">{{ u.uid }}</span>
+              </div>
+              <strong class="user-row-value">
+                {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
+                {{ u.percent ? '· ' + u.percent.toFixed(1) + '%' : '' }}
+              </strong>
+            </div>
+            <button
+              v-if="pinnedPopup.memoryUsers.length > 5"
+              type="button"
+              class="user-expand-btn"
+              @click="pinnedPopupExpanded.mem = !pinnedPopupExpanded.mem"
+            >
+              {{ pinnedPopupExpanded.mem ? '收起' : `+ 展开其它 ${pinnedPopup.memoryUsers.length - 5} 位用户` }}
+            </button>
+          </div>
+        </div>
+
+        <!-- GPU Users -->
+        <div v-if="pinnedPopup.gpuList.length" class="popup-user-section">
+          <div class="popup-section-header">
+            <span class="popup-section-title">🎮 GPU 显存及用户占用</span>
+          </div>
+          <div class="popup-gpu-stack">
+            <div
+              v-for="g in pinnedPopup.gpuList"
+              :key="g.index"
+              class="popup-gpu-card"
+            >
+              <div class="popup-gpu-header">
+                <span class="popup-gpu-title">GPU {{ g.index }}: {{ g.name }}</span>
+                <span class="popup-gpu-vram">{{ g.vram != null ? g.vram.toFixed(1) : '0' }} / {{ g.totalGb }} GB</span>
+              </div>
+              <div v-if="g.users.length" class="popup-user-list sub-list">
+                <div
+                  v-for="u in g.users"
+                  :key="u.name"
+                  class="user-row sub-row"
+                >
+                  <div class="user-row-name">
+                    <span>👤 {{ u.name }}</span>
+                    <span v-if="u.uid" class="user-uid-pill">{{ u.uid }}</span>
+                  </div>
+                  <strong class="user-row-value">
+                    {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
+                    {{ u.percent ? '· ' + u.percent.toFixed(1) + '%' : '' }}
+                  </strong>
+                </div>
+              </div>
+              <div v-else class="empty-gpu-hint">无独立进程占用</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <header class="page-header">
       <div>
         <span class="eyebrow">SERVER PULSE</span>
@@ -1075,7 +1308,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">CPU & System Memory Utilization (%)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getCpuMemOption(server)" autoresize />
+            <VChart class="history-chart-canvas" :option="getCpuMemOption(server)" @click="handleChartClick($event, server)" autoresize />
           </div>
 
           <div
@@ -1085,7 +1318,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">Per-GPU VRAM Usage (GB)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getGpuVramOption(server)" autoresize />
+            <VChart class="history-chart-canvas" :option="getGpuVramOption(server)" @click="handleChartClick($event, server)" autoresize />
           </div>
 
           <div
@@ -1095,7 +1328,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">Per-GPU Core Utilization (%)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getGpuUtilOption(server)" autoresize />
+            <VChart class="history-chart-canvas" :option="getGpuUtilOption(server)" @click="handleChartClick($event, server)" autoresize />
           </div>
 
           <div
@@ -1105,7 +1338,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">Per-GPU Temperature (°C)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getGpuTempOption(server)" autoresize />
+            <VChart class="history-chart-canvas" :option="getGpuTempOption(server)" @click="handleChartClick($event, server)" autoresize />
           </div>
 
           <div
@@ -1116,7 +1349,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               <div class="chart-header">
                 <span class="chart-title">用户显存占用变化曲线 (User VRAM Timeline - GB)</span>
               </div>
-              <VChart class="history-chart-canvas" :option="getUserTimelineOption(server)" autoresize />
+              <VChart class="history-chart-canvas" :option="getUserTimelineOption(server)" @click="handleChartClick($event, server)" autoresize />
             </div>
 
             <div class="user-ranking-grid">
