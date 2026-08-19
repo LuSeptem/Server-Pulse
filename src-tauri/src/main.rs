@@ -7,7 +7,7 @@ use serverpulse_platform::{
     JsonHistoryStore, KeyringCredentialStore,
 };
 use serverpulse_ssh::{SshTarget, SshTransport, SystemOpenSsh};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -747,6 +747,419 @@ async fn apply_import(source: String, target: Option<String>, mode: ConflictMode
     manager.import(std::path::Path::new(&source), &target, mode).map_err(to_command_error)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMergeResult {
+    pub server_id: String,
+    pub status: String,
+    pub pulled_lines: usize,
+    pub added_minutes: usize,
+    pub updated_servers: usize,
+    pub skipped_servers: usize,
+    pub corrupt_lines: usize,
+    pub record_files: usize,
+    pub cursor_utc: Option<String>,
+    pub error: Option<String>,
+}
+
+fn resolve_server_and_target(server_id: &str) -> Result<(ServerConfig, SshTarget, std::path::PathBuf), String> {
+    let data_root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let (_, servers) = writable_servers()?;
+    let server = servers
+        .into_iter()
+        .find(|s| s.id == server_id)
+        .ok_or_else(|| format!("Server not found: {}", server_id))?;
+    let target = target_with_saved_credential(&server);
+    Ok((server, target, data_root))
+}
+
+#[tauri::command]
+async fn get_agent_states() -> Result<HashMap<String, serverpulse_platform::AgentServerState>, String> {
+    let data_root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let state_file = serverpulse_platform::read_agent_state(&data_root);
+    Ok(state_file.servers)
+}
+
+#[tauri::command]
+async fn check_agent_status(server_id: String) -> Result<serverpulse_platform::AgentServerState, String> {
+    let (_server, target, data_root) = resolve_server_and_target(&server_id)?;
+    let ssh = SystemOpenSsh::default();
+    let script = serverpulse_core::generate_agent_status_script();
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
+        serverpulse_platform::AgentServerState {
+            id: server_id.clone(),
+            ..Default::default()
+        }
+    });
+
+    match ssh.execute_short_command(&target, script).await {
+        Ok(output) => {
+            let info = serverpulse_core::parse_agent_status_output(&output.stdout, 30);
+            entry.last_status = info.status.as_str().to_string();
+            entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+            entry.last_error = info.error.unwrap_or_default();
+        }
+        Err(e) => {
+            entry.last_status = "unknown".to_string();
+            entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+            entry.last_error = e.to_string();
+        }
+    }
+    let res = entry.clone();
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn check_all_agent_statuses() -> Result<HashMap<String, serverpulse_platform::AgentServerState>, String> {
+    let data_root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let (_, servers) = writable_servers()?;
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let ssh = SystemOpenSsh::default();
+    let script = serverpulse_core::generate_agent_status_script();
+
+    for server in servers {
+        let target = target_with_saved_credential(&server);
+        let entry = state_file.servers.entry(server.id.clone()).or_insert_with(|| {
+            serverpulse_platform::AgentServerState {
+                id: server.id.clone(),
+                ..Default::default()
+            }
+        });
+
+        match ssh.execute_short_command(&target, script).await {
+            Ok(output) => {
+                let info = serverpulse_core::parse_agent_status_output(&output.stdout, 30);
+                entry.last_status = info.status.as_str().to_string();
+                entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+                entry.last_error = info.error.unwrap_or_default();
+            }
+            Err(e) => {
+                entry.last_status = "unknown".to_string();
+                entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+                entry.last_error = e.to_string();
+            }
+        }
+    }
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+    Ok(state_file.servers)
+}
+
+#[tauri::command]
+async fn deploy_and_start_agent(
+    server_id: String,
+    interval_seconds: u32,
+    retention_days: u32,
+) -> Result<serverpulse_platform::AgentServerState, String> {
+    let (server, target, data_root) = resolve_server_and_target(&server_id)?;
+    let ssh = SystemOpenSsh::default();
+    let agent_sh = serverpulse_core::generate_agent_script(
+        &server.id,
+        &server.label,
+        &server.host,
+        interval_seconds,
+        retention_days,
+        SAMPLE_SCRIPT,
+    );
+    let config_text = serverpulse_core::generate_agent_config(
+        &server.id,
+        &server.label,
+        &server.host,
+        interval_seconds,
+        retention_days,
+    );
+    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text);
+
+    let output = ssh
+        .execute_short_command(&target, &inject_sh)
+        .await
+        .map_err(|e| format!("SSH execution error: {}", e))?;
+
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
+        serverpulse_platform::AgentServerState {
+            id: server_id.clone(),
+            ..Default::default()
+        }
+    });
+
+    entry.interval_seconds = interval_seconds;
+    entry.retention_days = retention_days;
+    entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+
+    if output.stdout.contains("SP_AGENT_RESULT=started") || output.stdout.contains("SP_AGENT_RESULT=already_running") {
+        entry.last_status = "running".to_string();
+        entry.last_error = String::new();
+    } else if let Some(err_line) = output.stdout.lines().find(|l| l.starts_with("SP_AGENT_ERROR=")) {
+        entry.last_status = "stopped".to_string();
+        entry.last_error = err_line.replace("SP_AGENT_ERROR=", "");
+    } else if !output.stderr.is_empty() {
+        entry.last_status = "unknown".to_string();
+        entry.last_error = output.stderr.clone();
+    } else {
+        entry.last_status = "running".to_string();
+        entry.last_error = String::new();
+    }
+
+    let res = entry.clone();
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn stop_agent(server_id: String) -> Result<serverpulse_platform::AgentServerState, String> {
+    let (_server, target, data_root) = resolve_server_and_target(&server_id)?;
+    let ssh = SystemOpenSsh::default();
+    let stop_sh = serverpulse_core::generate_agent_stop_script();
+    let _ = ssh.execute_short_command(&target, stop_sh).await;
+
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
+        serverpulse_platform::AgentServerState {
+            id: server_id.clone(),
+            ..Default::default()
+        }
+    });
+    entry.last_status = "stopped".to_string();
+    entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+    entry.last_error = String::new();
+    let res = entry.clone();
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn restart_agent(server_id: String) -> Result<serverpulse_platform::AgentServerState, String> {
+    let (server, target, data_root) = resolve_server_and_target(&server_id)?;
+    let state_file = serverpulse_platform::read_agent_state(&data_root);
+    let existing_entry = state_file.servers.get(&server_id);
+    let interval = existing_entry.map(|e| e.interval_seconds).unwrap_or(5);
+    let retention = existing_entry.map(|e| e.retention_days).unwrap_or(30);
+
+    let ssh = SystemOpenSsh::default();
+    let stop_sh = serverpulse_core::generate_agent_stop_script();
+    let _ = ssh.execute_short_command(&target, stop_sh).await;
+
+    let agent_sh = serverpulse_core::generate_agent_script(
+        &server.id,
+        &server.label,
+        &server.host,
+        interval,
+        retention,
+        SAMPLE_SCRIPT,
+    );
+    let config_text = serverpulse_core::generate_agent_config(
+        &server.id,
+        &server.label,
+        &server.host,
+        interval,
+        retention,
+    );
+    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text);
+    let _ = ssh.execute_short_command(&target, &inject_sh).await;
+
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
+        serverpulse_platform::AgentServerState {
+            id: server_id.clone(),
+            ..Default::default()
+        }
+    });
+    entry.last_status = "running".to_string();
+    entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+    entry.last_error = String::new();
+    let res = entry.clone();
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn update_agent_config(
+    server_id: String,
+    interval_seconds: u32,
+    retention_days: u32,
+) -> Result<serverpulse_platform::AgentServerState, String> {
+    let (server, target, data_root) = resolve_server_and_target(&server_id)?;
+    let config_text = serverpulse_core::generate_agent_config(
+        &server.id,
+        &server.label,
+        &server.host,
+        interval_seconds,
+        retention_days,
+    );
+    let config_sh = serverpulse_core::generate_agent_config_script(&config_text);
+    let ssh = SystemOpenSsh::default();
+    let _ = ssh.execute_short_command(&target, &config_sh).await;
+
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
+        serverpulse_platform::AgentServerState {
+            id: server_id.clone(),
+            ..Default::default()
+        }
+    });
+    entry.interval_seconds = interval_seconds;
+    entry.retention_days = retention_days;
+    entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+    let res = entry.clone();
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn uninstall_agent(server_id: String) -> Result<serverpulse_platform::AgentServerState, String> {
+    let (_server, target, data_root) = resolve_server_and_target(&server_id)?;
+    let ssh = SystemOpenSsh::default();
+    let uninstall_sh = serverpulse_core::generate_agent_uninstall_script();
+    let _ = ssh.execute_short_command(&target, uninstall_sh).await;
+
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
+        serverpulse_platform::AgentServerState {
+            id: server_id.clone(),
+            ..Default::default()
+        }
+    });
+    entry.last_status = "not_installed".to_string();
+    entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+    entry.last_error = String::new();
+    let res = entry.clone();
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn pull_and_merge_records(
+    server_id: String,
+    clean_remote: bool,
+) -> Result<AgentMergeResult, String> {
+    let (_server, target, data_root) = resolve_server_and_target(&server_id)?;
+    let (_, all_servers) = writable_servers()?;
+    let known_ids: Vec<String> = all_servers.iter().map(|s| s.id.clone()).collect();
+
+    let mut state_file = serverpulse_platform::read_agent_state(&data_root);
+    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
+        serverpulse_platform::AgentServerState {
+            id: server_id.clone(),
+            ..Default::default()
+        }
+    });
+    let cursor_utc = entry.merge_cursor_utc.clone();
+
+    let ssh = SystemOpenSsh::default();
+    let pull_sh = serverpulse_core::generate_agent_pull_script(cursor_utc.as_deref());
+    let output = ssh
+        .execute_short_command(&target, &pull_sh)
+        .await
+        .map_err(|e| format!("SSH pull failed: {}", e))?;
+
+    let pull_result = serverpulse_core::parse_agent_pull_output(
+        &output.stdout,
+        &known_ids,
+        cursor_utc.as_deref(),
+    );
+
+    // Group entries by local_day
+    let mut day_groups: HashMap<String, Vec<serverpulse_core::AgentPulledEntry>> = HashMap::new();
+    for item in pull_result.entries {
+        day_groups.entry(item.local_day.clone()).or_default().push(item);
+    }
+
+    let history_dir = data_root.join("history");
+    let _ = fs::create_dir_all(&history_dir);
+    let mut total_added = 0;
+    let mut total_updated = 0;
+    let mut total_skipped = 0;
+
+    for (day, day_entries) in day_groups {
+        let day_path = history_dir.join(format!("{}.v2.jsonl", day));
+        let existing_lines = if day_path.exists() {
+            fs::read_to_string(&day_path)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let (merged_lines, stats) = serverpulse_core::merge_agent_day_entries(&existing_lines, &day_entries);
+        total_added += stats.added_minutes;
+        total_updated += stats.updated_servers;
+        total_skipped += stats.skipped_servers;
+
+        let content = merged_lines.join("\n") + if merged_lines.is_empty() { "" } else { "\n" };
+        let _ = serverpulse_platform::atomic_write(&day_path, content.as_bytes());
+    }
+
+    // Remote clean if requested
+    if clean_remote {
+        if let Some(max_utc) = &pull_result.max_utc_minute {
+            let clean_sh = serverpulse_core::generate_agent_clean_script(max_utc);
+            let _ = ssh.execute_short_command(&target, &clean_sh).await;
+        }
+    }
+
+    // Update state
+    if let Some(max_utc) = &pull_result.max_utc_minute {
+        entry.merge_cursor_utc = Some(max_utc.clone());
+    }
+    entry.last_merge_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+    entry.last_merge_summary = Some(format!(
+        "Pulled {} lines, added {} minutes, updated {} records.",
+        pull_result.pulled_lines, total_added, total_updated
+    ));
+    let new_cursor = entry.merge_cursor_utc.clone();
+    let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
+
+    Ok(AgentMergeResult {
+        server_id,
+        status: "ok".to_string(),
+        pulled_lines: pull_result.pulled_lines,
+        added_minutes: total_added,
+        updated_servers: total_updated,
+        skipped_servers: total_skipped,
+        corrupt_lines: pull_result.corrupt_lines,
+        record_files: pull_result.record_files,
+        cursor_utc: new_cursor,
+        error: None,
+    })
+}
+
+#[tauri::command]
+async fn pull_and_merge_all_records(
+    clean_remote: bool,
+) -> Result<HashMap<String, AgentMergeResult>, String> {
+    let (_, all_servers) = writable_servers()?;
+    let mut results = HashMap::new();
+    for server in all_servers {
+        match pull_and_merge_records(server.id.clone(), clean_remote).await {
+            Ok(res) => {
+                results.insert(server.id, res);
+            }
+            Err(err) => {
+                results.insert(
+                    server.id.clone(),
+                    AgentMergeResult {
+                        server_id: server.id,
+                        status: "error".to_string(),
+                        pulled_lines: 0,
+                        added_minutes: 0,
+                        updated_servers: 0,
+                        skipped_servers: 0,
+                        corrupt_lines: 0,
+                        record_files: 0,
+                        cursor_utc: None,
+                        error: Some(err),
+                    },
+                );
+            }
+        }
+    }
+    Ok(results)
+}
+
 #[tauri::command]
 async fn open_window(app: AppHandle, kind: String) -> Result<(), String> {
     let (label, title) = match kind.as_str() {
@@ -1384,7 +1797,17 @@ fn main() {
             animate_main_window_position,
             get_edge_dock_state,
             set_edge_dock_autohide,
-            toggle_edge_dock_autohide
+            toggle_edge_dock_autohide,
+            get_agent_states,
+            check_agent_status,
+            check_all_agent_statuses,
+            deploy_and_start_agent,
+            stop_agent,
+            restart_agent,
+            update_agent_config,
+            uninstall_agent,
+            pull_and_merge_records,
+            pull_and_merge_all_records
         ])
         .run(tauri::generate_context!())
         .expect("error while running Server Pulse");

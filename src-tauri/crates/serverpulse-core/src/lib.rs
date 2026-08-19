@@ -4,6 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use thiserror::Error;
 
+pub mod agent;
+pub use agent::*;
+
 pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Error)]
@@ -690,5 +693,53 @@ GPU_USER_STATUS=unavailable"#;
         assert_eq!(servers[0].user.as_deref(), Some("alice"));
         assert_eq!(servers[0].port, Some(22));
         assert!(servers[0].passwordless);
+    }
+
+    #[test]
+    fn agent_script_generation_and_substitution() {
+        let script = generate_agent_script("srv-1", "My Server", "10.0.0.1", 10, 60, "echo SAMPLE");
+        assert!(script.contains("sp_interval=10"));
+        assert!(script.contains("sp_retention_days=60"));
+        assert!(script.contains("sp_server_id=\"srv-1\""));
+        assert!(script.contains("sp_server_label=\"My Server\""));
+        assert!(script.contains("echo SAMPLE"));
+    }
+
+    #[test]
+    fn agent_status_parsing() {
+        let output = "SP_AGENT_INSTALLED=1\nSP_AGENT_STATUS=running\nSP_AGENT_PID=12345\nSP_AGENT_HB_AGE=5\n";
+        let info = parse_agent_status_output(output, 30);
+        assert_eq!(info.status, AgentStatus::Running);
+        assert_eq!(info.pid, Some(12345));
+        assert_eq!(info.heartbeat_age_seconds, Some(5));
+
+        // Stale test
+        let output_stale = "SP_AGENT_INSTALLED=1\nSP_AGENT_STATUS=running\nSP_AGENT_PID=12345\nSP_AGENT_HB_AGE=65\n";
+        let info_stale = parse_agent_status_output(output_stale, 30);
+        assert_eq!(info_stale.status, AgentStatus::Stale);
+
+        // Not installed test
+        let output_none = "SP_AGENT_INSTALLED=0\nSP_AGENT_STATUS=stopped\n";
+        let info_none = parse_agent_status_output(output_none, 30);
+        assert_eq!(info_none.status, AgentStatus::NotInstalled);
+    }
+
+    #[test]
+    fn agent_pull_and_merge_day_entries() {
+        let pull_output = r#"
+__SP_FILE__2026-08-19
+{"Version":2,"Record":{"Timestamp":"2026-08-19T10:00:00Z","SampleCount":12,"Servers":[{"Id":"s1","OnlineSamples":12,"CpuPercent":25.0}]}}
+SP_AGENT_RECORD_FILES=1
+__SP_DONE__
+"#;
+        let known = vec!["s1".to_string()];
+        let pull_res = parse_agent_pull_output(pull_output, &known, None);
+        assert_eq!(pull_res.pulled_lines, 1);
+        assert_eq!(pull_res.entries.len(), 1);
+
+        let existing: Vec<String> = vec![];
+        let (merged, stats) = merge_agent_day_entries(&existing, &pull_res.entries);
+        assert_eq!(stats.added_minutes, 1);
+        assert_eq!(merged.len(), 1);
     }
 }

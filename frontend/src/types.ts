@@ -74,3 +74,32 @@ export interface SshConfigInfo {
   candidates: ServerConfig[]
   error: string | null
 }
+
+export type AgentStatus = 'running' | 'stale' | 'stopped' | 'not_installed' | 'checking' | 'unknown'
+
+export interface AgentServerState {
+  id: string
+  intervalSeconds: number
+  retentionDays: number
+  autoRestoreOnStartup?: boolean
+  mergeCursorUtc?: string | null
+  lastStatus: AgentStatus
+  lastStatusAt?: string | null
+  lastError?: string
+  lastMergeAt?: string | null
+  lastMergeSummary?: string | null
+}
+
+export interface AgentMergeResult {
+  serverId: string
+  status: string
+  pulledLines: number
+  addedMinutes: number
+  updatedServers: number
+  skippedServers: number
+  corruptLines: number
+  recordFiles: number
+  cursorUtc?: string | null
+  error?: string | null
+}
+

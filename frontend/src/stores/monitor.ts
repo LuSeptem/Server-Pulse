@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
-import type { HistoryEntry, MetricSnapshot, ServerConfig, SshConfigInfo } from '../types'
+import type { AgentMergeResult, AgentServerState, HistoryEntry, MetricSnapshot, ServerConfig, SshConfigInfo } from '../types'
 
 interface SnapshotEvent {
   serverId: string
@@ -33,6 +33,9 @@ interface MonitorState {
   sshConfigCandidates: ServerConfig[]
   sshConfigError: string
   intervalSeconds: number
+  agentStates: Record<string, AgentServerState>
+  agentLoading: Record<string, boolean>
+  agentGlobalLoading: boolean
   initialized: boolean
 }
 
@@ -59,6 +62,9 @@ export const useMonitorStore = defineStore('monitor', {
         return 5
       }
     })(),
+    agentStates: {},
+    agentLoading: {},
+    agentGlobalLoading: false,
     initialized: false,
   }),
   getters: {
@@ -310,6 +316,117 @@ export const useMonitorStore = defineStore('monitor', {
       const response = await invoke<{ entries: HistoryEntry[]; corruptLines: number }>('query_history', { day })
       this.history = response.entries
       this.historyCorruptLines = response.corruptLines
+    },
+    async fetchAgentStates() {
+      try {
+        const states = await invoke<Record<string, AgentServerState>>('get_agent_states')
+        this.agentStates = states || {}
+      } catch (err) {
+        console.error('Failed to fetch agent states:', err)
+      }
+    },
+    async checkAgentStatus(serverId: string) {
+      this.agentLoading[serverId] = true
+      try {
+        const state = await invoke<AgentServerState>('check_agent_status', { serverId })
+        this.agentStates = { ...this.agentStates, [serverId]: state }
+        return state
+      } finally {
+        this.agentLoading[serverId] = false
+      }
+    },
+    async checkAllAgentStatuses() {
+      this.agentGlobalLoading = true
+      try {
+        const states = await invoke<Record<string, AgentServerState>>('check_all_agent_statuses')
+        this.agentStates = states || {}
+        return states
+      } finally {
+        this.agentGlobalLoading = false
+      }
+    },
+    async deployAndStartAgent(serverId: string, intervalSeconds = 5, retentionDays = 30) {
+      this.agentLoading[serverId] = true
+      try {
+        const state = await invoke<AgentServerState>('deploy_and_start_agent', {
+          serverId,
+          intervalSeconds,
+          retentionDays,
+        })
+        this.agentStates = { ...this.agentStates, [serverId]: state }
+        return state
+      } finally {
+        this.agentLoading[serverId] = false
+      }
+    },
+    async stopAgent(serverId: string) {
+      this.agentLoading[serverId] = true
+      try {
+        const state = await invoke<AgentServerState>('stop_agent', { serverId })
+        this.agentStates = { ...this.agentStates, [serverId]: state }
+        return state
+      } finally {
+        this.agentLoading[serverId] = false
+      }
+    },
+    async restartAgent(serverId: string) {
+      this.agentLoading[serverId] = true
+      try {
+        const state = await invoke<AgentServerState>('restart_agent', { serverId })
+        this.agentStates = { ...this.agentStates, [serverId]: state }
+        return state
+      } finally {
+        this.agentLoading[serverId] = false
+      }
+    },
+    async updateAgentConfig(serverId: string, intervalSeconds: number, retentionDays: number) {
+      this.agentLoading[serverId] = true
+      try {
+        const state = await invoke<AgentServerState>('update_agent_config', {
+          serverId,
+          intervalSeconds,
+          retentionDays,
+        })
+        this.agentStates = { ...this.agentStates, [serverId]: state }
+        return state
+      } finally {
+        this.agentLoading[serverId] = false
+      }
+    },
+    async uninstallAgent(serverId: string) {
+      this.agentLoading[serverId] = true
+      try {
+        const state = await invoke<AgentServerState>('uninstall_agent', { serverId })
+        this.agentStates = { ...this.agentStates, [serverId]: state }
+        return state
+      } finally {
+        this.agentLoading[serverId] = false
+      }
+    },
+    async pullAndMergeRecords(serverId: string, cleanRemote: boolean) {
+      this.agentLoading[serverId] = true
+      try {
+        const result = await invoke<AgentMergeResult>('pull_and_merge_records', {
+          serverId,
+          cleanRemote,
+        })
+        await this.fetchAgentStates()
+        return result
+      } finally {
+        this.agentLoading[serverId] = false
+      }
+    },
+    async pullAndMergeAllRecords(cleanRemote: boolean) {
+      this.agentGlobalLoading = true
+      try {
+        const results = await invoke<Record<string, AgentMergeResult>>('pull_and_merge_all_records', {
+          cleanRemote,
+        })
+        await this.fetchAgentStates()
+        return results
+      } finally {
+        this.agentGlobalLoading = false
+      }
     },
   },
 })

@@ -443,6 +443,87 @@ impl JsonHistoryStore {
     }
 }
 
+fn default_interval() -> u32 {
+    5
+}
+
+fn default_retention() -> u32 {
+    30
+}
+
+fn default_status() -> String {
+    "unknown".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentServerState {
+    pub id: String,
+    #[serde(default = "default_interval")]
+    pub interval_seconds: u32,
+    #[serde(default = "default_retention")]
+    pub retention_days: u32,
+    #[serde(default)]
+    pub auto_restore_on_startup: bool,
+    pub merge_cursor_utc: Option<String>,
+    #[serde(default = "default_status")]
+    pub last_status: String,
+    pub last_status_at: Option<String>,
+    #[serde(default)]
+    pub last_error: String,
+    pub last_merge_at: Option<String>,
+    pub last_merge_summary: Option<String>,
+}
+
+impl Default for AgentServerState {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            interval_seconds: 5,
+            retention_days: 30,
+            auto_restore_on_startup: false,
+            merge_cursor_utc: None,
+            last_status: "unknown".to_string(),
+            last_status_at: None,
+            last_error: String::new(),
+            last_merge_at: None,
+            last_merge_summary: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentStateFile {
+    #[serde(default = "default_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub servers: std::collections::HashMap<String, AgentServerState>,
+}
+
+fn default_version() -> u32 {
+    1
+}
+
+pub fn read_agent_state(data_root: &Path) -> AgentStateFile {
+    let path = data_root.join("agent-state.json");
+    if let Ok(content) = fs::read_to_string(&path) {
+        let clean = content.trim_start_matches('\u{feff}').trim();
+        if let Ok(state) = serde_json::from_str::<AgentStateFile>(clean) {
+            return state;
+        }
+    }
+    AgentStateFile {
+        version: 1,
+        servers: std::collections::HashMap::new(),
+    }
+}
+
+pub fn save_agent_state(data_root: &Path, state: &AgentStateFile) -> Result<(), ServerPulseError> {
+    let path = data_root.join("agent-state.json");
+    let json = serde_json::to_string_pretty(state)?;
+    atomic_write(&path, json.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,6 +599,39 @@ mod tests {
         ];
         write_server_configs(&root, &updated).expect("write over bom file");
         assert_eq!(read_server_configs(&root).expect("read updated"), Some(updated));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn agent_state_round_trip() {
+        let root = std::env::temp_dir().join(format!("serverpulse-agent-state-{}", unique_suffix()));
+        fs::create_dir_all(&root).expect("temp dir");
+
+        let mut state = AgentStateFile {
+            version: 1,
+            servers: std::collections::HashMap::new(),
+        };
+        state.servers.insert(
+            "s1".to_string(),
+            AgentServerState {
+                id: "s1".to_string(),
+                interval_seconds: 10,
+                retention_days: 60,
+                auto_restore_on_startup: true,
+                merge_cursor_utc: Some("2026-08-19T10:00".to_string()),
+                last_status: "running".to_string(),
+                last_status_at: None,
+                last_error: String::new(),
+                last_merge_at: None,
+                last_merge_summary: None,
+            },
+        );
+
+        save_agent_state(&root, &state).expect("save agent state");
+        let loaded = read_agent_state(&root);
+        assert_eq!(loaded.servers.get("s1").unwrap().interval_seconds, 10);
+        assert_eq!(loaded.servers.get("s1").unwrap().retention_days, 60);
+        assert_eq!(loaded.servers.get("s1").unwrap().last_status, "running");
         let _ = fs::remove_dir_all(root);
     }
 }
