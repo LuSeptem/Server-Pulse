@@ -486,7 +486,9 @@ function Get-ServerPulseHistoryRecords {
                 $match=$timestampPattern.Match($lines[$lineIndex])
                 if($match.Success){
                     $stamp=$match.Groups[1].Value
-                    if([string]::CompareOrdinal($stamp,$startText) -lt 0 -or [string]::CompareOrdinal($stamp,$endText) -gt 0){continue}
+                    if(-not $lines[$lineIndex].Contains('Z') -and -not $lines[$lineIndex].Contains('+')){
+                        if([string]::CompareOrdinal($stamp,$startText) -lt 0 -or [string]::CompareOrdinal($stamp,$endText) -gt 0){continue}
+                    }
                 }
                 $selected.Add($lineIndex)
             }
@@ -507,15 +509,30 @@ function Get-ServerPulseHistoryRecords {
             }
             if($batchFailed){
                 foreach($lineIndex in $selected){
-                    try{$entry=$lines[$lineIndex]|ConvertFrom-Json -ErrorAction Stop;$record=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry};if($null -eq $record.Timestamp){throw '缺少 Timestamp'};$key=[string]$record.Timestamp;if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()};$byMinute[$key].Add($record)}
+                    try{
+                        $entry=$lines[$lineIndex]|ConvertFrom-Json -ErrorAction Stop
+                        $record=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry}
+                        if($null -eq $record.Timestamp){throw '缺少 Timestamp'}
+                        $recTime=ConvertTo-HistoryRecordTime $record
+                        $record.Timestamp=$recTime.ToString('yyyy-MM-ddTHH:mm:ss')
+                        if($recTime -ge $Start -and $recTime -le $End){
+                            $key=[string]$record.Timestamp
+                            if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()}
+                            $byMinute[$key].Add($record)
+                        }
+                    }
                     catch{if($lineIndex -eq $lastNonBlank){Write-HistoryReadError $Recorder ("忽略损坏的 JSONL 末行：{0} 第 {1} 行：{2}" -f $jsonlPath,($lineIndex+1),$_.Exception.Message);continue};throw}
                 }
             } else {
                 foreach($entry in $batchEntries){
                     $record=if($entry.PSObject.Properties.Name -contains 'Record'){$entry.Record}else{$entry}
-                    $key=[string]$record.Timestamp
-                    if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()}
-                    $byMinute[$key].Add($record)
+                    $recTime=ConvertTo-HistoryRecordTime $record
+                    $record.Timestamp=$recTime.ToString('yyyy-MM-ddTHH:mm:ss')
+                    if($recTime -ge $Start -and $recTime -le $End){
+                        $key=[string]$record.Timestamp
+                        if(-not $byMinute.ContainsKey($key)){$byMinute[$key]=[Collections.Generic.List[object]]::new()}
+                        $byMinute[$key].Add($record)
+                    }
                 }
             }
         }
@@ -586,8 +603,11 @@ function ConvertTo-HistoryRecordTime {
     param([Parameter(Mandatory)]$Record)
     $timestamp=Get-HistoryObjectValue $Record @('Timestamp')
     if($timestamp -is [datetime]){return [datetime]$timestamp}
+    $str=([string]$timestamp).Trim()
     $result=[datetime]::MinValue
-    if([datetime]::TryParseExact(([string]$timestamp).Trim(),'yyyy-MM-ddTHH:mm:ss',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$result)){return $result}
+    if([datetime]::TryParseExact($str,'yyyy-MM-ddTHH:mm:ss',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$result)){return $result}
+    if([datetime]::TryParseExact($str,'yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AdjustToUniversal,[ref]$result)){return $result.ToLocalTime()}
+    if([datetime]::TryParse($str,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind,[ref]$result)){return $result.ToLocalTime()}
     throw "无效历史时间：$timestamp"
 }
 
