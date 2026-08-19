@@ -95,12 +95,50 @@ const GPU_COLORS = [
   '#f87171', // Red
 ]
 
+function parseToLocalDate(timestamp: string): Date | null {
+  if (!timestamp) return null
+  try {
+    if (timestamp.endsWith('Z') || timestamp.includes('+') || (timestamp.includes('-') && timestamp.indexOf('-', 8) > 0)) {
+      const d = new Date(timestamp)
+      if (!isNaN(d.getTime())) return d
+    }
+    const clean = timestamp.replace('T', ' ').replace(/\//g, '-')
+    const parts = clean.split(/[- :]/).map(Number)
+    if (parts.length >= 6) {
+      const d = new Date(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5])
+      if (!isNaN(d.getTime())) return d
+    }
+    const d = new Date(timestamp)
+    if (!isNaN(d.getTime())) return d
+  } catch {}
+  return null
+}
+
+function formatLocalTimestamp(timestamp: string): { displayTime: string; fullTime: string } {
+  const d = parseToLocalDate(timestamp)
+  if (d) {
+    const hours = String(d.getHours()).padStart(2, '0')
+    const minutes = String(d.getMinutes()).padStart(2, '0')
+    const seconds = String(d.getSeconds()).padStart(2, '0')
+    const displayTime = `${hours}:${minutes}:${seconds}`
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const dayStr = String(d.getDate()).padStart(2, '0')
+    const fullTime = `${y}-${m}-${dayStr} ${displayTime}`
+    return { displayTime, fullTime }
+  }
+  return { displayTime: timestamp, fullTime: timestamp }
+}
+
 function getZoomRange(timestamps: string[]): { start: number; end: number } {
   if (!timestamps || timestamps.length <= 1) {
     return { start: 0, end: 100 }
   }
-  const lastTime = new Date(timestamps[timestamps.length - 1]).getTime()
-  const firstTime = new Date(timestamps[0]).getTime()
+  const lastD = parseToLocalDate(timestamps[timestamps.length - 1])
+  const firstD = parseToLocalDate(timestamps[0])
+  if (!lastD || !firstD) return { start: 0, end: 100 }
+  const lastTime = lastD.getTime()
+  const firstTime = firstD.getTime()
   const totalDuration = lastTime - firstTime
   const twoHoursMs = 2 * 60 * 60 * 1000
 
@@ -111,8 +149,8 @@ function getZoomRange(timestamps: string[]): { start: number; end: number } {
   const targetTime = lastTime - twoHoursMs
   let targetIdx = 0
   for (let i = timestamps.length - 1; i >= 0; i--) {
-    const t = new Date(timestamps[i]).getTime()
-    if (t < targetTime) {
+    const d = parseToLocalDate(timestamps[i])
+    if (d && d.getTime() < targetTime) {
       targetIdx = i
       break
     }
@@ -137,14 +175,8 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
   for (const entry of store.history) {
     const rec = entry.Record as any
     if (!rec) continue
-    const timestamp = rec.Timestamp || ''
-    let displayTime = timestamp
-    try {
-      const d = new Date(timestamp)
-      if (!isNaN(d.getTime())) {
-        displayTime = d.toLocaleTimeString([], { hour12: false })
-      }
-    } catch {}
+    const rawTimestamp = rec.Timestamp || ''
+    const { displayTime, fullTime } = formatLocalTimestamp(rawTimestamp)
 
     const serversList = Array.isArray(rec.Servers) && rec.Servers.length > 0
       ? rec.Servers
@@ -177,7 +209,7 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
       if (s.Hostname && !item.hostname) item.hostname = s.Hostname
       if (s.Label && (item.label === serverId || !item.label)) item.label = s.Label
 
-      item.timestamps.push(timestamp)
+      item.timestamps.push(fullTime)
       item.displayTimes.push(displayTime)
       item.cpu.push(typeof s.CpuPercent === 'number' ? s.CpuPercent : null)
       item.memory.push(typeof s.MemoryPercent === 'number' ? s.MemoryPercent : null)

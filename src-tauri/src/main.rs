@@ -592,25 +592,28 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
     }
 
     let mut filtered_entries = Vec::new();
-    for entry in all_entries {
+    for mut entry in all_entries {
         let ts_str = entry.record.get("Timestamp").and_then(|v| v.as_str()).unwrap_or_default();
-        let (ts_millis, matched_date) = if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+        let (ts_millis, matched_date, local_iso_str) = if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts_str) {
             let local_dt = parsed.with_timezone(&chrono::Local);
-            (parsed.timestamp_millis(), local_dt.date_naive())
+            (parsed.timestamp_millis(), local_dt.date_naive(), local_dt.format("%Y-%m-%dT%H:%M:%S").to_string())
         } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S") {
             let local_dt = naive.and_local_timezone(chrono::Local).earliest()
                 .unwrap_or_else(|| naive.and_utc().with_timezone(&chrono::Local));
-            (local_dt.timestamp_millis(), naive.date())
+            (local_dt.timestamp_millis(), naive.date(), naive.format("%Y-%m-%dT%H:%M:%S").to_string())
         } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y/%m/%d %H:%M:%S") {
             let local_dt = naive.and_local_timezone(chrono::Local).earliest()
                 .unwrap_or_else(|| naive.and_utc().with_timezone(&chrono::Local));
-            (local_dt.timestamp_millis(), naive.date())
+            (local_dt.timestamp_millis(), naive.date(), naive.format("%Y-%m-%dT%H:%M:%S").to_string())
         } else {
             continue;
         };
 
         if matched_date == target_date {
-            let key = format!("{}:{}", ts_str, entry.record);
+            if let Some(obj) = entry.record.as_object_mut() {
+                obj.insert("Timestamp".to_owned(), serde_json::Value::String(local_iso_str));
+            }
+            let key = format!("{}:{}", ts_millis, entry.record);
             if seen_keys.insert(key) {
                 filtered_entries.push((ts_millis, entry));
             }
