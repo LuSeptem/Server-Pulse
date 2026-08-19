@@ -88,33 +88,30 @@ const selectInterval = async (val: number) => {
         >
           <svg
             class="edge-btn-icon"
-            viewBox="0 0 16 16"
+            viewBox="0 0 20 20"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
             <rect
-              x="2"
-              y="2.5"
-              width="12"
-              height="11"
-              rx="2"
+              x="2.5"
+              y="3"
+              width="15"
+              height="14"
+              rx="2.5"
               stroke="currentColor"
-              stroke-width="1.2"
-              stroke-opacity="0.6"
+              stroke-width="1.6"
+              stroke-opacity="0.8"
             />
-            <line
-              x1="11.5"
-              y1="3"
-              x2="11.5"
-              y2="13"
+            <path
+              d="M13.5 3.5V16.5"
               stroke="currentColor"
-              stroke-width="1.8"
+              stroke-width="2.2"
               stroke-linecap="round"
             />
             <path
-              d="M5 8H8.5M8.5 8L6.5 6M8.5 8L6.5 10"
+              d="M5.5 10H10.5M10.5 10L8 7.5M10.5 10L8 12.5"
               stroke="currentColor"
-              stroke-width="1.3"
+              stroke-width="1.6"
               stroke-linecap="round"
               stroke-linejoin="round"
             />

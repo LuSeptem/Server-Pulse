@@ -142,13 +142,13 @@ button:active { transform: translateY(1px); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
+  width: 28px;
   height: 25px;
   padding: 0;
   border-radius: 6px;
   background: #18221b;
   border: 1px solid #2b392f;
-  color: #8fa093;
+  color: #9db2a5;
   transition: all 0.15s ease;
   user-select: none;
   cursor: pointer;
@@ -157,18 +157,19 @@ button:active { transform: translateY(1px); }
 .edge-btn:hover, .pin-btn:hover {
   background: #243428;
   border-color: #3f6149;
-  color: #d8e5dc;
+  color: #ffffff;
 }
 .edge-btn.active, .pin-btn.active {
   background: #15321f;
   border-color: #428056;
   color: #85e89d;
-  box-shadow: 0 0 8px rgba(74, 222, 128, 0.2);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.25);
 }
 
 .edge-btn-icon {
-  width: 14px;
-  height: 14px;
+  width: 17px;
+  height: 17px;
+  display: block;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .edge-btn.active .edge-btn-icon {
