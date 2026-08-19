@@ -174,26 +174,34 @@ function getAgentState(serverId: string): AgentServerState | undefined {
   return store.agentStates[serverId]
 }
 
-function getAgentStatusDisplay(serverId: string): { label: string; class: string } {
-  if (store.agentLoading[serverId]) {
-    return { label: '⏳ 检测中...', class: 'agent-status-checking' }
-  }
+function getAgentStatusLabel(serverId: string): string {
+  if (store.agentLoading[serverId]) return '检测中...'
   const state = store.agentStates[serverId]
-  if (!state || state.lastStatus === 'unknown') {
-    return { label: '❓ 未知', class: 'agent-status-unknown' }
-  }
+  if (!state || state.lastStatus === 'unknown') return '状态未知'
   switch (state.lastStatus) {
     case 'running':
-      return { label: '🟢 常驻运行中', class: 'agent-status-running' }
+      return '运行中'
     case 'stale':
-      return { label: '🟡 心跳超时', class: 'agent-status-stale' }
+      return '心跳异常'
     case 'stopped':
-      return { label: '⚪ 已停止', class: 'agent-status-stopped' }
+      return '已停止'
     case 'not_installed':
-      return { label: '⚪ 未部署', class: 'agent-status-not_installed' }
+      return '未部署'
     default:
-      return { label: '❓ 未知', class: 'agent-status-unknown' }
+      return '未知'
   }
+}
+
+function getAgentDotClass(serverId: string): string {
+  if (store.agentLoading[serverId]) return 'dot-checking'
+  const state = store.agentStates[serverId]
+  return 'dot-' + (state?.lastStatus ?? 'unknown')
+}
+
+function getAgentLabelClass(serverId: string): string {
+  if (store.agentLoading[serverId]) return 'label-checking'
+  const state = store.agentStates[serverId]
+  return 'label-' + (state?.lastStatus ?? 'unknown')
 }
 
 async function handleCheckAgent(server: ServerConfig) {
@@ -367,11 +375,11 @@ async function handleExecuteUninstall() {
       </div>
       <div class="page-actions">
         <button title="刷新所有 Agent 状态" @click="handleCheckAllAgents">
-          <span v-if="store.agentGlobalLoading">⏳ 刷新中...</span>
-          <span v-else>🔄 刷新 Agent</span>
+          <span v-if="store.agentGlobalLoading">刷新中...</span>
+          <span v-else>刷新 Agent</span>
         </button>
         <button class="primary-button" title="一键同步所有服务器历史记录" @click="openSyncAllModal">
-          📥 一键同步所有
+          一键同步所有
         </button>
         <button title="Reload SSH config" @click="reloadServers">Reload SSH</button>
         <button class="primary-button" @click="showForm = !showForm">{{ showForm ? 'Cancel' : '+ Add server' }}</button>
@@ -482,52 +490,59 @@ async function handleExecuteUninstall() {
               />
             </label>
             <div class="server-meta">
-              <strong>{{ server.label }}</strong>
-              <span class="muted">{{ server.host }} · {{ server.user ?? 'SSH config user' }}<template v-if="server.port"> · {{ server.port }}</template></span>
+              <div class="server-name-row">
+                <strong>{{ server.label }}</strong>
+                <span class="auth-badge">{{ server.passwordless ? 'Passwordless' : 'Keyring' }}</span>
+              </div>
+              <span class="server-endpoint">{{ server.host }} · {{ server.user ?? 'SSH config' }}<template v-if="server.port">:{{ server.port }}</template></span>
             </div>
           </div>
           <div class="manage-actions">
-            <span class="auth-mode">{{ server.passwordless ? 'Passwordless' : 'Saved password' }}</span>
             <span class="status-pill" :class="'status-' + (store.statuses[server.id] ?? 'stopped').split(':')[0]" :title="'实时监控状态: ' + (store.statuses[server.id] ?? 'stopped')">
               {{ store.statuses[server.id] ?? 'stopped' }}
             </span>
-            <button class="danger-button" @click="remove(server)">Remove</button>
+            <button class="ghost-danger-btn" title="Remove server" @click="remove(server)">Remove</button>
           </div>
         </div>
 
         <!-- Bottom row: Persistent Agent Management -->
-        <div class="agent-row">
-          <div class="agent-info">
-            <span class="agent-title">
-              <span class="agent-icon">🤖</span>
-              常驻监控:
+        <div class="agent-tier">
+          <div class="agent-summary">
+            <span class="agent-dot" :class="getAgentDotClass(server.id)"></span>
+            <span class="agent-name">常驻监控</span>
+            <span class="agent-status-label" :class="getAgentLabelClass(server.id)">
+              {{ getAgentStatusLabel(server.id) }}
             </span>
-            <span class="agent-status-badge" :class="getAgentStatusDisplay(server.id).class">
-              {{ getAgentStatusDisplay(server.id).label }}
-            </span>
-            <span v-if="getAgentState(server.id)" class="agent-meta-text">
-              采样: {{ getAgentState(server.id)?.intervalSeconds ?? 5 }}s · 保留: {{ getAgentState(server.id)?.retentionDays ?? 30 }}天
+            <span v-if="getAgentState(server.id)" class="agent-metrics-meta">
+              · {{ getAgentState(server.id)?.intervalSeconds ?? 5 }}s 采样 / {{ getAgentState(server.id)?.retentionDays ?? 30 }}天保留
               <template v-if="getAgentState(server.id)?.lastMergeAt">
-                · 上次同步: {{ getAgentState(server.id)?.mergeCursorUtc ?? '已同步' }}
+                · {{ getAgentState(server.id)?.mergeCursorUtc ? '游标 ' + getAgentState(server.id)?.mergeCursorUtc : '已同步' }}
               </template>
             </span>
-            <span v-if="getAgentState(server.id)?.lastError" class="error-text" :title="getAgentState(server.id)?.lastError">
-              ⚠️ {{ getAgentState(server.id)?.lastError }}
+            <span v-if="getAgentState(server.id)?.lastError" class="agent-err-badge" :title="getAgentState(server.id)?.lastError">
+              ! 异常
             </span>
           </div>
 
-          <div class="agent-actions">
+          <div class="agent-controls">
             <button
-              class="agent-btn"
+              class="agent-control-btn"
               title="检测该服务器 Agent 状态"
               :disabled="store.agentLoading[server.id]"
               @click="handleCheckAgent(server)"
             >
-              🔄 检测
+              检测
+            </button>
+            <button
+              class="agent-control-btn"
+              title="设置采样间隔与保留天数"
+              @click="openConfigModal(server)"
+            >
+              设置
             </button>
             <template v-if="getAgentState(server.id)?.lastStatus === 'running' || getAgentState(server.id)?.lastStatus === 'stale'">
               <button
-                class="agent-btn"
+                class="agent-control-btn"
                 title="重启常驻监控进程"
                 :disabled="store.agentLoading[server.id]"
                 @click="handleRestartAgent(server)"
@@ -535,46 +550,47 @@ async function handleExecuteUninstall() {
                 重启
               </button>
               <button
-                class="agent-btn"
+                class="agent-control-btn"
                 title="停止常驻监控进程"
                 :disabled="store.agentLoading[server.id]"
                 @click="handleStopAgent(server)"
               >
                 停止
               </button>
+              <button
+                class="agent-control-btn sync-btn"
+                title="拉取服务器常驻监控记录并合并到本地历史"
+                :disabled="store.agentLoading[server.id]"
+                @click="openSyncModal(server)"
+              >
+                同步
+              </button>
             </template>
             <template v-else>
               <button
-                class="agent-btn primary-button"
+                class="agent-control-btn deploy-btn"
                 title="部署并在服务器后台启动常驻监控"
                 :disabled="store.agentLoading[server.id]"
                 @click="handleDeployAndStart(server)"
               >
-                🚀 部署/启动
+                部署启动
+              </button>
+              <button
+                class="agent-control-btn sync-btn"
+                title="同步已有历史数据"
+                :disabled="store.agentLoading[server.id]"
+                @click="openSyncModal(server)"
+              >
+                同步
               </button>
             </template>
             <button
-              class="agent-btn"
-              title="设置采样间隔与保留天数"
-              @click="openConfigModal(server)"
-            >
-              ⚙️ 设置
-            </button>
-            <button
-              class="agent-btn primary-button"
-              title="拉取服务器常驻监控记录并合并到本地历史"
-              :disabled="store.agentLoading[server.id]"
-              @click="openSyncModal(server)"
-            >
-              📥 同步数据
-            </button>
-            <button
               v-if="getAgentState(server.id)?.lastStatus !== 'not_installed'"
-              class="agent-btn danger-button"
+              class="agent-control-btn uninstall-btn"
               title="卸载服务器上的常驻监控并删除~/.serverpulse目录"
               @click="openUninstallModal(server)"
             >
-              🗑️ 卸载
+              卸载
             </button>
           </div>
         </div>
