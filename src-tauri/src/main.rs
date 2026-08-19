@@ -278,10 +278,12 @@ fn spawn_monitoring_task(
                 Ok(snapshot) => {
                     retry.reset();
                     sequence = sequence.saturating_add(1);
-                    let now = Utc::now();
-                    let timestamp = now.to_rfc3339_opts(SecondsFormat::Secs, true);
-                    let local_day = chrono::Local::now().format("%Y-%m-%d").to_string();
-                    if let (Some(store), Ok(line)) = (&history_store, history_line(&server, &timestamp, &snapshot)) {
+                    let now_utc = Utc::now();
+                    let event_timestamp = now_utc.to_rfc3339_opts(SecondsFormat::Secs, true);
+                    let local_now = chrono::Local::now();
+                    let history_timestamp = local_now.format("%Y-%m-%dT%H:%M:%S").to_string();
+                    let local_day = local_now.format("%Y-%m-%d").to_string();
+                    if let (Some(store), Ok(line)) = (&history_store, history_line(&server, &history_timestamp, &snapshot)) {
                         let _ = store.append_jsonl(&local_day, &line);
                     }
                     state_snapshots.lock().await.insert(id.clone(), snapshot.clone());
@@ -291,7 +293,7 @@ fn spawn_monitoring_task(
                         "server.snapshot",
                         SnapshotEvent {
                             server_id: id.clone(),
-                            timestamp,
+                            timestamp: event_timestamp,
                             sequence,
                             payload: snapshot,
                         },
@@ -592,13 +594,25 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
     let mut filtered_entries = Vec::new();
     for entry in all_entries {
         let ts_str = entry.record.get("Timestamp").and_then(|v| v.as_str()).unwrap_or_default();
-        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+        let (ts_millis, matched_date) = if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts_str) {
             let local_dt = parsed.with_timezone(&chrono::Local);
-            if local_dt.date_naive() == target_date {
-                let key = format!("{}:{}", ts_str, entry.record);
-                if seen_keys.insert(key) {
-                    filtered_entries.push((parsed.timestamp_millis(), entry));
-                }
+            (parsed.timestamp_millis(), local_dt.date_naive())
+        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S") {
+            let local_dt = naive.and_local_timezone(chrono::Local).earliest()
+                .unwrap_or_else(|| naive.and_utc().with_timezone(&chrono::Local));
+            (local_dt.timestamp_millis(), naive.date())
+        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y/%m/%d %H:%M:%S") {
+            let local_dt = naive.and_local_timezone(chrono::Local).earliest()
+                .unwrap_or_else(|| naive.and_utc().with_timezone(&chrono::Local));
+            (local_dt.timestamp_millis(), naive.date())
+        } else {
+            continue;
+        };
+
+        if matched_date == target_date {
+            let key = format!("{}:{}", ts_str, entry.record);
+            if seen_keys.insert(key) {
+                filtered_entries.push((ts_millis, entry));
             }
         }
     }
