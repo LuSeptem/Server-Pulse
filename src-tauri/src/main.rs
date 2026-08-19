@@ -1138,10 +1138,21 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
         .items(&[&show, &hide, &servers, &history, &quit])
         .build()?;
-    TrayIconBuilder::new()
+
+    let icon_image = tauri::image::Image::from_bytes(include_bytes!("../../assets/server-pulse.ico"))
+        .ok()
+        .or_else(|| app.default_window_icon().cloned());
+
+    let mut builder = TrayIconBuilder::new()
         .tooltip("Server Pulse")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+
+    if let Some(icon) = icon_image {
+        builder = builder.icon(icon);
+    }
+
+    builder
         .on_tray_icon_event(|tray, event| {
             if let tauri::tray::TrayIconEvent::Click {
                 button: tauri::tray::MouseButton::Left,
