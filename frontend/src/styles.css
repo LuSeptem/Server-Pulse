@@ -983,6 +983,121 @@ input:focus {
   width: 100%;
 }
 
+/* User Attribution Analysis in History */
+.user-attribution-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.user-ranking-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.user-ranking-card {
+  background: #0f1611;
+  border: 1px solid #1c2a1f;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-ranking-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8fd3a8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #1c2a1f;
+}
+
+.user-ranking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.user-ranking-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.12s ease;
+}
+
+.user-ranking-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.user-info-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.user-name-text {
+  font-weight: 600;
+  color: #e6ece8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-uid-pill {
+  font-size: 9.5px;
+  color: #728579;
+  background: #141c16;
+  border: 1px solid #202e24;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.user-gpu-tag {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.user-value-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.user-peak-val {
+  font-weight: 600;
+  color: #85e89d;
+  font-feature-settings: "tnum";
+}
+
+.user-avg-val {
+  font-size: 10.5px;
+  color: #6e8275;
+  font-feature-settings: "tnum";
+}
+
+.no-users-hint {
+  font-size: 11px;
+  color: #63756a;
+  padding: 8px 0;
+  text-align: center;
+}
+
 .empty-state-card {
   background: #141c16;
   border: 1px dashed #243527;
