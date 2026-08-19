@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use chrono::{NaiveDate, SecondsFormat, Utc};
-use serverpulse_core::{history_day, AppError, MetricSnapshot, RetryState, ServerConfig};
+use serverpulse_core::{AppError, MetricSnapshot, RetryState, ServerConfig};
 use serverpulse_platform::{
     read_server_configs, write_server_configs, ConflictMode, CredentialStore, DataRootManager,
     JsonHistoryStore, KeyringCredentialStore,
@@ -280,8 +280,9 @@ fn spawn_monitoring_task(
                     sequence = sequence.saturating_add(1);
                     let now = Utc::now();
                     let timestamp = now.to_rfc3339_opts(SecondsFormat::Secs, true);
+                    let local_day = chrono::Local::now().format("%Y-%m-%d").to_string();
                     if let (Some(store), Ok(line)) = (&history_store, history_line(&server, &timestamp, &snapshot)) {
-                        let _ = store.append_jsonl(&history_day(now), &line);
+                        let _ = store.append_jsonl(&local_day, &line);
                     }
                     state_snapshots.lock().await.insert(id.clone(), snapshot.clone());
                     state_statuses.lock().await.insert(id.clone(), "online".to_owned());
@@ -552,22 +553,62 @@ async fn get_data_root() -> Result<String, String> {
 
 #[tauri::command]
 async fn query_history(day: String) -> Result<HistoryResponse, String> {
-    NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+    let target_date = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
         .map_err(|_| "history day must use YYYY-MM-DD".to_owned())?;
     let root = DataRootManager::default().resolve().map_err(to_command_error)?;
     let store = JsonHistoryStore::new(root);
-    let path = store.history_root.join(format!("{day}.v2.jsonl"));
-    let text = fs::read_to_string(path).unwrap_or_default();
-    let legacy_path = store.history_root.join(format!("{day}.json"));
-    let legacy = fs::read_to_string(legacy_path)
-        .map(|text| serverpulse_core::read_history_json(&text))
-        .unwrap_or_default();
-    let read = serverpulse_core::read_history_jsonl(&text);
-    let mut entries = legacy.entries;
-    entries.extend(read.entries);
+
+    let candidate_days = [
+        target_date.pred_opt().map(|d| d.format("%Y-%m-%d").to_string()),
+        Some(day.clone()),
+        target_date.succ_opt().map(|d| d.format("%Y-%m-%d").to_string()),
+    ];
+
+    let mut all_entries = Vec::new();
+    let mut total_corrupt = 0;
+    let mut seen_keys = std::collections::HashSet::new();
+
+    for candidate in candidate_days.into_iter().flatten() {
+        let path = store.history_root.join(format!("{candidate}.v2.jsonl"));
+        if path.exists() {
+            let text = fs::read_to_string(&path).unwrap_or_default();
+            let read = serverpulse_core::read_history_jsonl(&text);
+            total_corrupt += read.corrupt_lines;
+            for entry in read.entries {
+                all_entries.push(entry);
+            }
+        }
+        let legacy_path = store.history_root.join(format!("{candidate}.json"));
+        if legacy_path.exists() {
+            let text = fs::read_to_string(&legacy_path).unwrap_or_default();
+            let legacy = serverpulse_core::read_history_json(&text);
+            total_corrupt += legacy.corrupt_lines;
+            for entry in legacy.entries {
+                all_entries.push(entry);
+            }
+        }
+    }
+
+    let mut filtered_entries = Vec::new();
+    for entry in all_entries {
+        let ts_str = entry.record.get("Timestamp").and_then(|v| v.as_str()).unwrap_or_default();
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+            let local_dt = parsed.with_timezone(&chrono::Local);
+            if local_dt.date_naive() == target_date {
+                let key = format!("{}:{}", ts_str, entry.record);
+                if seen_keys.insert(key) {
+                    filtered_entries.push((parsed.timestamp_millis(), entry));
+                }
+            }
+        }
+    }
+
+    filtered_entries.sort_by_key(|(ts, _)| *ts);
+    let entries = filtered_entries.into_iter().map(|(_, e)| e).collect();
+
     Ok(HistoryResponse {
         entries,
-        corrupt_lines: legacy.corrupt_lines + read.corrupt_lines,
+        corrupt_lines: total_corrupt,
     })
 }
 
