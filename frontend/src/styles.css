@@ -86,56 +86,141 @@ button:active { transform: translateY(1px); }
   padding: 16px;
   position: relative;
   overflow: hidden;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, border-radius 0.2s ease;
 }
 
+/* Docked Window Border & Corner Radius Alignment */
 .widget-window.is-docked.dock-left {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+  border-left-color: rgba(143, 211, 168, 0.15);
 }
 .widget-window.is-docked.dock-right {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+  border-right-color: rgba(143, 211, 168, 0.15);
 }
 .widget-window.is-docked.dock-top {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
+  border-top-color: rgba(143, 211, 168, 0.15);
 }
 
+/* Hidden (Parked at Edge) State */
 .widget-window.is-hidden {
-  border-radius: 0 !important;
   background: #0d100e !important;
-  border: 1px solid #343a36 !important;
-  box-shadow: none !important;
+  border: 1px solid rgba(143, 211, 168, 0.4) !important;
+  box-shadow: 0 0 12px rgba(143, 211, 168, 0.2) !important;
   cursor: pointer;
   opacity: 1 !important;
 }
 
-/* Crisp light gray edge handle bar */
+.widget-window.is-hidden.dock-left {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-top-right-radius: 8px !important;
+  border-bottom-right-radius: 8px !important;
+  border-left: none !important;
+}
+
+.widget-window.is-hidden.dock-right {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-top-left-radius: 8px !important;
+  border-bottom-left-radius: 8px !important;
+  border-right: none !important;
+}
+
+.widget-window.is-hidden.dock-top {
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  border-bottom-left-radius: 8px !important;
+  border-bottom-right-radius: 8px !important;
+  border-top: none !important;
+}
+
+/* Sleek Edge Dock Indicator & Grip Handle */
 .edge-dock-indicator {
   position: absolute;
-  background: #a3ada6;
-  box-shadow: 0 0 4px rgba(163, 173, 166, 0.5);
   z-index: 99999;
   pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.2s ease;
 }
+
+/* When docked to the left of the screen, the handle extends out on the right edge */
 .edge-dock-indicator.left {
   top: 0;
   bottom: 0;
   right: 0;
-  width: 6px;
+  width: 14px;
+  border-top-right-radius: inherit;
+  border-bottom-right-radius: inherit;
 }
+
+/* When docked to the right of the screen, the handle extends out on the left edge */
 .edge-dock-indicator.right {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 6px;
+  width: 14px;
+  border-top-left-radius: inherit;
+  border-bottom-left-radius: inherit;
 }
+
+/* When docked to the top of the screen, the handle extends out on the bottom edge */
 .edge-dock-indicator.top {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 6px;
+  height: 14px;
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+}
+
+/* Grip Bar Notch matching Server Pulse aesthetic */
+.edge-dock-grip {
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.7);
+  border-radius: 999px;
+  transition: all 0.2s ease;
+}
+
+.edge-dock-indicator.left .edge-dock-grip,
+.edge-dock-indicator.right .edge-dock-grip {
+  width: 3px;
+  height: 36px;
+}
+
+.edge-dock-indicator.top .edge-dock-grip {
+  height: 3px;
+  width: 36px;
+}
+
+/* In expanded state: subtle semi-transparent pill so it doesn't distract or cut corners */
+.edge-dock-indicator:not(.is-hidden) {
+  opacity: 0.45;
+}
+.edge-dock-indicator:not(.is-hidden) .edge-dock-grip {
+  background: rgba(143, 211, 168, 0.6);
+  box-shadow: 0 0 4px rgba(143, 211, 168, 0.3);
+}
+
+/* In hidden/parked state: vibrant glowing beacon */
+.edge-dock-indicator.is-hidden {
+  opacity: 1;
+}
+.edge-dock-indicator.is-hidden .edge-dock-grip {
+  background: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.9);
+  animation: dockPulse 2s infinite ease-in-out;
+}
+
+@keyframes dockPulse {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.1); }
 }
 
 .edge-btn, .pin-btn {

@@ -71,7 +71,9 @@ const selectInterval = async (val: number) => {
       v-if="dockSide !== 'none'"
       class="edge-dock-indicator"
       :class="[dockSide, { 'is-hidden': isHidden }]"
-    />
+    >
+      <div class="edge-dock-grip" />
+    </div>
 
     <header class="window-header drag-region" data-tauri-drag-region @mousedown="startDragging">
       <div data-tauri-drag-region>
