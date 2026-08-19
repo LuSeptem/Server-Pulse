@@ -714,6 +714,7 @@ function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: His
 
 const getCpuMemOption = (server: ServerHistoryRecord) => {
   const zoom = getZoomRange(server.timestamps)
+  const legendKey = `${server.id}_cpu`
   return {
     backgroundColor: 'transparent',
     tooltip: {
@@ -787,6 +788,7 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
     },
     legend: {
       data: ['CPU Utilization', 'System Memory'],
+      selected: chartLegendState[legendKey] || undefined,
       textStyle: { color: '#a2b4a8', fontSize: 11 },
       top: 4,
       right: 12,
@@ -871,6 +873,7 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
 
 const getGpuVramOption = (server: ServerHistoryRecord) => {
   const zoom = getZoomRange(server.timestamps)
+  const legendKey = `${server.id}_gpu_vram`
   const maxVram = Math.max(
     ...server.gpus.map((g) => (g.totalMib ? g.totalMib / 1024 : 48)),
     10,
@@ -923,6 +926,7 @@ const getGpuVramOption = (server: ServerHistoryRecord) => {
     },
     legend: {
       data: server.gpus.map((g) => `GPU ${g.index}: ${g.name}`),
+      selected: chartLegendState[legendKey] || undefined,
       textStyle: { color: '#a2b4a8', fontSize: 11 },
       top: 4,
       right: 12,
@@ -971,6 +975,7 @@ const getGpuVramOption = (server: ServerHistoryRecord) => {
 
 const getGpuUtilOption = (server: ServerHistoryRecord) => {
   const zoom = getZoomRange(server.timestamps)
+  const legendKey = `${server.id}_gpu_util`
   return {
     backgroundColor: 'transparent',
     tooltip: {
@@ -996,6 +1001,7 @@ const getGpuUtilOption = (server: ServerHistoryRecord) => {
     },
     legend: {
       data: server.gpus.map((g) => `GPU ${g.index}: ${g.name}`),
+      selected: chartLegendState[legendKey] || undefined,
       textStyle: { color: '#a2b4a8', fontSize: 11 },
       top: 4,
       right: 12,
@@ -1044,6 +1050,7 @@ const getGpuUtilOption = (server: ServerHistoryRecord) => {
 
 const getGpuTempOption = (server: ServerHistoryRecord) => {
   const zoom = getZoomRange(server.timestamps)
+  const legendKey = `${server.id}_gpu_temp`
   return {
     backgroundColor: 'transparent',
     tooltip: {
@@ -1069,6 +1076,7 @@ const getGpuTempOption = (server: ServerHistoryRecord) => {
     },
     legend: {
       data: server.gpus.map((g) => `GPU ${g.index}: ${g.name}`),
+      selected: chartLegendState[legendKey] || undefined,
       textStyle: { color: '#a2b4a8', fontSize: 11 },
       top: 4,
       right: 12,
@@ -1117,6 +1125,7 @@ const getGpuTempOption = (server: ServerHistoryRecord) => {
 
 const getUserTimelineOption = (server: ServerHistoryRecord) => {
   const zoom = getZoomRange(server.timestamps)
+  const legendKey = `${server.id}_users`
   const userMap = new Map<string, (number | null)[]>()
   for (let t = 0; t < server.timestamps.length; t++) {
     const perUserVramThisTick = new Map<string, number>()
@@ -1173,6 +1182,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
     },
     legend: {
       data: userKeys,
+      selected: chartLegendState[legendKey] || undefined,
       textStyle: { color: '#a2b4a8', fontSize: 11 },
       top: 4,
       right: 12,
