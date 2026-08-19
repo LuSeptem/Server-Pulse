@@ -93,25 +93,25 @@ const selectInterval = async (val: number) => {
             xmlns="http://www.w3.org/2000/svg"
           >
             <rect
-              x="2.5"
-              y="3"
-              width="15"
-              height="14"
+              x="1.5"
+              y="2.5"
+              width="17"
+              height="15"
               rx="2.5"
               stroke="currentColor"
-              stroke-width="1.6"
-              stroke-opacity="0.8"
+              stroke-width="1.8"
+              stroke-opacity="0.85"
             />
             <path
-              d="M13.5 3.5V16.5"
+              d="M14.5 3V17"
               stroke="currentColor"
-              stroke-width="2.2"
+              stroke-width="2.5"
               stroke-linecap="round"
             />
             <path
-              d="M5.5 10H10.5M10.5 10L8 7.5M10.5 10L8 12.5"
+              d="M4.5 10H11.5M11.5 10L8.5 7M11.5 10L8.5 13"
               stroke="currentColor"
-              stroke-width="1.6"
+              stroke-width="1.8"
               stroke-linecap="round"
               stroke-linejoin="round"
             />
