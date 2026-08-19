@@ -1310,138 +1310,44 @@ input:focus {
   border-color: #3b5a43;
 }
 
-/* History Pinned Popup Styles */
-.history-pinned-popup {
-  width: 320px;
-  max-width: calc(100vw - 32px);
-  max-height: 480px;
-  overflow: hidden;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.88), 0 0 16px rgba(56, 189, 248, 0.3);
-}
-
-.history-popup-scroll {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 380px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.popup-user-section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: #141c16;
-  border: 1px solid #202e24;
-  border-radius: 6px;
-  padding: 6px 8px;
-}
-
-.popup-section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2px;
-}
-
-.popup-section-title {
-  font-size: 11px;
+/* History Pinned & Chart-scoped Popup Styles */
+.user-group-label {
+  font-size: 10px;
   font-weight: 700;
   color: #8fd3a8;
+  padding: 4px 2px 2px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
 }
 
-.popup-count-badge {
+.user-uid-sub {
   font-size: 9.5px;
-  color: #728579;
+  color: #63756a;
+  font-weight: normal;
 }
 
-.popup-user-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.gpu-row-header {
+  background: rgba(56, 189, 248, 0.08) !important;
+  border: 1px solid rgba(56, 189, 248, 0.15);
+  margin-top: 4px;
 }
 
-.user-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 11px;
-  padding: 2px 4px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.02);
+.gpu-name-text {
+  color: #38bdf8 !important;
+  font-weight: 600 !important;
 }
 
-.user-row:hover {
-  background: rgba(255, 255, 255, 0.05);
+.sub-gpu-row {
+  padding-left: 12px !important;
+  background: rgba(255, 255, 255, 0.015) !important;
 }
 
-.user-row-name {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: #d1dfd5;
-}
-
-.user-row-value {
-  font-feature-settings: "tnum";
-  color: #85e89d;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.user-expand-btn {
-  font-size: 9.5px;
-  color: #38bdf8;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 3px 0;
-  text-align: right;
-  transition: color 0.12s ease;
-}
-
-.user-expand-btn:hover {
-  color: #7dd3fc;
-}
-
-.popup-gpu-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.popup-gpu-card {
-  background: #0f1611;
-  border: 1px solid #1a271d;
-  border-radius: 4px;
-  padding: 4px 6px;
-}
-
-.popup-gpu-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: #c9d6ce;
-  margin-bottom: 2px;
-}
-
-.popup-gpu-title {
-  color: #38bdf8;
-}
-
-.popup-gpu-vram {
-  font-feature-settings: "tnum";
-  color: #f2f7f4;
-}
-
-.empty-gpu-hint {
+.sub-empty {
   font-size: 10px;
   color: #5c6e62;
   font-style: italic;
+  padding: 2px 0 2px 12px;
+  text-align: left;
 }
 
 .user-popup-divider {

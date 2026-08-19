@@ -470,72 +470,169 @@ const filteredServers = computed(() => {
   return serverHistories.value.filter((s) => s.id === selectedServerFilter.value)
 })
 
+type HistoryChartKind = 'cpu' | 'gpu_vram' | 'gpu_util' | 'gpu_temp' | 'users'
+
 interface PinnedHistoryPopupData {
   server: ServerHistoryRecord
+  chartKind: HistoryChartKind
   dataIndex: number
   timestamp: string
-  cpu: number | null
-  memory: number | null
-  cpuUsers: UserUsageEntry[]
-  memoryUsers: UserUsageEntry[]
-  gpuList: {
-    index: number
-    name: string
-    vram: number | null
-    totalGb: string
-    util: number | null
-    temp: number | null
-    users: UserUsageEntry[]
-  }[]
+  title: string
+  statusLabel: string
+  countLabel: string
+  cpu?: number | null
+  memory?: number | null
+  cpuUsers?: UserUsageEntry[]
+  memoryUsers?: UserUsageEntry[]
+  gpuVrams?: { index: number; name: string; vram: number | null; totalGb: string; users: UserUsageEntry[] }[]
+  gpuUtils?: { index: number; name: string; util: number | null }[]
+  gpuTemps?: { index: number; name: string; temp: number | null }[]
+  userVrams?: { name: string; vramGb: number }[]
   coords: { x: number; y: number }
 }
 
 const pinnedPopup = ref<PinnedHistoryPopupData | null>(null)
-const pinnedPopupExpanded = ref({
-  cpu: false,
-  mem: false,
-  gpu: false,
-})
+const pinnedExpanded = ref(false)
 
-function handleChartClick(event: any, server: ServerHistoryRecord) {
-  if (!event || event.dataIndex == null) return
-  const dataIdx = event.dataIndex
+function handleChartClick(event: any, server: ServerHistoryRecord, kind: HistoryChartKind) {
+  if (!event) return
+
+  const mouseEvent = (event.event?.event || event.event || event) as MouseEvent
+  const clientX = typeof mouseEvent.clientX === 'number' ? mouseEvent.clientX : window.innerWidth / 2 - 150
+  const clientY = typeof mouseEvent.clientY === 'number' ? mouseEvent.clientY : 150
+
+  let dataIdx: number | null = null
+
+  if (typeof event.dataIndex === 'number') {
+    dataIdx = event.dataIndex
+  } else {
+    const offsetX = typeof event.offsetX === 'number' ? event.offsetX : (mouseEvent.offsetX ?? 0)
+    const target = (mouseEvent.target as HTMLElement) || document.querySelector('.history-chart-canvas')
+    const canvas = target?.closest('canvas') || target?.closest('.history-chart-canvas')
+    const rect = canvas ? canvas.getBoundingClientRect() : { width: 600 }
+
+    const gridLeft = 45
+    const gridRight = 20
+    const gridWidth = Math.max(10, rect.width - gridLeft - gridRight)
+    const clampedX = Math.max(0, Math.min(gridWidth, offsetX - gridLeft))
+    const fraction = clampedX / gridWidth
+
+    const zoom = getZoomRange(server.timestamps)
+    const startFrac = zoom.start / 100
+    const endFrac = zoom.end / 100
+    const timelineFrac = startFrac + fraction * (endFrac - startFrac)
+
+    dataIdx = Math.max(0, Math.min(server.timestamps.length - 1, Math.round(timelineFrac * (server.timestamps.length - 1))))
+  }
+
+  if (dataIdx == null || dataIdx < 0 || dataIdx >= server.timestamps.length) return
   const timestamp = server.timestamps[dataIdx]
   if (!timestamp) return
 
-  if (pinnedPopup.value && pinnedPopup.value.server.id === server.id && pinnedPopup.value.dataIndex === dataIdx) {
+  if (
+    pinnedPopup.value &&
+    pinnedPopup.value.server.id === server.id &&
+    pinnedPopup.value.chartKind === kind &&
+    pinnedPopup.value.dataIndex === dataIdx
+  ) {
     pinnedPopup.value = null
     return
   }
 
-  const mouseEvent = (event.event?.event || event.event) as MouseEvent | undefined
-  const clientX = mouseEvent ? mouseEvent.clientX : window.innerWidth / 2 - 160
-  const clientY = mouseEvent ? mouseEvent.clientY : 120
+  const popupWidth = 300
+  const popupHeight = 320
+  const x = Math.min(Math.max(16, clientX + 12), window.innerWidth - popupWidth - 24)
+  const y = Math.min(Math.max(16, clientY - 20), Math.max(16, window.innerHeight - popupHeight - 24))
 
-  const popupWidth = 340
-  const popupHeight = 480
-  const x = Math.min(Math.max(16, clientX + 16), window.innerWidth - popupWidth - 24)
-  const y = Math.min(Math.max(16, clientY - 30), Math.max(16, window.innerHeight - popupHeight - 24))
+  let title = ''
+  let statusLabel = '完整'
+  let countLabel = ''
+  let cpu: number | null = null
+  let memory: number | null = null
+  let cpuUsers: UserUsageEntry[] | undefined
+  let memoryUsers: UserUsageEntry[] | undefined
+  let gpuVrams: { index: number; name: string; vram: number | null; totalGb: string; users: UserUsageEntry[] }[] | undefined
+  let gpuUtils: { index: number; name: string; util: number | null }[] | undefined
+  let gpuTemps: { index: number; name: string; temp: number | null }[] | undefined
+  let userVrams: { name: string; vramGb: number }[] | undefined
 
-  const gpuList = server.gpus.map((g) => ({
-    index: g.index,
-    name: g.name,
-    vram: g.memoryUsedGb[dataIdx],
-    totalGb: g.totalMib ? (g.totalMib / 1024).toFixed(0) : '?',
-    util: g.utilization[dataIdx],
-    temp: g.temperatureC[dataIdx],
-    users: g.userMemory[dataIdx]?.users || [],
-  }))
+  if (kind === 'cpu') {
+    title = `${server.label} · CPU & 内存`
+    cpu = server.cpu[dataIdx]
+    memory = server.memory[dataIdx]
+    cpuUsers = server.cpuUsers[dataIdx]?.users || []
+    memoryUsers = server.memoryUsers[dataIdx]?.users || []
+    statusLabel = `CPU ${cpu != null ? cpu.toFixed(1) + '%' : '—'} · 内存 ${memory != null ? memory.toFixed(1) + '%' : '—'}`
+    const activeCount = (cpuUsers.length > 0 ? cpuUsers.length : 0) + (memoryUsers.length > 0 ? memoryUsers.length : 0)
+    countLabel = `${activeCount} 项用户占用`
+  } else if (kind === 'gpu_vram') {
+    title = `${server.label} · GPU 显存占用`
+    gpuVrams = server.gpus.map((g) => ({
+      index: g.index,
+      name: g.name,
+      vram: g.memoryUsedGb[dataIdx],
+      totalGb: g.totalMib ? (g.totalMib / 1024).toFixed(0) : '?',
+      users: g.userMemory[dataIdx]?.users || [],
+    }))
+    const totalActiveUsers = gpuVrams.reduce((acc, g) => acc + g.users.length, 0)
+    statusLabel = `${server.gpus.length} 张 GPU`
+    countLabel = `${totalActiveUsers} 位用户活跃`
+  } else if (kind === 'gpu_util') {
+    title = `${server.label} · GPU 核心利用率`
+    gpuUtils = server.gpus.map((g) => ({
+      index: g.index,
+      name: g.name,
+      util: g.utilization[dataIdx],
+    }))
+    statusLabel = `${server.gpus.length} 张 GPU`
+    countLabel = `${gpuUtils.filter((g) => (g.util ?? 0) > 1).length} 张运行中`
+  } else if (kind === 'gpu_temp') {
+    title = `${server.label} · GPU 温度明细`
+    gpuTemps = server.gpus.map((g) => ({
+      index: g.index,
+      name: g.name,
+      temp: g.temperatureC[dataIdx],
+    }))
+    const maxTemp = Math.max(...gpuTemps.map((g) => g.temp ?? 0), 0)
+    statusLabel = `${server.gpus.length} 张 GPU`
+    countLabel = `最高 ${maxTemp}°C`
+  } else if (kind === 'users') {
+    title = `${server.label} · 各用户显存占用`
+    const perUserVramThisTick = new Map<string, number>()
+    for (const g of server.gpus) {
+      const uMem = g.userMemory[dataIdx]
+      if (uMem && uMem.users) {
+        for (const u of uMem.users) {
+          const usedGb = u.usedMib ? u.usedMib / 1024 : 0
+          perUserVramThisTick.set(u.name, (perUserVramThisTick.get(u.name) || 0) + usedGb)
+        }
+      }
+    }
+    userVrams = Array.from(perUserVramThisTick.entries())
+      .map(([name, vramGb]) => ({ name, vramGb }))
+      .filter((u) => u.vramGb > 0.01)
+      .sort((a, b) => b.vramGb - a.vramGb)
+    statusLabel = `用户显存`
+    countLabel = `${userVrams.length} 位用户活跃`
+  }
 
+  pinnedExpanded.value = false
   pinnedPopup.value = {
     server,
+    chartKind: kind,
     dataIndex: dataIdx,
     timestamp,
-    cpu: server.cpu[dataIdx],
-    memory: server.memory[dataIdx],
-    cpuUsers: server.cpuUsers[dataIdx]?.users || [],
-    memoryUsers: server.memoryUsers[dataIdx]?.users || [],
-    gpuList,
+    title,
+    statusLabel,
+    countLabel,
+    cpu,
+    memory,
+    cpuUsers,
+    memoryUsers,
+    gpuVrams,
+    gpuUtils,
+    gpuTemps,
+    userVrams,
     coords: { x, y },
   }
 }
@@ -1038,127 +1135,182 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
 
 <template>
   <section class="page-window history-window">
-    <!-- Pinned Detail Popup for Historical Samples -->
-    <div
-      v-if="pinnedPopup"
-      class="user-usage-popup history-pinned-popup is-pinned"
-      :style="{
-        left: `${pinnedPopup.coords.x}px`,
-        top: `${pinnedPopup.coords.y}px`,
-      }"
-    >
-      <div class="user-popup-header">
-        <div class="user-popup-title-area">
-          <div class="user-popup-title">{{ pinnedPopup.server.label }} · 历史采样明细</div>
-          <div class="user-popup-mode-badge pinned">📌 已固定 · {{ pinnedPopup.timestamp }}</div>
-        </div>
-        <button type="button" class="user-popup-close-btn" title="关闭固定" @click="pinnedPopup = null">✕</button>
-      </div>
-
-      <div class="user-popup-status-bar">
-        <span class="user-popup-status">CPU: {{ pinnedPopup.cpu != null ? pinnedPopup.cpu.toFixed(1) + '%' : '—' }} · 内存: {{ pinnedPopup.memory != null ? pinnedPopup.memory.toFixed(1) + '%' : '—' }}</span>
-        <span class="muted">{{ pinnedPopup.gpuList.length }} GPUs</span>
-      </div>
-
-      <div class="history-popup-scroll">
-        <!-- CPU Users -->
-        <div v-if="pinnedPopup.cpuUsers.length" class="popup-user-section">
-          <div class="popup-section-header">
-            <span class="popup-section-title">⚡ CPU 用户占用</span>
-            <span class="popup-count-badge">{{ pinnedPopup.cpuUsers.length }} 位活跃</span>
+    <!-- Pinned Detail Popup for Historical Samples (Aligned with Main View UserUsagePopup UI) -->
+    <Teleport to="body">
+      <div
+        v-if="pinnedPopup"
+        class="user-usage-popup is-pinned"
+        :style="{
+          left: `${pinnedPopup.coords.x}px`,
+          top: `${pinnedPopup.coords.y}px`,
+        }"
+      >
+        <header class="user-popup-header">
+          <div class="user-popup-title-area">
+            <span class="user-popup-title" :title="pinnedPopup.title">{{ pinnedPopup.title }}</span>
+            <span class="user-popup-mode-badge pinned">
+              ● 已固定 · {{ pinnedPopup.timestamp }}
+            </span>
           </div>
-          <div class="popup-user-list">
-            <div
-              v-for="u in (pinnedPopupExpanded.cpu ? pinnedPopup.cpuUsers : pinnedPopup.cpuUsers.slice(0, 5))"
-              :key="u.name"
-              class="user-row"
-            >
-              <div class="user-row-name">
-                <span>{{ u.name }}</span>
-                <span v-if="u.uid" class="user-uid-pill">{{ u.uid }}</span>
-              </div>
-              <strong class="user-row-value">{{ (u.percent || 0).toFixed(1) }}%</strong>
+          <button
+            type="button"
+            class="user-popup-close-btn"
+            title="关闭 / 取消固定"
+            @click="pinnedPopup = null"
+          >
+            ×
+          </button>
+        </header>
+
+        <div class="user-popup-status-bar">
+          <span class="user-popup-status status-ok">
+            {{ pinnedPopup.statusLabel }}
+          </span>
+          <span class="user-popup-count">{{ pinnedPopup.countLabel }}</span>
+        </div>
+
+        <div class="user-popup-content">
+          <!-- 1. CPU & Memory Chart Content -->
+          <template v-if="pinnedPopup.chartKind === 'cpu'">
+            <div v-if="!pinnedPopup.cpuUsers?.length && !pinnedPopup.memoryUsers?.length" class="user-popup-empty">
+              当前时刻暂无用户活跃进程
             </div>
-            <button
-              v-if="pinnedPopup.cpuUsers.length > 5"
-              type="button"
-              class="user-expand-btn"
-              @click="pinnedPopupExpanded.cpu = !pinnedPopupExpanded.cpu"
-            >
-              {{ pinnedPopupExpanded.cpu ? '收起' : `+ 展开其它 ${pinnedPopup.cpuUsers.length - 5} 位用户` }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Memory Users -->
-        <div v-if="pinnedPopup.memoryUsers.length" class="popup-user-section">
-          <div class="popup-section-header">
-            <span class="popup-section-title">💾 系统内存 用户占用</span>
-            <span class="popup-count-badge">{{ pinnedPopup.memoryUsers.length }} 位活跃</span>
-          </div>
-          <div class="popup-user-list">
-            <div
-              v-for="u in (pinnedPopupExpanded.mem ? pinnedPopup.memoryUsers : pinnedPopup.memoryUsers.slice(0, 5))"
-              :key="u.name"
-              class="user-row"
-            >
-              <div class="user-row-name">
-                <span>{{ u.name }}</span>
-                <span v-if="u.uid" class="user-uid-pill">{{ u.uid }}</span>
-              </div>
-              <strong class="user-row-value">
-                {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
-                {{ u.percent ? '· ' + u.percent.toFixed(1) + '%' : '' }}
-              </strong>
-            </div>
-            <button
-              v-if="pinnedPopup.memoryUsers.length > 5"
-              type="button"
-              class="user-expand-btn"
-              @click="pinnedPopupExpanded.mem = !pinnedPopupExpanded.mem"
-            >
-              {{ pinnedPopupExpanded.mem ? '收起' : `+ 展开其它 ${pinnedPopup.memoryUsers.length - 5} 位用户` }}
-            </button>
-          </div>
-        </div>
-
-        <!-- GPU Users -->
-        <div v-if="pinnedPopup.gpuList.length" class="popup-user-section">
-          <div class="popup-section-header">
-            <span class="popup-section-title">🎮 GPU 显存及用户占用</span>
-          </div>
-          <div class="popup-gpu-stack">
-            <div
-              v-for="g in pinnedPopup.gpuList"
-              :key="g.index"
-              class="popup-gpu-card"
-            >
-              <div class="popup-gpu-header">
-                <span class="popup-gpu-title">GPU {{ g.index }}: {{ g.name }}</span>
-                <span class="popup-gpu-vram">{{ g.vram != null ? g.vram.toFixed(1) : '0' }} / {{ g.totalGb }} GB</span>
-              </div>
-              <div v-if="g.users.length" class="popup-user-list sub-list">
+            <template v-else>
+              <div v-if="pinnedPopup.cpuUsers?.length" class="user-rows-list">
+                <div class="user-group-label">⚡ CPU 用户占用</div>
                 <div
-                  v-for="u in g.users"
-                  :key="u.name"
-                  class="user-row sub-row"
+                  v-for="u in (pinnedExpanded ? pinnedPopup.cpuUsers : pinnedPopup.cpuUsers.slice(0, 6))"
+                  :key="`cpu-${u.uid || u.name}`"
+                  class="user-usage-row"
                 >
-                  <div class="user-row-name">
-                    <span>👤 {{ u.name }}</span>
-                    <span v-if="u.uid" class="user-uid-pill">{{ u.uid }}</span>
-                  </div>
-                  <strong class="user-row-value">
-                    {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
-                    {{ u.percent ? '· ' + u.percent.toFixed(1) + '%' : '' }}
-                  </strong>
+                  <span class="user-name" :title="u.name">{{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
+                  <span class="user-value">{{ (u.percent || 0).toFixed(1) }}%</span>
                 </div>
               </div>
-              <div v-else class="empty-gpu-hint">无独立进程占用</div>
+
+              <div v-if="pinnedPopup.memoryUsers?.length" class="user-rows-list" style="margin-top: 6px;">
+                <div class="user-group-label">💾 系统内存 用户占用</div>
+                <div
+                  v-for="u in (pinnedExpanded ? pinnedPopup.memoryUsers : pinnedPopup.memoryUsers.slice(0, 6))"
+                  :key="`mem-${u.uid || u.name}`"
+                  class="user-usage-row"
+                >
+                  <span class="user-name" :title="u.name">{{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
+                  <span class="user-value">
+                    {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
+                    {{ u.percent ? ` · ${u.percent.toFixed(1)}%` : '' }}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                v-if="(pinnedPopup.cpuUsers?.length || 0) > 6 || (pinnedPopup.memoryUsers?.length || 0) > 6"
+                type="button"
+                class="user-expand-toggle"
+                @click="pinnedExpanded = !pinnedExpanded"
+              >
+                {{ pinnedExpanded ? '收起列表' : `+ 展开全部用户` }}
+              </button>
+            </template>
+          </template>
+
+          <!-- 2. GPU VRAM Chart Content -->
+          <template v-else-if="pinnedPopup.chartKind === 'gpu_vram'">
+            <div v-if="!pinnedPopup.gpuVrams?.length" class="user-popup-empty">
+              当前时刻暂无显卡显存数据
             </div>
-          </div>
+            <div v-else class="user-rows-list">
+              <template v-for="g in pinnedPopup.gpuVrams" :key="g.index">
+                <div class="user-usage-row gpu-row-header">
+                  <span class="user-name gpu-name-text">GPU {{ g.index }}: {{ g.name }}</span>
+                  <span class="user-value">{{ g.vram != null ? g.vram.toFixed(1) : '0' }} / {{ g.totalGb }} GB</span>
+                </div>
+                <div
+                  v-for="u in (pinnedExpanded ? g.users : g.users.slice(0, 4))"
+                  :key="`gpu-${g.index}-${u.uid || u.name}`"
+                  class="user-usage-row sub-gpu-row"
+                >
+                  <span class="user-name">👤 {{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
+                  <span class="user-value">
+                    {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
+                    {{ u.percent ? ` · ${u.percent.toFixed(1)}%` : '' }}
+                  </span>
+                </div>
+                <div v-if="!g.users.length" class="user-popup-empty sub-empty">
+                  无独立进程占用
+                </div>
+              </template>
+
+              <button
+                v-if="pinnedPopup.gpuVrams.some((g) => g.users.length > 4)"
+                type="button"
+                class="user-expand-toggle"
+                @click="pinnedExpanded = !pinnedExpanded"
+              >
+                {{ pinnedExpanded ? '收起列表' : '+ 展开全部用户' }}
+              </button>
+            </div>
+          </template>
+
+          <!-- 3. GPU Core Utilization Content -->
+          <template v-else-if="pinnedPopup.chartKind === 'gpu_util'">
+            <div class="user-rows-list">
+              <div
+                v-for="g in pinnedPopup.gpuUtils"
+                :key="g.index"
+                class="user-usage-row"
+              >
+                <span class="user-name">GPU {{ g.index }}: {{ g.name }}</span>
+                <span class="user-value">{{ g.util != null ? g.util.toFixed(0) : '0' }}%</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 4. GPU Temperature Content -->
+          <template v-else-if="pinnedPopup.chartKind === 'gpu_temp'">
+            <div class="user-rows-list">
+              <div
+                v-for="g in pinnedPopup.gpuTemps"
+                :key="g.index"
+                class="user-usage-row"
+              >
+                <span class="user-name">GPU {{ g.index }}: {{ g.name }}</span>
+                <span class="user-value" style="color: #fb923c;">{{ g.temp != null ? g.temp.toFixed(0) : '0' }}°C</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 5. User VRAM Timeline Content -->
+          <template v-else-if="pinnedPopup.chartKind === 'users'">
+            <div v-if="!pinnedPopup.userVrams?.length" class="user-popup-empty">
+              当前时刻暂无独立用户显存占用
+            </div>
+            <div v-else class="user-rows-list">
+              <div
+                v-for="u in (pinnedExpanded ? pinnedPopup.userVrams : pinnedPopup.userVrams.slice(0, 8))"
+                :key="u.name"
+                class="user-usage-row"
+              >
+                <span class="user-name">{{ u.name }}</span>
+                <span class="user-value">{{ u.vramGb.toFixed(2) }} GB</span>
+              </div>
+              <button
+                v-if="pinnedPopup.userVrams.length > 8"
+                type="button"
+                class="user-expand-toggle"
+                @click="pinnedExpanded = !pinnedExpanded"
+              >
+                {{ pinnedExpanded ? '收起列表' : `+ 展开其它 ${pinnedPopup.userVrams.length - 8} 位用户` }}
+              </button>
+            </div>
+          </template>
         </div>
+
+        <footer class="user-popup-footer">
+          * 点击图表任意区域或右上角关闭按钮可解除固定
+        </footer>
       </div>
-    </div>
+    </Teleport>
 
     <header class="page-header">
       <div>
@@ -1308,7 +1460,13 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">CPU & System Memory Utilization (%)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getCpuMemOption(server)" @click="handleChartClick($event, server)" autoresize />
+            <VChart
+              class="history-chart-canvas"
+              :option="getCpuMemOption(server)"
+              @click="handleChartClick($event, server, 'cpu')"
+              @zr:click="handleChartClick($event, server, 'cpu')"
+              autoresize
+            />
           </div>
 
           <div
@@ -1318,7 +1476,13 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">Per-GPU VRAM Usage (GB)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getGpuVramOption(server)" @click="handleChartClick($event, server)" autoresize />
+            <VChart
+              class="history-chart-canvas"
+              :option="getGpuVramOption(server)"
+              @click="handleChartClick($event, server, 'gpu_vram')"
+              @zr:click="handleChartClick($event, server, 'gpu_vram')"
+              autoresize
+            />
           </div>
 
           <div
@@ -1328,7 +1492,13 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">Per-GPU Core Utilization (%)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getGpuUtilOption(server)" @click="handleChartClick($event, server)" autoresize />
+            <VChart
+              class="history-chart-canvas"
+              :option="getGpuUtilOption(server)"
+              @click="handleChartClick($event, server, 'gpu_util')"
+              @zr:click="handleChartClick($event, server, 'gpu_util')"
+              autoresize
+            />
           </div>
 
           <div
@@ -1338,7 +1508,13 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             <div class="chart-header">
               <span class="chart-title">Per-GPU Temperature (°C)</span>
             </div>
-            <VChart class="history-chart-canvas" :option="getGpuTempOption(server)" @click="handleChartClick($event, server)" autoresize />
+            <VChart
+              class="history-chart-canvas"
+              :option="getGpuTempOption(server)"
+              @click="handleChartClick($event, server, 'gpu_temp')"
+              @zr:click="handleChartClick($event, server, 'gpu_temp')"
+              autoresize
+            />
           </div>
 
           <div
@@ -1349,7 +1525,13 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               <div class="chart-header">
                 <span class="chart-title">用户显存占用变化曲线 (User VRAM Timeline - GB)</span>
               </div>
-              <VChart class="history-chart-canvas" :option="getUserTimelineOption(server)" @click="handleChartClick($event, server)" autoresize />
+              <VChart
+                class="history-chart-canvas"
+                :option="getUserTimelineOption(server)"
+                @click="handleChartClick($event, server, 'users')"
+                @zr:click="handleChartClick($event, server, 'users')"
+                autoresize
+              />
             </div>
 
             <div class="user-ranking-grid">
