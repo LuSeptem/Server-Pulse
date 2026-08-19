@@ -712,6 +712,19 @@ function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: His
   }
 }
 
+const tooltipPosition = (point: number[], _params: any, _dom: any, _rect: any, size: { contentSize: number[]; viewSize: number[] }) => {
+  let x = point[0] + 16
+  if (x + size.contentSize[0] > size.viewSize[0] - 12) {
+    x = Math.max(10, point[0] - size.contentSize[0] - 16)
+  }
+  // Y position: ensure it stays within canvas boundary and never clips at top or bottom
+  let y = Math.max(8, point[1] - 20)
+  if (y + size.contentSize[1] > size.viewSize[1] - 8) {
+    y = Math.max(8, size.viewSize[1] - size.contentSize[1] - 8)
+  }
+  return [x, y]
+}
+
 const getCpuMemOption = (server: ServerHistoryRecord) => {
   const zoom = getZoomRange(server.timestamps)
   const legendKey = `${server.id}_cpu`
@@ -719,70 +732,85 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(16, 24, 18, 0.96)',
+      confine: true,
+      position: tooltipPosition,
+      backgroundColor: 'rgba(14, 21, 16, 0.96)',
       borderColor: '#2d4334',
       borderWidth: 1,
       padding: [10, 14],
       textStyle: { color: '#e2ede6', fontSize: 12 },
+      extraCssText: 'box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7); border-radius: 10px; backdrop-filter: blur(12px); max-height: 280px; overflow-y: auto; z-index: 9999;',
       formatter: (params: any[]) => {
         if (!params || !params.length) return ''
         const dataIdx = params[0].dataIndex
         const time = server.timestamps[dataIdx] || params[0].name
-        let html = `<div style="font-weight:600;margin-bottom:6px;color:#8fd3a8;font-size:12.5px;">${time}</div>`
-        for (const p of params) {
-          if (p.value == null) continue
-          html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:3px 0;">
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;"></span>${p.seriesName}</span>
-            <strong style="color:#ffffff;">${Number(p.value).toFixed(1)}%</strong>
-          </div>`
-        }
-
         const isCpuVisible = params.some((p) => p.seriesName === 'CPU Utilization')
         const isMemVisible = params.some((p) => p.seriesName === 'System Memory')
 
         const cpuU = server.cpuUsers[dataIdx]
-        if (isCpuVisible && cpuU && cpuU.users && cpuU.users.length > 0) {
-          const topCpu = cpuU.users.slice(0, 6)
-          html += `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#9cb0a2;">
-            <div style="font-weight:600;color:#7dd3fc;margin-bottom:3px;display:flex;justify-content:space-between;">
-              <span>⚡ CPU 用户占用:</span>
-              <span style="font-size:10px;color:#627568;">(${cpuU.users.length} 位活跃)</span>
-            </div>`
-          for (const u of topCpu) {
-            html += `<div style="display:flex;justify-content:space-between;gap:12px;color:#c9d6ce;margin:2px 0;">
-              <span>${u.name}${u.uid ? ' <span style="color:#728579;font-size:10px;">(' + u.uid + ')</span>' : ''}</span>
-              <span style="color:#e6ece8;font-weight:500;">${(u.percent || 0).toFixed(1)}%</span>
-            </div>`
-          }
-          if (cpuU.users.length > 6) {
-            html += `<div style="font-size:10px;color:#627568;text-align:right;margin-top:2px;">点击图表查看全部 ${cpuU.users.length} 位用户</div>`
-          }
-          html += `</div>`
-        }
-
         const memU = server.memoryUsers[dataIdx]
-        if (isMemVisible && memU && memU.users && memU.users.length > 0) {
-          const topMem = memU.users.slice(0, 6)
-          html += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#9cb0a2;">
-            <div style="font-weight:600;color:#86efac;margin-bottom:3px;display:flex;justify-content:space-between;">
-              <span>💾 系统内存 用户占用:</span>
-              <span style="font-size:10px;color:#627568;">(${memU.users.length} 位活跃)</span>
-            </div>`
-          for (const u of topMem) {
-            const gb = u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : (u.percent ? (u.percent).toFixed(1) + '%' : '0 GB')
-            const pct = u.percent ? ` · ${u.percent.toFixed(1)}%` : ''
-            html += `<div style="display:flex;justify-content:space-between;gap:12px;color:#c9d6ce;margin:2px 0;">
-              <span>${u.name}${u.uid ? ' <span style="color:#728579;font-size:10px;">(' + u.uid + ')</span>' : ''}</span>
-              <span style="color:#e6ece8;font-weight:500;">${gb}${pct}</span>
-            </div>`
-          }
-          if (memU.users.length > 6) {
-            html += `<div style="font-size:10px;color:#627568;text-align:right;margin-top:2px;">点击图表查看全部 ${memU.users.length} 位用户</div>`
-          }
-          html += `</div>`
+        const cpuUsers = (isCpuVisible && cpuU && cpuU.users) ? cpuU.users : []
+        const memUsers = (isMemVisible && memU && memU.users) ? memU.users : []
+        const activeCount = cpuUsers.length + memUsers.length
+
+        let statusSummary = ''
+        if (isCpuVisible && isMemVisible) {
+          const cVal = params.find((p) => p.seriesName === 'CPU Utilization')?.value
+          const mVal = params.find((p) => p.seriesName === 'System Memory')?.value
+          statusSummary = `CPU ${cVal != null ? Number(cVal).toFixed(1) + '%' : '—'} · 内存 ${mVal != null ? Number(mVal).toFixed(1) + '%' : '—'}`
+        } else if (isCpuVisible) {
+          const cVal = params.find((p) => p.seriesName === 'CPU Utilization')?.value
+          statusSummary = `CPU ${cVal != null ? Number(cVal).toFixed(1) + '%' : '—'}`
+        } else if (isMemVisible) {
+          const mVal = params.find((p) => p.seriesName === 'System Memory')?.value
+          statusSummary = `内存 ${mVal != null ? Number(mVal).toFixed(1) + '%' : '—'}`
         }
 
-        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
+        let html = `
+          <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · CPU & 内存 · 用户占用</span>
+              <span style="font-size: 10px; color: #7dd3fc; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 999px; padding: 1px 6px;">预览</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <span style="color: #85e89d; font-weight: 600;">${statusSummary || '完整'}</span>
+              <span style="color: #7a8c80;">${activeCount} 位用户活跃</span>
+            </div>`
+
+        if (isCpuVisible && cpuUsers.length > 0) {
+          html += `<div style="font-size: 10.5px; font-weight: 600; color: #7dd3fc; margin: 4px 0 2px;">CPU 用户占用:</div>`
+          for (const u of cpuUsers.slice(0, 5)) {
+            html += `<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 2px 0; color: #d1ded6;">
+              <span>${u.name}</span>
+              <strong style="color: #ffffff;">${(u.percent || 0).toFixed(1)}%</strong>
+            </div>`
+          }
+          if (cpuUsers.length > 5) {
+            html += `<div style="font-size: 10px; color: #627568; text-align: right; margin-top: 1px;">+ 其它 ${cpuUsers.length - 5} 位用户</div>`
+          }
+        }
+
+        if (isMemVisible && memUsers.length > 0) {
+          html += `<div style="font-size: 10.5px; font-weight: 600; color: #85e89d; margin: ${isCpuVisible && cpuUsers.length ? '6px' : '4px'} 0 2px; ${isCpuVisible && cpuUsers.length ? 'padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);' : ''}">系统内存 用户占用:</div>`
+          for (const u of memUsers.slice(0, 5)) {
+            const gb = u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : ''
+            const pct = u.percent ? ` · ${u.percent.toFixed(1)}%` : ''
+            html += `<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 2px 0; color: #d1ded6;">
+              <span>${u.name}</span>
+              <strong style="color: #ffffff;">${gb}${pct}</strong>
+            </div>`
+          }
+          if (memUsers.length > 5) {
+            html += `<div style="font-size: 10px; color: #627568; text-align: right; margin-top: 1px;">+ 其它 ${memUsers.length - 5} 位用户</div>`
+          }
+        }
+
+        html += `
+            <div style="font-size: 10px; color: #627568; margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
+              <span>${time}</span>
+              <span>点击图表可固定明细</span>
+            </div>
+          </div>`
         return html
       },
     },
@@ -882,45 +910,73 @@ const getGpuVramOption = (server: ServerHistoryRecord) => {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(16, 24, 18, 0.96)',
+      confine: true,
+      position: tooltipPosition,
+      backgroundColor: 'rgba(14, 21, 16, 0.96)',
       borderColor: '#2d4334',
       borderWidth: 1,
       padding: [10, 14],
       textStyle: { color: '#e2ede6', fontSize: 12 },
+      extraCssText: 'box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7); border-radius: 10px; backdrop-filter: blur(12px); max-height: 280px; overflow-y: auto; z-index: 9999;',
       formatter: (params: any[]) => {
         if (!params || !params.length) return ''
         const dataIdx = params[0].dataIndex
         const time = server.timestamps[dataIdx] || params[0].name
-        let html = `<div style="font-weight:600;margin-bottom:6px;color:#8fd3a8;font-size:12.5px;">${time}</div>`
+        let totalActive = 0
+        for (const p of params) {
+          if (p.value == null) continue
+          const g = server.gpus.find((x) => `GPU ${x.index}: ${x.name}` === p.seriesName)
+          if (g && g.userMemory && g.userMemory[dataIdx]?.users) {
+            totalActive += g.userMemory[dataIdx]!.users.length
+          }
+        }
+
+        let html = `
+          <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · GPU 显存 · 用户占用</span>
+              <span style="font-size: 10px; color: #7dd3fc; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 999px; padding: 1px 6px;">预览</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <span style="color: #85e89d; font-weight: 600;">${params.length} 张可见 GPU</span>
+              <span style="color: #7a8c80;">${totalActive} 位用户活跃</span>
+            </div>`
+
         for (const p of params) {
           if (p.value == null) continue
           const g = server.gpus.find((x) => `GPU ${x.index}: ${x.name}` === p.seriesName)
           const totalGb = g?.totalMib ? (g.totalMib / 1024).toFixed(0) : '?'
-          html += `<div style="margin:4px 0 2px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
-              <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;"></span>${p.seriesName}</span>
-              <strong style="color:#ffffff;">${Number(p.value).toFixed(1)} / ${totalGb} GB</strong>
+          html += `<div style="margin: 4px 0 2px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px;">
+              <span><span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: ${p.color}; margin-right: 5px;"></span>${p.seriesName}</span>
+              <strong style="color: #ffffff;">${Number(p.value).toFixed(1)} / ${totalGb} GB</strong>
             </div>`
 
           if (g && g.userMemory && g.userMemory[dataIdx]?.users?.length) {
             const activeUsers = g.userMemory[dataIdx]!.users
-            html += `<div style="padding-left:14px;margin-top:2px;font-size:11px;color:#9cb0a2;">`
-            for (const u of activeUsers.slice(0, 5)) {
+            html += `<div style="padding-left: 12px; margin-top: 2px; font-size: 11px; color: #9cb0a2;">`
+            for (const u of activeUsers.slice(0, 4)) {
               const gb = u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : ''
               const pct = u.percent ? ` · ${u.percent.toFixed(1)}%` : ''
-              html += `<div style="display:flex;justify-content:space-between;gap:10px;color:#b8c7be;margin:1px 0;">
-                <span>👤 ${u.name}${u.uid ? ' <span style="color:#728579;font-size:10px;">(' + u.uid + ')</span>' : ''}</span>
-                <span style="color:#85e89d;font-weight:500;">${gb}${pct}</span>
+              html += `<div style="display: flex; justify-content: space-between; gap: 10px; color: #b8c7be; margin: 1px 0;">
+                <span>${u.name}</span>
+                <span style="color: #85e89d; font-weight: 500;">${gb}${pct}</span>
               </div>`
             }
-            if (activeUsers.length > 5) {
-              html += `<div style="font-size:10px;color:#627568;text-align:right;">+ 其它 ${activeUsers.length - 5} 位用户</div>`
+            if (activeUsers.length > 4) {
+              html += `<div style="font-size: 10px; color: #627568; text-align: right;">+ 其它 ${activeUsers.length - 4} 位用户</div>`
             }
             html += `</div>`
           }
           html += `</div>`
         }
-        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
+
+        html += `
+            <div style="font-size: 10px; color: #627568; margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
+              <span>${time}</span>
+              <span>点击图表可固定明细</span>
+            </div>
+          </div>`
         return html
       },
     },
@@ -980,22 +1036,43 @@ const getGpuUtilOption = (server: ServerHistoryRecord) => {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(16, 24, 18, 0.95)',
+      confine: true,
+      position: tooltipPosition,
+      backgroundColor: 'rgba(14, 21, 16, 0.96)',
       borderColor: '#2d4334',
       borderWidth: 1,
+      padding: [10, 14],
       textStyle: { color: '#e2ede6', fontSize: 12 },
+      extraCssText: 'box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7); border-radius: 10px; backdrop-filter: blur(12px); max-height: 280px; overflow-y: auto; z-index: 9999;',
       formatter: (params: any[]) => {
         if (!params || !params.length) return ''
         const time = server.timestamps[params[0].dataIndex] || params[0].name
-        let html = `<div style="font-weight:600;margin-bottom:4px;color:#8fd3a8;">${time}</div>`
+        const runningCount = params.filter((p) => Number(p.value) > 1).length
+        let html = `
+          <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · GPU 核心利用率</span>
+              <span style="font-size: 10px; color: #7dd3fc; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 999px; padding: 1px 6px;">预览</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <span style="color: #85e89d; font-weight: 600;">${params.length} 张可见 GPU</span>
+              <span style="color: #7a8c80;">${runningCount} 张运行中</span>
+            </div>`
+
         for (const p of params) {
           if (p.value == null) continue
-          html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:2px 0;">
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;"></span>${p.seriesName}</span>
-            <strong style="color:#ffffff;">${Number(p.value).toFixed(0)}%</strong>
+          html += `<div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 2px 0;">
+            <span><span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: ${p.color}; margin-right: 5px;"></span>${p.seriesName}</span>
+            <strong style="color: #ffffff;">${Number(p.value).toFixed(0)}%</strong>
           </div>`
         }
-        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
+
+        html += `
+            <div style="font-size: 10px; color: #627568; margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
+              <span>${time}</span>
+              <span>点击图表可固定明细</span>
+            </div>
+          </div>`
         return html
       },
     },
@@ -1055,22 +1132,43 @@ const getGpuTempOption = (server: ServerHistoryRecord) => {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(16, 24, 18, 0.95)',
+      confine: true,
+      position: tooltipPosition,
+      backgroundColor: 'rgba(14, 21, 16, 0.96)',
       borderColor: '#2d4334',
       borderWidth: 1,
+      padding: [10, 14],
       textStyle: { color: '#e2ede6', fontSize: 12 },
+      extraCssText: 'box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7); border-radius: 10px; backdrop-filter: blur(12px); max-height: 280px; overflow-y: auto; z-index: 9999;',
       formatter: (params: any[]) => {
         if (!params || !params.length) return ''
         const time = server.timestamps[params[0].dataIndex] || params[0].name
-        let html = `<div style="font-weight:600;margin-bottom:4px;color:#8fd3a8;">${time}</div>`
+        const maxTemp = Math.max(...params.map((p) => Number(p.value) || 0), 0)
+        let html = `
+          <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · GPU 温度明细</span>
+              <span style="font-size: 10px; color: #7dd3fc; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 999px; padding: 1px 6px;">预览</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <span style="color: #85e89d; font-weight: 600;">${params.length} 张可见 GPU</span>
+              <span style="color: #fb923c; font-weight: 500;">最高 ${maxTemp}°C</span>
+            </div>`
+
         for (const p of params) {
           if (p.value == null) continue
-          html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:2px 0;">
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;"></span>${p.seriesName}</span>
-            <strong style="color:#ffffff;">${Number(p.value).toFixed(0)}°C</strong>
+          html += `<div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 2px 0;">
+            <span><span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: ${p.color}; margin-right: 5px;"></span>${p.seriesName}</span>
+            <strong style="color: #ffffff;">${Number(p.value).toFixed(0)}°C</strong>
           </div>`
         }
-        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
+
+        html += `
+            <div style="font-size: 10px; color: #627568; margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
+              <span>${time}</span>
+              <span>点击图表可固定明细</span>
+            </div>
+          </div>`
         return html
       },
     },
@@ -1161,22 +1259,42 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(16, 24, 18, 0.96)',
+      confine: true,
+      position: tooltipPosition,
+      backgroundColor: 'rgba(14, 21, 16, 0.96)',
       borderColor: '#2d4334',
       borderWidth: 1,
+      padding: [10, 14],
       textStyle: { color: '#e2ede6', fontSize: 12 },
+      extraCssText: 'box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7); border-radius: 10px; backdrop-filter: blur(12px); max-height: 280px; overflow-y: auto; z-index: 9999;',
       formatter: (params: any[]) => {
         if (!params || !params.length) return ''
         const time = server.timestamps[params[0].dataIndex] || params[0].name
-        let html = `<div style="font-weight:600;margin-bottom:4px;color:#8fd3a8;">${time}</div>`
-        for (const p of params) {
-          if (p.value == null || p.value === 0) continue
-          html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:2px 0;">
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;"></span>${p.seriesName}</span>
-            <strong style="color:#ffffff;">${Number(p.value).toFixed(2)} GB</strong>
+        const activeParams = params.filter((p) => p.value != null && Number(p.value) > 0)
+        let html = `
+          <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · 用户显存 · 用户占用</span>
+              <span style="font-size: 10px; color: #7dd3fc; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 999px; padding: 1px 6px;">预览</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <span style="color: #85e89d; font-weight: 600;">用户显存</span>
+              <span style="color: #7a8c80;">${activeParams.length} 位用户活跃</span>
+            </div>`
+
+        for (const p of activeParams) {
+          html += `<div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 2px 0;">
+            <span><span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: ${p.color}; margin-right: 5px;"></span>${p.seriesName}</span>
+            <strong style="color: #ffffff;">${Number(p.value).toFixed(2)} GB</strong>
           </div>`
         }
-        html += `<div style="font-size:10px;color:#7e9185;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.06);text-align:right;">📌 点击图表可固定明细</div>`
+
+        html += `
+            <div style="font-size: 10px; color: #627568; margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
+              <span>${time}</span>
+              <span>点击图表可固定明细</span>
+            </div>
+          </div>`
         return html
       },
     },
@@ -1227,7 +1345,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
     <Teleport to="body">
       <div
         v-if="pinnedPopup"
-        class="user-usage-popup is-pinned"
+        class="user-usage-popup is-pinned history-pinned-popup"
         :style="{
           left: `${pinnedPopup.coords.x}px`,
           top: `${pinnedPopup.coords.y}px`,
@@ -1265,7 +1383,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
             </div>
             <template v-else>
               <div v-if="pinnedPopup.cpuUsers?.length" class="user-rows-list">
-                <div class="user-group-label">⚡ CPU 用户占用</div>
+                <div class="user-group-label">CPU 用户占用</div>
                 <div
                   v-for="u in (pinnedExpanded ? pinnedPopup.cpuUsers : pinnedPopup.cpuUsers.slice(0, 6))"
                   :key="`cpu-${u.uid || u.name}`"
@@ -1277,7 +1395,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               </div>
 
               <div v-if="pinnedPopup.memoryUsers?.length" class="user-rows-list" style="margin-top: 6px;">
-                <div class="user-group-label">💾 系统内存 用户占用</div>
+                <div class="user-group-label">系统内存 用户占用</div>
                 <div
                   v-for="u in (pinnedExpanded ? pinnedPopup.memoryUsers : pinnedPopup.memoryUsers.slice(0, 6))"
                   :key="`mem-${u.uid || u.name}`"
@@ -1318,7 +1436,7 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
                   :key="`gpu-${g.index}-${u.uid || u.name}`"
                   class="user-usage-row sub-gpu-row"
                 >
-                  <span class="user-name">👤 {{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
+                  <span class="user-name">{{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
                   <span class="user-value">
                     {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
                     {{ u.percent ? ` · ${u.percent.toFixed(1)}%` : '' }}

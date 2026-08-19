@@ -136,7 +136,43 @@ const selectInterval = async (val: number) => {
             title="Click to directly change monitoring interval"
             @click="showIntervalMenu = !showIntervalMenu"
           >
-            ⚡ {{ store.intervalSeconds }}s <span class="caret">▾</span>
+            <svg
+              class="cadence-icon"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M13.5 2.5v3.5h-3.5"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M2.5 13.5v-3.5h3.5"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M13.2 6.5A6 6 0 0 0 3.8 4.2L2.5 6"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M2.8 9.5a6 6 0 0 0 9.4 2.3l1.3-1.8"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{{ store.intervalSeconds }}s</span>
+            <span class="caret">▾</span>
           </button>
 
           <div v-if="showIntervalMenu" class="cadence-dropdown">

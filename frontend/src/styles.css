@@ -343,15 +343,29 @@ button:active { transform: translateY(1px); }
   opacity: 0.8;
 }
 .cadence-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: #18251c;
   border: 1px solid #2e4736;
-  color: #8fd3a8;
-  padding: 2px 7px;
+  color: #85e89d;
+  padding: 2px 8px;
   font-size: 11px;
   font-weight: 600;
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s ease;
+}
+.cadence-icon {
+  width: 12px;
+  height: 12px;
+  color: #85e89d;
+  flex-shrink: 0;
+  transition: transform 0.4s ease;
+}
+.cadence-tag:hover .cadence-icon,
+.cadence-tag.active .cadence-icon {
+  transform: rotate(180deg);
 }
 .cadence-tag:hover, .cadence-tag.active {
   background: #233b2c;
@@ -1363,6 +1377,12 @@ input:focus {
   margin-top: 2px;
   padding-top: 4px;
   border-top: 1px dashed #1a251d;
+}
+
+.history-pinned-popup {
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  z-index: 10000;
 }
 
 /* Manage Servers & Agent Tier Styling */
