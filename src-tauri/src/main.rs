@@ -189,6 +189,39 @@ fn writable_servers() -> Result<(std::path::PathBuf, Vec<ServerConfig>), String>
 }
 
 fn history_line(server: &ServerConfig, timestamp: &str, snapshot: &MetricSnapshot) -> Result<String, String> {
+    let gpus_json: Vec<serde_json::Value> = snapshot.gpus.iter().map(|gpu| {
+        serde_json::json!({
+            "Index": gpu.index,
+            "ValidSamples": 1,
+            "Name": gpu.name,
+            "Uuid": gpu.uuid,
+            "Utilization": gpu.utilization,
+            "MemoryUsedMiB": gpu.memory_used_mib,
+            "MemoryTotalMiB": gpu.memory_total_mib,
+            "TemperatureC": gpu.temperature_c,
+            "PowerDrawW": gpu.power_draw_w,
+            "PowerLimitW": gpu.power_limit_w,
+            "FanPercent": gpu.fan_percent,
+            "UserMemory": {
+                "Status": match gpu.user_memory_status {
+                    serverpulse_core::UserUsageStatus::Ok => "ok",
+                    serverpulse_core::UserUsageStatus::Partial => "partial",
+                    serverpulse_core::UserUsageStatus::Unavailable => "unavailable",
+                },
+                "ValidSamples": 1,
+                "Users": gpu.user_memory.iter().map(|u| {
+                    serde_json::json!({
+                        "Uid": u.uid,
+                        "Name": u.name,
+                        "UsedMiB": u.used_mib,
+                        "Percent": u.percent,
+                    })
+                }).collect::<Vec<_>>(),
+                "UnmappedProcesses": gpu.unmapped_processes,
+            },
+        })
+    }).collect();
+
     serde_json::to_string(&serde_json::json!({
         "Version": 2,
         "Record": {
@@ -203,14 +236,45 @@ fn history_line(server: &ServerConfig, timestamp: &str, snapshot: &MetricSnapsho
                 "LatencyMs": serde_json::Value::Null,
                 "Hostname": snapshot.hostname,
                 "CpuPercent": snapshot.cpu_percent,
+                "CpuUserUsage": {
+                    "Status": match snapshot.cpu_user_status {
+                        serverpulse_core::UserUsageStatus::Ok => "ok",
+                        serverpulse_core::UserUsageStatus::Partial => "partial",
+                        serverpulse_core::UserUsageStatus::Unavailable => "unavailable",
+                    },
+                    "ValidSamples": 1,
+                    "Users": snapshot.cpu_users.iter().map(|u| {
+                        serde_json::json!({
+                            "Uid": u.uid,
+                            "Name": u.name,
+                            "Percent": u.percent,
+                        })
+                    }).collect::<Vec<_>>(),
+                },
                 "MemoryUsedMiB": snapshot.memory_used_mib,
                 "MemoryTotalMiB": snapshot.memory_total_mib,
                 "MemoryPercent": snapshot.memory_percent,
+                "MemoryUserUsage": {
+                    "Status": match snapshot.memory_user_status {
+                        serverpulse_core::UserUsageStatus::Ok => "ok",
+                        serverpulse_core::UserUsageStatus::Partial => "partial",
+                        serverpulse_core::UserUsageStatus::Unavailable => "unavailable",
+                    },
+                    "ValidSamples": 1,
+                    "Users": snapshot.memory_users.iter().map(|u| {
+                        serde_json::json!({
+                            "Uid": u.uid,
+                            "Name": u.name,
+                            "UsedMiB": u.used_mib,
+                            "Percent": u.percent,
+                        })
+                    }).collect::<Vec<_>>(),
+                },
                 "LoadOne": snapshot.load_one,
                 "LoadFive": snapshot.load_five,
                 "LoadFifteen": snapshot.load_fifteen,
                 "UptimeSeconds": snapshot.uptime_seconds,
-                "Gpus": &snapshot.gpus,
+                "Gpus": gpus_json,
             }]
         }
     }))
