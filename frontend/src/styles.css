@@ -5,7 +5,41 @@
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
 }
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #28392d transparent;
+}
+
+/* Custom Sleek Dark Scrollbar for Chromium / WebKit */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #28392d;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.15s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3e5a45;
+}
+::-webkit-scrollbar-thumb:active {
+  background: #547d5e;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
 
 html, body {
   margin: 0;
@@ -105,24 +139,40 @@ button:active { transform: translateY(1px); }
 }
 
 .edge-btn, .pin-btn {
-  padding: 4px 8px;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 25px;
+  padding: 0;
+  border-radius: 6px;
   background: #18221b;
-  border-color: #2b392f;
+  border: 1px solid #2b392f;
+  color: #8fa093;
   transition: all 0.15s ease;
   user-select: none;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 .edge-btn:hover, .pin-btn:hover {
   background: #243428;
   border-color: #3f6149;
+  color: #d8e5dc;
 }
 .edge-btn.active, .pin-btn.active {
-  background: #193822;
+  background: #15321f;
   border-color: #428056;
-  color: #8fd3a8;
-  box-shadow: 0 0 6px rgba(74, 222, 128, 0.2);
+  color: #85e89d;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.2);
+}
+
+.edge-btn-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.edge-btn.active .edge-btn-icon {
+  transform: scale(1.05);
 }
 
 /* Full page windows (Manage & History) */
@@ -157,12 +207,28 @@ button:active { transform: translateY(1px); }
   text-transform: uppercase;
 }
 
-.header-actions { display: flex; gap: 6px; }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .header-actions button {
-  padding: 4px 9px;
+  height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
   font-size: 11px;
+  font-weight: 500;
   background: #18221b;
-  border-color: #2b392f;
+  border: 1px solid #2b392f;
+  border-radius: 6px;
+  color: #d1ded6;
+}
+.header-actions button:hover {
+  background: #243428;
+  border-color: #3f6149;
+  color: #ffffff;
 }
 
 .drag-region {

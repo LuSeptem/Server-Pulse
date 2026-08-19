@@ -83,9 +83,42 @@ const selectInterval = async (val: number) => {
           class="edge-btn"
           :class="{ active: autoHideEnabled }"
           :title="autoHideEnabled ? '贴边自动隐藏：已开启 (点击关闭) / Edge auto-hide: Enabled' : '贴边自动隐藏：已关闭 (点击开启) / Edge auto-hide: Disabled'"
+          aria-label="Toggle edge auto-hide"
           @click="toggleAutoHide"
         >
-          {{ autoHideEnabled ? '⇥' : '⇤' }}
+          <svg
+            class="edge-btn-icon"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <rect
+              x="2"
+              y="2.5"
+              width="12"
+              height="11"
+              rx="2"
+              stroke="currentColor"
+              stroke-width="1.2"
+              stroke-opacity="0.6"
+            />
+            <line
+              x1="11.5"
+              y1="3"
+              x2="11.5"
+              y2="13"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+            <path
+              d="M5 8H8.5M8.5 8L6.5 6M8.5 8L6.5 10"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
         </button>
         <button title="History" @click="store.openWindow('history')">History</button>
         <button title="Manage" @click="store.openWindow('manage')">Manage</button>
