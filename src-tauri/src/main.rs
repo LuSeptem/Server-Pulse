@@ -27,6 +27,7 @@ use session_credentials::SessionCredentialBroker;
 
 const SAMPLE_SCRIPT: &str = include_str!("../../assets/serverpulse-sample.sh");
 const SEED_SERVERS: &str = include_str!("../../config/servers.json");
+const AGENT_PULL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1500,7 +1501,7 @@ async fn pull_and_merge_records_impl(
     let ssh = SystemOpenSsh::default();
     let pull_sh = serverpulse_core::generate_agent_pull_script(cursor_utc.as_deref());
     let output = ssh
-        .execute_short_command(&target, &pull_sh)
+        .execute_short_command_with_timeout(&target, &pull_sh, AGENT_PULL_TIMEOUT)
         .await
         .map_err(|e| format!("SSH pull failed: {}", e))?;
 

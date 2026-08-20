@@ -103,6 +103,8 @@ pub trait SshTransport: Send + Sync {
 pub struct SystemOpenSsh {
     pub executable: PathBuf,
     pub timeout: Duration,
+    #[cfg(test)]
+    test_command_prefix: Option<Vec<String>>,
 }
 
 impl Default for SystemOpenSsh {
@@ -110,6 +112,8 @@ impl Default for SystemOpenSsh {
         Self {
             executable: PathBuf::from(if cfg!(windows) { "ssh.exe" } else { "ssh" }),
             timeout: Duration::from_secs(8),
+            #[cfg(test)]
+            test_command_prefix: None,
         }
     }
 }
@@ -194,6 +198,10 @@ impl SystemOpenSsh {
 
     pub(crate) async fn spawn_command(&self, target: &SshTarget) -> Result<Child, ServerPulseError> {
         let mut command = Command::new(&self.executable);
+        #[cfg(test)]
+        if let Some(prefix) = &self.test_command_prefix {
+            command.args(prefix);
+        }
         command.args(self.build_arguments(target));
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
@@ -216,6 +224,30 @@ impl SystemOpenSsh {
         }
         Self::configure_process(&mut command);
         command.spawn().map_err(ServerPulseError::Io)
+    }
+
+    pub async fn execute_short_command_with_timeout(
+        &self,
+        target: &SshTarget,
+        script: &str,
+        command_timeout: Duration,
+    ) -> Result<CommandOutput, ServerPulseError> {
+        let mut child = self.spawn_command(target).await?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let clean = script.replace("\r\n", "\n").replace('\r', "");
+            stdin.write_all(clean.as_bytes()).await?;
+            stdin.flush().await?;
+            drop(stdin);
+        }
+        let output = timeout(command_timeout, child.wait_with_output())
+            .await
+            .map_err(|_| ServerPulseError::Timeout("SSH command timed out".to_owned()))?
+            .map_err(ServerPulseError::Io)?;
+        Ok(CommandOutput {
+            status: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
     }
 
     pub async fn resolve_config(&self, alias: &str) -> Result<SshResolvedTarget, ServerPulseError> {
@@ -450,22 +482,12 @@ impl SshTransport for SystemOpenSsh {
         target: &SshTarget,
         script: &str,
     ) -> Result<CommandOutput, ServerPulseError> {
-        let mut child = self.spawn_command(target).await?;
-        if let Some(mut stdin) = child.stdin.take() {
-            let clean = script.replace("\r\n", "\n").replace('\r', "");
-            stdin.write_all(clean.as_bytes()).await?;
-            stdin.flush().await?;
-            drop(stdin);
-        }
-        let output = timeout(self.timeout + Duration::from_secs(4), child.wait_with_output())
-            .await
-            .map_err(|_| ServerPulseError::Timeout("SSH command timed out".to_owned()))?
-            .map_err(ServerPulseError::Io)?;
-        Ok(CommandOutput {
-            status: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+        self.execute_short_command_with_timeout(
+            target,
+            script,
+            self.timeout.saturating_add(Duration::from_secs(4)),
+        )
+        .await
     }
 }
 
@@ -593,6 +615,52 @@ mod tests {
         let expanded = expand_include_path("~/.ssh/config", &base);
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0], home.join(".ssh").join("config"));
+    }
+
+    fn test_target() -> SshTarget {
+        SshTarget {
+            alias: "test-target".to_owned(),
+            user: None,
+            port: None,
+            credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn delayed_command_prefix() -> Vec<String> {
+        vec![
+            "/D".to_owned(),
+            "/C".to_owned(),
+            "ping -n 6 127.0.0.1 > nul & exit /b 0".to_owned(),
+        ]
+    }
+
+    #[cfg(unix)]
+    fn delayed_command_prefix() -> Vec<String> {
+        vec!["-c".to_owned(), "sleep 5".to_owned()]
+    }
+
+    #[tokio::test]
+    async fn slow_bulk_command_accepts_explicit_operation_timeout() {
+        let ssh = SystemOpenSsh {
+            executable: PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "sh" }),
+            timeout: Duration::from_millis(50),
+            test_command_prefix: Some(delayed_command_prefix()),
+        };
+
+        let result = ssh
+            .execute_short_command_with_timeout(
+                &test_target(),
+                "echo pull",
+                Duration::from_secs(8),
+            )
+            .await
+            .expect("bulk operation should use its explicit deadline");
+        assert_eq!(result.status, Some(0));
     }
 
     #[test]
