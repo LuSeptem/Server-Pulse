@@ -276,6 +276,8 @@ server_monitoring/
 
 **A server is offline.** Run `ssh -o BatchMode=yes <alias> hostname` and check the alias, key, VPN, jump host, and host fingerprint. One failed server does not block the others.
 
+**The Preview connects to the wrong address for an SSH alias.** When the current user's `%USERPROFILE%\.ssh\config` exists, the Preview passes that file explicitly to `ssh`, `ssh -G`, and the Windows host-key probe. Verify the resolved target with `ssh -F "$env:USERPROFILE\.ssh\config" -G -p 22 <user>@<alias>` and check its `hostname` line, then close older Preview instances before launching the rebuilt portable executable.
+
 **GPU count is zero.** Run `nvidia-smi` on the remote host. CPU and memory collection does not require NVIDIA tools.
 
 **User attribution is partial.** `/proc` or NVIDIA process visibility may be restricted, or a process may have exited between samples. The aggregate metric remains available and the attribution status is shown.

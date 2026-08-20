@@ -109,6 +109,7 @@ pub trait SshTransport: Send + Sync {
 pub struct SystemOpenSsh {
     pub executable: PathBuf,
     pub timeout: Duration,
+    config_file: Option<PathBuf>,
     #[cfg(test)]
     test_command_prefix: Option<Vec<String>>,
 }
@@ -118,6 +119,7 @@ impl Default for SystemOpenSsh {
         Self {
             executable: PathBuf::from(if cfg!(windows) { "ssh.exe" } else { "ssh" }),
             timeout: Duration::from_secs(8),
+            config_file: existing_config_path(),
             #[cfg(test)]
             test_command_prefix: None,
         }
@@ -151,7 +153,9 @@ impl SystemOpenSsh {
         } else {
             "yes"
         };
-        let mut args = vec![
+        let mut args = Vec::new();
+        append_config_argument(&mut args, self.config_file.as_deref());
+        args.extend([
             "-T".to_owned(),
             "-o".to_owned(),
             format!("BatchMode={batch_mode}"),
@@ -161,7 +165,7 @@ impl SystemOpenSsh {
             "StrictHostKeyChecking=yes".to_owned(),
             "-o".to_owned(),
             "NumberOfPasswordPrompts=1".to_owned(),
-        ];
+        ]);
         if let Some(path) = &target.known_hosts_file {
             args.push("-o".to_owned());
             args.push(format!("UserKnownHostsFile={}", path.to_string_lossy()));
@@ -244,6 +248,9 @@ impl SystemOpenSsh {
     pub async fn resolve_target(&self, target: &SshTarget) -> Result<SshResolvedTarget, ServerPulseError> {
         let mut command = Command::new(&self.executable);
         command.arg("-G");
+        if let Some(path) = &self.config_file {
+            command.arg("-F").arg(path);
+        }
         if let Some(port) = target.port {
             command.arg("-p").arg(port.to_string());
         }
@@ -330,26 +337,36 @@ pub(crate) fn configure_process(command: &mut Command) {
     }
 }
 
+pub(crate) fn append_config_argument(args: &mut Vec<String>, config_file: Option<&Path>) {
+    if let Some(path) = config_file {
+        args.push("-F".to_owned());
+        args.push(path.to_string_lossy().into_owned());
+    }
+}
+
 fn default_config_path() -> Option<PathBuf> {
     let home = home_directory()?;
     Some(home.join(".ssh").join("config"))
 }
 
-fn home_directory() -> Option<PathBuf> {
-    dirs::home_dir().or_else(|| {
-        if cfg!(windows) {
-            std::env::var_os("USERPROFILE")
-                .or_else(|| std::env::var_os("HOME"))
-                .or_else(|| {
-                    let drive = std::env::var_os("HOMEDRIVE")?;
-                    let path = std::env::var_os("HOMEPATH")?;
-                    Some(format!("{}{}", drive.to_string_lossy(), path.to_string_lossy()).into())
-                })
-                .map(PathBuf::from)
-        } else {
-            std::env::var_os("HOME").map(PathBuf::from)
-        }
-    })
+pub(crate) fn home_directory() -> Option<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let drive = std::env::var_os("HOMEDRIVE")?;
+                let path = std::env::var_os("HOMEPATH")?;
+                Some(format!("{}{}", drive.to_string_lossy(), path.to_string_lossy()).into())
+            })
+            .or_else(|| dirs::home_dir())
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+    } else {
+        dirs::home_dir().or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+    }
+}
+
+pub(crate) fn existing_config_path() -> Option<PathBuf> {
+    default_config_path().filter(|path| path.is_file())
 }
 
 fn read_config_file(
@@ -614,6 +631,20 @@ mod tests {
     }
 
     #[test]
+    fn ssh_arguments_include_explicit_user_config() {
+        let ssh = SystemOpenSsh {
+            executable: PathBuf::from("ssh"),
+            timeout: Duration::from_secs(8),
+            config_file: Some(PathBuf::from(r"C:\Users\alice\.ssh\config")),
+            test_command_prefix: None,
+        };
+        let args = ssh.build_arguments(&test_target());
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-F" && pair[1] == r"C:\Users\alice\.ssh\config"));
+    }
+
+    #[test]
     fn discovers_literal_host_aliases_and_skips_patterns() {
         let mut aliases = Vec::new();
         let mut visited = HashSet::new();
@@ -690,6 +721,7 @@ mod tests {
         let ssh = SystemOpenSsh {
             executable: PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "sh" }),
             timeout: Duration::from_millis(50),
+            config_file: None,
             test_command_prefix: Some(delayed_command_prefix()),
         };
 

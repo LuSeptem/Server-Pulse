@@ -266,6 +266,8 @@ server_monitoring/
 
 **服务器离线怎么办？** 运行 `ssh -o BatchMode=yes <别名> hostname`，检查别名、密钥、VPN、跳板机和主机指纹。一个服务器失败不会阻塞其他服务器。
 
+**Preview 把 SSH 别名解析到了错误地址？** 当当前用户的 `%USERPROFILE%\.ssh\config` 存在时，Preview 会把该文件显式传给 `ssh`、`ssh -G` 和 Windows 主机密钥探测。可运行 `ssh -F "$env:USERPROFILE\.ssh\config" -G -p 22 <用户>@<别名>`，检查输出中的 `hostname`；之后关闭旧的 Preview 实例，再启动重新构建的 portable EXE。
+
 **Windows 出现 `choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com`？** 这是部分 Win32-OpenSSH `ssh-keyscan.exe` 的已知兼容性问题。Preview 会自动改用 `ssh.exe` 和临时 `known_hosts` 完成主机密钥探测，不会修改用户的 `~/.ssh/known_hosts`；若仍失败，再检查 `ssh -V`、SSH 别名和网络环境。
 
 **GPU 数量为 0？** 在远端执行 `nvidia-smi`；CPU 和内存不依赖 NVIDIA 工具。

@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::{configure_process, SshTarget};
+use crate::{append_config_argument, configure_process, existing_config_path, SshTarget};
 use serverpulse_core::ServerPulseError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,7 +80,7 @@ impl KnownHostsManager {
     }
 
     pub fn user_known_hosts_path() -> Option<PathBuf> {
-        dirs::home_dir().map(|home| home.join(".ssh").join("known_hosts"))
+        crate::home_directory().map(|home| home.join(".ssh").join("known_hosts"))
     }
 
     pub async fn probe(
@@ -175,8 +175,19 @@ impl KnownHostsManager {
     }
 
     fn ssh_probe_arguments(&self, target: &SshTarget, known_hosts: &Path) -> Vec<String> {
+        self.ssh_probe_arguments_with_config(target, known_hosts, existing_config_path().as_deref())
+    }
+
+    fn ssh_probe_arguments_with_config(
+        &self,
+        target: &SshTarget,
+        known_hosts: &Path,
+        config_file: Option<&Path>,
+    ) -> Vec<String> {
         let null_known_hosts = if cfg!(windows) { "NUL" } else { "/dev/null" };
-        let mut args = vec![
+        let mut args = Vec::new();
+        append_config_argument(&mut args, config_file);
+        args.extend([
             "-T".to_owned(),
             "5".to_owned(),
             "-o".to_owned(),
@@ -189,7 +200,7 @@ impl KnownHostsManager {
             "BatchMode=yes".to_owned(),
             "-o".to_owned(),
             "PreferredAuthentications=none".to_owned(),
-        ];
+        ]);
         if let Some(port) = target.resolved_port.or(target.port) {
             args.push("-p".to_owned());
             args.push(port.to_string());
@@ -510,6 +521,30 @@ mod tests {
                 "10.0.0.7".to_owned(),
             ]
         );
+        let _ = fs::remove_file(app);
+    }
+
+    #[test]
+    fn ssh_probe_arguments_include_explicit_user_config() {
+        let (app, user) = temp_paths();
+        let target = SshTarget {
+            alias: "gpu-alias".to_owned(),
+            user: Some("alice".to_owned()),
+            port: Some(22),
+            credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
+        };
+        let manager = KnownHostsManager::new(&app, Some(user));
+        let config = PathBuf::from(r"C:\Users\alice\.ssh\config");
+        let args = manager.ssh_probe_arguments_with_config(&target, &app, Some(&config));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-F" && pair[1] == r"C:\Users\alice\.ssh\config"));
         let _ = fs::remove_file(app);
     }
 
