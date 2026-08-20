@@ -276,7 +276,7 @@ git status --short
 
 - `frontend/` 是 Vue 3 + TypeScript + Pinia + ECharts UI，使用 npm 和 Vitest；`frontend/dist/index.html` 是允许 Rust 编译在未先构建前端时使用的最小占位入口，正式构建会被 Vite 产物覆盖。
 - `src-tauri/crates/serverpulse-core` 不依赖 Tauri，负责 v2 采样协议、指标模型、JSON/JSONL 读取、错误模型和重试状态。
-- `src-tauri/crates/serverpulse-ssh` 通过系统 OpenSSH 执行 LF 采样脚本，使用应用专用 `known_hosts`、只读用户 `known_hosts`、严格指纹状态、进程组、超时和 `kill_on_drop` 清理本地 SSH 子进程；持久会话按帧读取远端循环 sampler，短命令仍供 Agent 使用。Agent 历史批量 pull 通过显式的 120 秒操作期限执行，状态和控制命令继续使用短交互期限，避免大批量 JSONL 输出被误判为超时。
+- `src-tauri/crates/serverpulse-ssh` 通过系统 OpenSSH 执行 LF 采样脚本，使用 `ssh -G` 解析 SSH config 别名后再进行主机密钥探测，使用应用专用 `known_hosts`、只读用户 `known_hosts`、严格指纹状态、进程组、超时和 `kill_on_drop` 清理本地 SSH 子进程；Windows 上 `ssh`、`ssh-keyscan` 和 askpass 子进程统一使用无控制台标志。持久会话按帧读取远端循环 sampler，短命令仍供 Agent 使用。Agent 历史批量 pull 通过显式的 120 秒操作期限执行，状态和控制命令继续使用短交互期限，避免大批量 JSONL 输出被误判为超时。
 - `src-tauri/src/session_credentials.rs` 保存当前运行密码的 zeroize 内存副本；Windows 通过当前用户 ACL 命名管道、macOS/Unix 通过一次性 Unix socket 把 token 验证后的密码交给 askpass，密码不进入参数、普通环境变量或文件。
 - `src-tauri/crates/serverpulse-platform` 负责 Windows/macOS 数据根目录、location pointer、原子写入、跨平台文件锁、JSONL 合并和 `keyring` 凭据抽象；应用专用 known_hosts 位于当前数据根目录。
 - `assets/serverpulse-sample.sh` 是唯一 canonical 远端脚本，必须保持 POSIX `sh` 兼容和 LF 行尾；`tests/fixtures/` 保存协议与历史黄金样例。

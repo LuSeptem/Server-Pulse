@@ -35,6 +35,10 @@ pub struct SshTarget {
     pub known_hosts_file: Option<PathBuf>,
     #[serde(skip)]
     pub user_known_hosts_file: Option<PathBuf>,
+    #[serde(skip)]
+    pub resolved_host: Option<String>,
+    #[serde(skip)]
+    pub resolved_port: Option<u16>,
 }
 
 impl SshTarget {
@@ -48,6 +52,8 @@ impl SshTarget {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         }
     }
 }
@@ -181,21 +187,6 @@ impl SystemOpenSsh {
         args
     }
 
-    fn configure_process(command: &mut Command) {
-        command.kill_on_drop(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        #[cfg(windows)]
-        {
-            // Keep ssh.exe and the askpass helper from opening a console when
-            // the desktop application is launched from Explorer.
-            command.creation_flags(0x0800_0000 | 0x0000_0200);
-        }
-    }
-
     pub(crate) async fn spawn_command(&self, target: &SshTarget) -> Result<Child, ServerPulseError> {
         let mut command = Command::new(&self.executable);
         #[cfg(test)]
@@ -222,7 +213,7 @@ impl SystemOpenSsh {
                 command.env("SERVERPULSE_SESSION_ENDPOINT", endpoint);
             }
         }
-        Self::configure_process(&mut command);
+        configure_process(&mut command);
         command.spawn().map_err(ServerPulseError::Io)
     }
 
@@ -250,12 +241,21 @@ impl SystemOpenSsh {
         })
     }
 
-    pub async fn resolve_config(&self, alias: &str) -> Result<SshResolvedTarget, ServerPulseError> {
+    pub async fn resolve_target(&self, target: &SshTarget) -> Result<SshResolvedTarget, ServerPulseError> {
         let mut command = Command::new(&self.executable);
-        command.args(["-G", "--", alias]);
+        command.arg("-G");
+        if let Some(port) = target.port {
+            command.arg("-p").arg(port.to_string());
+        }
+        let destination = target
+            .user
+            .as_deref()
+            .map(|user| format!("{user}@{}", target.alias))
+            .unwrap_or_else(|| target.alias.clone());
+        command.args(["--", &destination]);
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
-        Self::configure_process(&mut command);
+        configure_process(&mut command);
         let output = timeout(self.timeout, command.output())
             .await
             .map_err(|_| ServerPulseError::Timeout("ssh -G timed out".to_owned()))?
@@ -266,7 +266,7 @@ impl SystemOpenSsh {
             ));
         }
         let mut user = None;
-        let mut hostname = alias.to_owned();
+        let mut hostname = target.alias.clone();
         let mut port = 22u16;
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let mut parts = line.split_whitespace();
@@ -291,11 +291,42 @@ impl SystemOpenSsh {
                 .unwrap_or_else(|_| "default".to_owned())
         });
         Ok(SshResolvedTarget {
-            alias: alias.to_owned(),
+            alias: target.alias.clone(),
             host_name: hostname,
             port,
             user,
         })
+    }
+
+    pub async fn resolve_config(&self, alias: &str) -> Result<SshResolvedTarget, ServerPulseError> {
+        let target = SshTarget {
+            alias: alias.to_owned(),
+            user: None,
+            port: None,
+            credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
+        };
+        self.resolve_target(&target).await
+    }
+}
+
+pub(crate) fn configure_process(command: &mut Command) {
+    command.kill_on_drop(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        // Keep SSH, ssh-keyscan, and the askpass helper from opening a
+        // console when the desktop application is launched from Explorer.
+        command.creation_flags(0x0800_0000 | 0x0000_0200);
     }
 }
 
@@ -507,6 +538,8 @@ mod tests {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         };
         assert_eq!(
             ssh.build_arguments(&target),
@@ -530,6 +563,8 @@ mod tests {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         };
         let args = ssh.build_arguments(&target).join(" ");
         assert!(!args.contains("password"));
@@ -547,6 +582,8 @@ mod tests {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         };
         let args = ssh.build_arguments(&target).join(" ");
         assert!(args.contains("BatchMode=no"));
@@ -566,6 +603,8 @@ mod tests {
             session_credential_endpoint: Some(r"\\.\pipe\serverpulse-askpass-random".to_owned()),
             known_hosts_file: Some(PathBuf::from(r"C:\ServerPulse\known_hosts")),
             user_known_hosts_file: Some(PathBuf::from(r"C:\Users\alice\.ssh\known_hosts")),
+            resolved_host: None,
+            resolved_port: None,
         };
         let args = ssh.build_arguments(&target).join(" ");
         assert!(args.contains("StrictHostKeyChecking=yes"));
@@ -627,6 +666,8 @@ mod tests {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         }
     }
 
@@ -678,6 +719,8 @@ mod tests {
                 session_credential_endpoint: None,
                 known_hosts_file: None,
                 user_known_hosts_file: None,
+                resolved_host: None,
+                resolved_port: None,
             };
             let script = include_str!("../../../../assets/serverpulse-sample.sh");
             let res = ssh.collect_once(&target, script).await;

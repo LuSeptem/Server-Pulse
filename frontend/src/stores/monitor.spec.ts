@@ -64,6 +64,24 @@ describe('monitor store', () => {
     expect(store.unaddedCandidates[0].id).toBe('409')
   })
 
+  it('keeps initializing when one monitored server fails to start', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    const server = { id: 'startup-failure', label: 'Startup failure', host: 'startup-failure', monitored: true, passwordless: true }
+    vi.mocked(invoke)
+      .mockResolvedValueOnce([server])
+      .mockResolvedValueOnce('/tmp/ServerPulse')
+      .mockResolvedValueOnce({ path: '/home/test/.ssh/config', aliases: [], candidates: [], error: null })
+      .mockRejectedValueOnce(new Error('host key probe failed'))
+      .mockResolvedValueOnce({ snapshots: {}, statuses: {}, errors: {}, intervalSeconds: 5 })
+
+    await store.init()
+
+    expect(store.initialized).toBe(true)
+    expect(store.statuses[server.id]).toBe('offline')
+    expect(store.errors[server.id]).toBe('host key probe failed')
+  })
+
   it('imports an unadded candidate', async () => {
     setActivePinia(createPinia())
     const store = useMonitorStore()

@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::SshTarget;
+use crate::{configure_process, SshTarget};
 use serverpulse_core::ServerPulseError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,13 +105,10 @@ impl KnownHostsManager {
 
     pub async fn scan(&self, target: &SshTarget) -> Result<Vec<ScannedHostKey>, ServerPulseError> {
         let mut command = Command::new(&self.scan_executable);
-        command.args(["-T", "5"]);
-        if let Some(port) = target.port {
-            command.args(["-p", &port.to_string()]);
-        }
-        command.args(["-t", "rsa,ecdsa,ed25519", "--", &target.alias]);
+        command.args(self.scan_arguments(target));
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
+        configure_process(&mut command);
         let output = timeout(self.timeout, command.output())
             .await
             .map_err(|_| ServerPulseError::Timeout("ssh-keyscan timed out".to_owned()))?
@@ -128,6 +125,25 @@ impl KnownHostsManager {
             ));
         }
         Ok(keys)
+    }
+
+    fn scan_arguments(&self, target: &SshTarget) -> Vec<String> {
+        let mut args = vec!["-T".to_owned(), "5".to_owned()];
+        if let Some(port) = target.resolved_port.or(target.port) {
+            args.push("-p".to_owned());
+            args.push(port.to_string());
+        }
+        args.extend([
+            "-t".to_owned(),
+            "rsa,ecdsa,ed25519".to_owned(),
+            "--".to_owned(),
+            target
+                .resolved_host
+                .as_deref()
+                .unwrap_or(&target.alias)
+                .to_owned(),
+        ]);
+        args
     }
 
     pub fn classify(
@@ -273,10 +289,19 @@ fn read_optional(path: &Path) -> Result<Option<String>, ServerPulseError> {
 }
 
 fn host_names(target: &SshTarget) -> Vec<String> {
-    let port = target.port.unwrap_or(22);
+    let port = target.resolved_port.or(target.port).unwrap_or(22);
     let mut names = vec![target.alias.clone(), format!("[{0}]:{1}", target.alias, port)];
+    if let Some(resolved_host) = target.resolved_host.as_deref() {
+        if !resolved_host.eq_ignore_ascii_case(&target.alias) {
+            names.push(resolved_host.to_owned());
+            names.push(format!("[{resolved_host}]:{port}"));
+        }
+    }
     if port == 22 {
         names.push(format!("[{0}]:22", target.alias));
+        if let Some(resolved_host) = target.resolved_host.as_deref() {
+            names.push(format!("[{resolved_host}]:22"));
+        }
     }
     names
 }
@@ -363,6 +388,63 @@ mod tests {
     }
 
     #[test]
+    fn scans_resolved_ssh_config_host_and_port() {
+        let (app, user) = temp_paths();
+        let target = SshTarget {
+            alias: "gpu-alias".to_owned(),
+            user: None,
+            port: Some(22),
+            credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
+            resolved_host: Some("10.0.0.7".to_owned()),
+            resolved_port: Some(2200),
+        };
+        let manager = KnownHostsManager::new(&app, Some(user));
+        assert_eq!(
+            manager.scan_arguments(&target),
+            vec![
+                "-T".to_owned(),
+                "5".to_owned(),
+                "-p".to_owned(),
+                "2200".to_owned(),
+                "-t".to_owned(),
+                "rsa,ecdsa,ed25519".to_owned(),
+                "--".to_owned(),
+                "10.0.0.7".to_owned(),
+            ]
+        );
+        let _ = fs::remove_file(app);
+    }
+
+    #[test]
+    fn classifies_known_keys_by_alias_and_resolved_host() {
+        let (app, user) = temp_paths();
+        let target = SshTarget {
+            alias: "gpu-alias".to_owned(),
+            user: None,
+            port: Some(22),
+            credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
+            resolved_host: Some("10.0.0.7".to_owned()),
+            resolved_port: Some(2200),
+        };
+        fs::write(&app, "[10.0.0.7]:2200 ssh-ed25519 AQID\n").expect("known host");
+        let scan = parse_scan_output("10.0.0.7 ssh-ed25519 AQID\n").expect("scan");
+        let manager = KnownHostsManager::new(&app, Some(user.clone()));
+        assert_eq!(manager.classify(&target, &scan).expect("trusted"), HostKeyState::Trusted);
+        manager.forget(&target).expect("forget");
+        assert_eq!(fs::read_to_string(&app).expect("application file"), "");
+        let _ = fs::remove_file(app);
+        let _ = fs::remove_file(user);
+    }
+
+    #[test]
     fn classifies_unknown_trusted_and_changed_without_touching_user_file() {
         let (app, user) = temp_paths();
         let target = SshTarget {
@@ -374,6 +456,8 @@ mod tests {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         };
         let scan = parse_scan_output("example ssh-ed25519 AQID\n")
             .expect("scan");
@@ -405,6 +489,8 @@ mod tests {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         };
         let old = parse_scan_output("example ssh-ed25519 AQID\n").expect("old");
         let new = parse_scan_output("example ssh-ed25519 BAUG\n").expect("new");
@@ -429,6 +515,8 @@ mod tests {
             session_credential_endpoint: None,
             known_hosts_file: None,
             user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
         };
         let scan = parse_scan_output("example ssh-ed25519 AQID\n").expect("scan");
         let salt = b"test-salt";

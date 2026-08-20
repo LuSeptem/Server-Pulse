@@ -202,8 +202,27 @@ export const useMonitorStore = defineStore('monitor', {
         })
       }
 
-      await Promise.all(this.servers.filter((server) => server.monitored).map((server) => this.start(server)))
+      const startupFailures: Record<string, string> = {}
+      await Promise.all(
+        this.servers
+          .filter((server) => server.monitored)
+          .map(async (server) => {
+            try {
+              await this.start(server)
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              console.error(`Failed to start monitoring for ${server.id}:`, error)
+              startupFailures[server.id] = message
+              this.statuses = { ...this.statuses, [server.id]: 'offline' }
+              this.errors = { ...this.errors, [server.id]: message }
+            }
+          }),
+      )
       await this.refreshMonitoringState()
+      for (const [serverId, message] of Object.entries(startupFailures)) {
+        this.statuses = { ...this.statuses, [serverId]: 'offline' }
+        this.errors = { ...this.errors, [serverId]: message }
+      }
       setInterval(() => {
         void this.refreshMonitoringState()
       }, 2000)

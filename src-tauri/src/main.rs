@@ -377,6 +377,17 @@ fn target_with_known_hosts(server: &ServerConfig) -> Result<SshTarget, String> {
     Ok(target)
 }
 
+async fn resolved_host_key_target(server: &ServerConfig) -> Result<SshTarget, String> {
+    let mut target = target_with_known_hosts(server)?;
+    let resolved = SystemOpenSsh::default()
+        .resolve_target(&target)
+        .await
+        .map_err(to_command_error)?;
+    target.resolved_host = Some(resolved.host_name);
+    target.resolved_port = Some(resolved.port);
+    Ok(target)
+}
+
 async fn target_with_credentials(server: &ServerConfig, state: &AppState) -> Result<SshTarget, String> {
     let mut target = target_with_known_hosts(server)?;
     if server.passwordless {
@@ -415,7 +426,7 @@ async fn probe_host_key_internal(
     server: &ServerConfig,
 ) -> Result<(HostKeyChallenge, SshTarget, Vec<ScannedHostKey>), String> {
     server.validate().map_err(to_command_error)?;
-    let target = target_with_known_hosts(server)?;
+    let target = resolved_host_key_target(server).await?;
     let manager = known_hosts_manager()?;
     let challenge_id = uuid::Uuid::new_v4().to_string();
     let scanned = manager.scan(&target).await.map_err(to_command_error)?;
@@ -423,7 +434,7 @@ async fn probe_host_key_internal(
     let challenge = HostKeyChallenge {
         challenge_id,
         server: server.host.clone(),
-        port: server.port.unwrap_or(22),
+        port: target.resolved_port.or(target.port).unwrap_or(22),
         keys: scanned
             .iter()
             .map(|key| serverpulse_ssh::HostKeyRecord {
@@ -800,7 +811,7 @@ async fn forget_host_key(
     state: State<'_, AppState>,
     server: ServerConfig,
 ) -> Result<(), String> {
-    let target = target_with_known_hosts(&server)?;
+    let target = resolved_host_key_target(&server).await?;
     known_hosts_manager()?
         .forget(&target)
         .map_err(to_command_error)?;
