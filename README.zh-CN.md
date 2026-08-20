@@ -12,7 +12,7 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 `codex/tauri-port` 分支包含跨平台重写版本。现有 PowerShell/WPF 版本通过 `port-baseline-v1.1.0` 标签保留，新版本在同一仓库中独立开发。Preview 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不纳入 v1。
 
-当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现与诊断、旧版 Windows 服务器配置兼容、主机指纹确认、系统凭据库与仅本次会话密码、持久化分帧 SSH 采集、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，但代码保持可编译兼容。
+当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现与诊断、针对 Windows OpenSSH `ssh-keyscan`/sntrup 兼容性问题的主机密钥探测回退、旧版 Windows 服务器配置兼容、主机指纹确认、系统凭据库与仅本次会话密码、持久化分帧 SSH 采集、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，但代码保持可编译兼容。
 
 在仓库根目录执行：
 
@@ -265,6 +265,8 @@ server_monitoring/
 ## 常见问题
 
 **服务器离线怎么办？** 运行 `ssh -o BatchMode=yes <别名> hostname`，检查别名、密钥、VPN、跳板机和主机指纹。一个服务器失败不会阻塞其他服务器。
+
+**Windows 出现 `choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com`？** 这是部分 Win32-OpenSSH `ssh-keyscan.exe` 的已知兼容性问题。Preview 会自动改用 `ssh.exe` 和临时 `known_hosts` 完成主机密钥探测，不会修改用户的 `~/.ssh/known_hosts`；若仍失败，再检查 `ssh -V`、SSH 别名和网络环境。
 
 **GPU 数量为 0？** 在远端执行 `nvidia-smi`；CPU 和内存不依赖 NVIDIA 工具。
 

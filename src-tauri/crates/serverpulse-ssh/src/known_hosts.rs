@@ -58,6 +58,7 @@ pub struct KnownHostsPaths {
 pub struct KnownHostsManager {
     pub paths: KnownHostsPaths,
     pub scan_executable: PathBuf,
+    pub ssh_executable: PathBuf,
     pub timeout: Duration,
 }
 
@@ -73,6 +74,7 @@ impl KnownHostsManager {
             } else {
                 "ssh-keyscan"
             }),
+            ssh_executable: PathBuf::from(if cfg!(windows) { "ssh.exe" } else { "ssh" }),
             timeout: Duration::from_secs(8),
         }
     }
@@ -113,18 +115,93 @@ impl KnownHostsManager {
             .await
             .map_err(|_| ServerPulseError::Timeout("ssh-keyscan timed out".to_owned()))?
             .map_err(ServerPulseError::Io)?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        if cfg!(windows)
+            && (should_fallback_to_ssh_probe(&stdout) || should_fallback_to_ssh_probe(&stderr))
+        {
+            return self.scan_with_ssh(target).await;
+        }
         if !output.status.success() && output.stdout.is_empty() {
             return Err(ServerPulseError::Authentication(
-                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                stderr.trim().to_owned(),
             ));
         }
-        let keys = parse_scan_output(&String::from_utf8_lossy(&output.stdout))?;
+        let keys = parse_scan_output(&stdout)?;
         if keys.is_empty() {
             return Err(ServerPulseError::Authentication(
                 "ssh-keyscan returned no host keys".to_owned(),
             ));
         }
         Ok(keys)
+    }
+
+    async fn scan_with_ssh(
+        &self,
+        target: &SshTarget,
+    ) -> Result<Vec<ScannedHostKey>, ServerPulseError> {
+        let temporary_path = temporary_probe_path();
+        let result = async {
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary_path)?;
+
+            let mut command = Command::new(&self.ssh_executable);
+            command.args(self.ssh_probe_arguments(target, &temporary_path));
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::piped());
+            configure_process(&mut command);
+            let output = timeout(self.timeout, command.output())
+                .await
+                .map_err(|_| ServerPulseError::Timeout("SSH host-key probe timed out".to_owned()))?
+                .map_err(ServerPulseError::Io)?;
+            let text = fs::read_to_string(&temporary_path)?;
+            let keys = parse_scan_output(&text)?;
+            if !keys.is_empty() {
+                return Ok(keys);
+            }
+
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            Err(ServerPulseError::Authentication(if detail.is_empty() {
+                "SSH host-key probe returned no host keys".to_owned()
+            } else {
+                detail
+            }))
+        }
+        .await;
+        let _ = fs::remove_file(&temporary_path);
+        result
+    }
+
+    fn ssh_probe_arguments(&self, target: &SshTarget, known_hosts: &Path) -> Vec<String> {
+        let null_known_hosts = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        let mut args = vec![
+            "-T".to_owned(),
+            "5".to_owned(),
+            "-o".to_owned(),
+            format!("UserKnownHostsFile={}", known_hosts.to_string_lossy()),
+            "-o".to_owned(),
+            format!("GlobalKnownHostsFile={null_known_hosts}"),
+            "-o".to_owned(),
+            "StrictHostKeyChecking=accept-new".to_owned(),
+            "-o".to_owned(),
+            "BatchMode=yes".to_owned(),
+            "-o".to_owned(),
+            "PreferredAuthentications=none".to_owned(),
+        ];
+        if let Some(port) = target.resolved_port.or(target.port) {
+            args.push("-p".to_owned());
+            args.push(port.to_string());
+        }
+        args.push("--".to_owned());
+        if let Some(user) = &target.user {
+            args.push(format!("{user}@{}", target.alias));
+        } else {
+            args.push(target.alias.clone());
+        }
+        args.push("exit".to_owned());
+        args
     }
 
     fn scan_arguments(&self, target: &SshTarget) -> Vec<String> {
@@ -248,6 +325,23 @@ impl KnownHostsManager {
         fs::write(path, output)?;
         Ok(())
     }
+}
+
+fn should_fallback_to_ssh_probe(output: &str) -> bool {
+    output
+        .to_ascii_lowercase()
+        .contains("choose_kex: unsupported kex method")
+}
+
+fn temporary_probe_path() -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "serverpulse-hostkey-{}-{nanos}.known_hosts",
+        std::process::id()
+    ))
 }
 
 pub fn parse_scan_output(text: &str) -> Result<Vec<ScannedHostKey>, ServerPulseError> {
@@ -417,6 +511,15 @@ mod tests {
             ]
         );
         let _ = fs::remove_file(app);
+    }
+
+    #[test]
+    fn falls_back_when_windows_keyscan_cannot_handle_sntrup_kex() {
+        let stderr = "# 10.0.0.7:22 SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.16\\nchoose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com";
+        assert!(should_fallback_to_ssh_probe(stderr));
+        assert!(!should_fallback_to_ssh_probe(
+            "Unable to negotiate with host: no matching key exchange method found"
+        ));
     }
 
     #[test]
