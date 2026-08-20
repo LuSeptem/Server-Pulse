@@ -62,6 +62,8 @@ interface MonitorState {
 }
 
 let unlisteners: UnlistenFn[] = []
+let initializationPromise: Promise<void> | null = null
+let serverChangeVersion = 0
 
 export const useMonitorStore = defineStore('monitor', {
   state: (): MonitorState => ({
@@ -127,106 +129,129 @@ export const useMonitorStore = defineStore('monitor', {
     },
     async init() {
       if (this.initialized) return
-      try {
-        const [servers, dataRoot] = await Promise.all([
-          invoke<ServerConfig[]>('list_servers').catch((err) => {
-            console.error('Failed to list servers:', err)
-            this.errors._app = err instanceof Error ? err.message : String(err)
-            return []
-          }),
-          invoke<string>('get_data_root').catch((err) => {
-            console.error('Failed to get data root:', err)
-            return ''
-          }),
-        ])
-        this.servers = servers
-        this.dataRoot = dataRoot
-      } catch (error) {
-        console.error('Store init error:', error)
-      }
+      if (initializationPromise) return initializationPromise
 
-      await this.refreshSshConfig()
+      const run = (async () => {
+        const initialServerChangeVersion = serverChangeVersion
 
-      try {
-        unlisteners.forEach((unlisten) => unlisten())
-        unlisteners = [
-          await listen<ServerConfig[]>('servers.changed', (event) => {
-            if (Array.isArray(event.payload)) {
-              this.servers = event.payload
-              void this.refreshSshConfig()
-            }
-          }),
-          await listen<SnapshotEvent>('server.snapshot', (event) => {
-            const id = event.payload.serverId
-            this.snapshots = { ...this.snapshots, [id]: event.payload.payload }
-            this.statuses = { ...this.statuses, [id]: 'online' }
-            const nextErrors = { ...this.errors }
-            delete nextErrors[id]
-            this.errors = nextErrors
-          }),
-          await listen<StatusEvent>('server.status', (event) => {
-            const id = event.payload.serverId
-            this.statuses = { ...this.statuses, [id]: event.payload.payload.status }
-            if (event.payload.payload.status === 'online') {
+        // Register the cross-window listener before loading any data. Otherwise
+        // a Manage window can save a selection while this window is still
+        // resolving SSH config, leaving the main window with stale flags.
+        try {
+          unlisteners.forEach((unlisten) => unlisten())
+          unlisteners = [
+            await listen<ServerConfig[]>('servers.changed', (event) => {
+              if (Array.isArray(event.payload)) {
+                serverChangeVersion += 1
+                this.servers = event.payload
+                void this.refreshSshConfig()
+              }
+            }),
+            await listen<SnapshotEvent>('server.snapshot', (event) => {
+              const id = event.payload.serverId
+              this.snapshots = { ...this.snapshots, [id]: event.payload.payload }
+              this.statuses = { ...this.statuses, [id]: 'online' }
               const nextErrors = { ...this.errors }
               delete nextErrors[id]
               this.errors = nextErrors
-            } else if (event.payload.payload.detail?.detail) {
-              this.errors = { ...this.errors, [id]: event.payload.payload.detail.detail }
-            }
-          }),
-          await listen<HostKeyChallenge>('server.host_key_required', (event) => {
-            this.hostKeyChallenge = event.payload
-          }),
-          await listen<number>('interval.changed', (event) => {
-            if (event.payload && event.payload >= 1 && event.payload <= 300) {
-              this.intervalSeconds = event.payload
-              try {
-                localStorage.setItem('serverpulse:interval_seconds', String(event.payload))
-              } catch {}
-            }
-          }),
-        ]
-      } catch (error) {
-        console.warn('Event listen not available:', error)
-      }
+            }),
+            await listen<StatusEvent>('server.status', (event) => {
+              const id = event.payload.serverId
+              this.statuses = { ...this.statuses, [id]: event.payload.payload.status }
+              if (event.payload.payload.status === 'online') {
+                const nextErrors = { ...this.errors }
+                delete nextErrors[id]
+                this.errors = nextErrors
+              } else if (event.payload.payload.detail?.detail) {
+                this.errors = { ...this.errors, [id]: event.payload.payload.detail.detail }
+              }
+            }),
+            await listen<HostKeyChallenge>('server.host_key_required', (event) => {
+              this.hostKeyChallenge = event.payload
+            }),
+            await listen<number>('interval.changed', (event) => {
+              if (event.payload && event.payload >= 1 && event.payload <= 300) {
+                this.intervalSeconds = event.payload
+                try {
+                  localStorage.setItem('serverpulse:interval_seconds', String(event.payload))
+                } catch {}
+              }
+            }),
+          ]
+        } catch (error) {
+          console.warn('Event listen not available:', error)
+        }
 
-      if (typeof window !== 'undefined') {
-        window.addEventListener('storage', (e) => {
-          if (e.key === 'serverpulse:interval_seconds' && e.newValue) {
-            const val = Number(e.newValue)
-            if (val >= 1 && val <= 300) {
-              this.intervalSeconds = val
-            }
+        try {
+          const [servers, dataRoot] = await Promise.all([
+            invoke<ServerConfig[]>('list_servers').catch((err) => {
+              console.error('Failed to list servers:', err)
+              this.errors._app = err instanceof Error ? err.message : String(err)
+              return []
+            }),
+            invoke<string>('get_data_root').catch((err) => {
+              console.error('Failed to get data root:', err)
+              return ''
+            }),
+          ])
+          // A servers.changed event may have arrived while list_servers was in
+          // flight. Never overwrite that newer selection with the old response.
+          if (serverChangeVersion === initialServerChangeVersion) {
+            this.servers = servers
           }
-        })
-      }
+          this.dataRoot = dataRoot
+        } catch (error) {
+          console.error('Store init error:', error)
+        }
 
-      const startupFailures: Record<string, string> = {}
-      await Promise.all(
-        this.servers
-          .filter((server) => server.monitored)
-          .map(async (server) => {
-            try {
-              await this.start(server)
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error)
-              console.error(`Failed to start monitoring for ${server.id}:`, error)
-              startupFailures[server.id] = message
-              this.statuses = { ...this.statuses, [server.id]: 'offline' }
-              this.errors = { ...this.errors, [server.id]: message }
+        await this.refreshSshConfig()
+
+        if (typeof window !== 'undefined') {
+          window.addEventListener('storage', (e) => {
+            if (e.key === 'serverpulse:interval_seconds' && e.newValue) {
+              const val = Number(e.newValue)
+              if (val >= 1 && val <= 300) {
+                this.intervalSeconds = val
+              }
             }
-          }),
-      )
-      await this.refreshMonitoringState()
-      for (const [serverId, message] of Object.entries(startupFailures)) {
-        this.statuses = { ...this.statuses, [serverId]: 'offline' }
-        this.errors = { ...this.errors, [serverId]: message }
+          })
+        }
+
+        const startupFailures: Record<string, string> = {}
+        await Promise.all(
+          this.servers
+            .filter((server) => server.monitored)
+            .map(async (server) => {
+              try {
+                await this.start(server)
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                console.error(`Failed to start monitoring for ${server.id}:`, error)
+                startupFailures[server.id] = message
+                this.statuses = { ...this.statuses, [server.id]: 'offline' }
+                this.errors = { ...this.errors, [server.id]: message }
+              }
+            }),
+        )
+        await this.refreshMonitoringState()
+        for (const [serverId, message] of Object.entries(startupFailures)) {
+          this.statuses = { ...this.statuses, [serverId]: 'offline' }
+          this.errors = { ...this.errors, [serverId]: message }
+        }
+        setInterval(() => {
+          void this.refreshMonitoringState()
+        }, 2000)
+        this.initialized = true
+      })()
+
+      initializationPromise = run
+      try {
+        await run
+      } finally {
+        if (initializationPromise === run) {
+          initializationPromise = null
+        }
       }
-      setInterval(() => {
-        void this.refreshMonitoringState()
-      }, 2000)
-      this.initialized = true
     },
     async setIntervalSeconds(seconds: number) {
       const clamped = Math.max(1, Math.min(300, Math.round(seconds || 5)))

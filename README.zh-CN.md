@@ -278,6 +278,8 @@ server_monitoring/
 
 **启动 Preview 时为什么有终端窗口？** 请从资源管理器或快捷方式启动生成的 `serverpulse-tauri.exe`；Release 版本使用 GUI 子系统，不会主动创建控制台。如果从 Windows Terminal 中输入命令启动，父终端按设计会继续保持打开。
 
+**主界面显示“没有选择服务器”，但管理页的复选框已勾选？** 主界面和管理页是独立 WebView。Preview 会在加载 SSH 配置前先注册跨窗口 `servers.changed` 事件，并忽略较旧的初始服务器列表，避免启动期间保存的勾选状态被旧响应覆盖。请先关闭旧的 Preview 实例，再启动重新构建的 portable EXE。
+
 **SSH aliases 没有显示怎么办？** 打开“管理”并点击“重新加载”，检查页面显示的配置路径、已发现别名和读取错误。Preview 会读取 `~/.ssh/config` 及简单 `Include` 文件中的具体 `Host`，只含通配符的条目会被跳过。
 
 **如何报告问题？** 请附版本、Windows 版本、EXE/脚本模式、复现步骤和脱敏后的 `error.log`。不要上传历史目录、密码、私钥、真实主机地址或用户列表。

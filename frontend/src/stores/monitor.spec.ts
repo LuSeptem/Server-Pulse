@@ -1,6 +1,7 @@
 import { setActivePinia, createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useMonitorStore } from './monitor'
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -190,5 +191,44 @@ describe('monitor store', () => {
     await expect(store.recheck(server)).rejects.toThrow('host key probe timed out')
     expect(store.statuses[server.id]).toBe('offline')
     expect(store.errors[server.id]).toBe('host key probe timed out')
+  })
+
+  it('keeps a server selection change received while initialization is loading', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    const staleServer = { id: 'race-server', label: 'Race server', host: 'race-server', monitored: false, passwordless: true }
+    const selectedServer = { ...staleServer, monitored: true }
+    const listeners = new Map<string, (event: { payload: unknown }) => void>()
+    let releaseSshConfig!: () => void
+    let markSshConfigStarted!: () => void
+    const sshConfigStarted = new Promise<void>((resolve) => { markSshConfigStarted = resolve })
+    const sshConfigGate = new Promise<void>((resolve) => { releaseSshConfig = resolve })
+
+    vi.mocked(listen).mockImplementation(async (event, handler) => {
+      listeners.set(event, handler as (event: { payload: unknown }) => void)
+      return () => listeners.delete(event)
+    })
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'list_servers') return [staleServer]
+      if (command === 'get_data_root') return '/tmp/ServerPulse'
+      if (command === 'inspect_ssh_config') {
+        markSshConfigStarted()
+        await sshConfigGate
+        return { path: '/home/test/.ssh/config', aliases: [], candidates: [], error: null }
+      }
+      if (command === 'start_monitoring') {
+        return { serverId: 'race-server', status: 'started', detail: null, hostKey: null }
+      }
+      if (command === 'get_monitoring_state') return { snapshots: {}, statuses: {}, errors: {}, intervalSeconds: 5 }
+      return undefined
+    })
+
+    const initPromise = store.init()
+    await sshConfigStarted
+    listeners.get('servers.changed')?.({ payload: [selectedServer] })
+    releaseSshConfig()
+    await initPromise
+
+    expect(store.servers).toEqual([selectedServer])
   })
 })

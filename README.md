@@ -290,6 +290,8 @@ server_monitoring/
 
 **Recheck stays in progress.** Recheck uses the same structured result as Start. A new or changed host key opens the fingerprint confirmation dialog; a probe or SSH error changes the card to `offline` with the failure detail.
 
+**The main window says no servers are selected while Manage shows checked servers.** Main and Manage are separate webviews. The Preview registers the cross-window `servers.changed` event before loading SSH configuration and ignores an older initial server-list response, so a selection saved during startup is not lost. Close an older running Preview instance and start the rebuilt portable executable once.
+
 **SSH aliases are not listed.** Open **Manage** and press **Reload**. Check the displayed config path, detected aliases, and read error. The Preview reads concrete `Host` entries from `~/.ssh/config` and simple `Include` files; wildcard-only entries are intentionally skipped.
 
 **How should I report a problem?** Include the app version, Windows version, EXE/script mode, reproduction steps, and a sanitized `error.log`. Never upload history, passwords, private keys, real host addresses, or user lists.
