@@ -189,7 +189,8 @@ impl KnownHostsManager {
         append_config_argument(&mut args, config_file);
         args.extend([
             "-T".to_owned(),
-            "5".to_owned(),
+            "-o".to_owned(),
+            format!("ConnectTimeout={}", self.timeout.as_secs().max(1)),
             "-o".to_owned(),
             format!("UserKnownHostsFile={}", known_hosts.to_string_lossy()),
             "-o".to_owned(),
@@ -669,6 +670,36 @@ mod tests {
         let manager = KnownHostsManager::new(&app, Some(user.clone()));
         assert_eq!(manager.classify(&target, &scan).expect("trusted"), HostKeyState::Trusted);
         assert_eq!(fs::read_to_string(&user).expect("user file"), line);
+        let _ = fs::remove_file(app);
+        let _ = fs::remove_file(user);
+    }
+
+    #[test]
+    fn builds_safe_ssh_probe_arguments_without_spurious_positional_args() {
+        let (app, user) = temp_paths();
+        let target = SshTarget {
+            alias: "3090".to_owned(),
+            user: Some("test-user".to_owned()),
+            port: Some(22),
+            credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
+            resolved_host: None,
+            resolved_port: None,
+        };
+        let manager = KnownHostsManager::new(&app, Some(user.clone()));
+        let temp_hosts = PathBuf::from("temp_known_hosts");
+        let args = manager.ssh_probe_arguments_with_config(&target, &temp_hosts, None);
+        // Ensure "-T" is not followed by a spurious number or positional host argument
+        let t_idx = args.iter().position(|a| a == "-T").expect("-T present");
+        assert_ne!(args.get(t_idx + 1).map(|s| s.as_str()), Some("5"));
+        assert_eq!(args.get(t_idx + 1).map(|s| s.as_str()), Some("-o"));
+        // Ensure destination is after "--"
+        let dash_idx = args.iter().position(|a| a == "--").expect("-- present");
+        assert_eq!(args.get(dash_idx + 1).map(|s| s.as_str()), Some("test-user@3090"));
+        assert_eq!(args.get(dash_idx + 2).map(|s| s.as_str()), Some("exit"));
         let _ = fs::remove_file(app);
         let _ = fs::remove_file(user);
     }

@@ -545,7 +545,10 @@ mod tests {
 
     #[test]
     fn builds_safe_batch_arguments() {
-        let ssh = SystemOpenSsh::default();
+        let ssh = SystemOpenSsh {
+            config_file: None,
+            ..SystemOpenSsh::default()
+        };
         let target = SshTarget {
             alias: "3090".to_owned(),
             user: Some("alice".to_owned()),
