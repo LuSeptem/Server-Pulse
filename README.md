@@ -12,7 +12,7 @@ Current release: **v1.1.0** · [Bilingual release notes](CHANGELOG.md)
 
 The `codex/tauri-port` branch contains the cross-platform rewrite. It keeps the existing PowerShell/WPF release as the `port-baseline-v1.1.0` tag while the new application is developed in the same repository. The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop is out of scope for v1.
 
-The current vertical slice includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OpenSSH config discovery and diagnostics, SSH-config-aware host-key probing, legacy Windows server-config migration, host-key confirmation, OS-keyring and session-only password authentication, persistent framed SSH collection, retry backoff, and redacted error events. Windows SSH helper processes are hidden when the Preview is launched from Explorer, and a failed automatic start is shown on its server card without aborting other servers. The Preview is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac; macOS code is kept compile-compatible.
+The current vertical slice includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OpenSSH config discovery and diagnostics, SSH-config-aware host-key probing, legacy Windows server-config migration, host-key confirmation, OS-keyring and session-only password authentication, persistent framed SSH collection, retry backoff, structured start/recheck results, and redacted error events. Windows SSH helper processes are hidden when the Preview is launched from Explorer, and a failed automatic or manual start is shown on its server card without aborting other servers. The Preview is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac; macOS code is kept compile-compatible.
 
 From the repository root:
 
@@ -287,6 +287,8 @@ server_monitoring/
 **A terminal window appears when launching the Preview.** Use the generated `ServerPulse-Portable.exe` or `serverpulse-tauri.exe` from Explorer or a shortcut. The release build and its Windows SSH/host-key helper processes use the GUI/no-console configuration; if it was started by typing the command in Windows Terminal, that parent terminal remains open by design.
 
 **A monitored card stays stopped at startup.** The Preview resolves SSH aliases with `ssh -G` before running `ssh-keyscan`, so the probe uses the configured hostname and port. If probing or IPC still fails, the card changes to `offline` and shows the error instead of silently aborting startup; check the SSH alias, VPN, jump host, and host fingerprint.
+
+**Recheck stays in progress.** Recheck uses the same structured result as Start. A new or changed host key opens the fingerprint confirmation dialog; a probe or SSH error changes the card to `offline` with the failure detail.
 
 **SSH aliases are not listed.** Open **Manage** and press **Reload**. Check the displayed config path, detected aliases, and read error. The Preview reads concrete `Host` entries from `~/.ssh/config` and simple `Include` files; wildcard-only entries are intentionally skipped.
 

@@ -155,4 +155,40 @@ describe('monitor store', () => {
     expect(store.hostKeyChallenge).toBeNull()
     expect(store.pendingHostKeyAction).toBeNull()
   })
+
+  it('surfaces a host-key challenge returned by recheck', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    const server = { id: 'recheck-host-key', label: 'Recheck host key', host: 'recheck-host-key', monitored: true, passwordless: true }
+    const hostKey = {
+      challengeId: 'recheck-challenge',
+      server: server.host,
+      port: 22,
+      keys: [{ algorithm: 'ssh-ed25519', fingerprint: 'SHA256:recheck' }],
+      state: 'unknown' as const,
+    }
+    vi.mocked(invoke).mockResolvedValueOnce({
+      serverId: server.id,
+      status: 'host-key-required',
+      detail: 'Verify the host fingerprint before connecting.',
+      hostKey,
+    })
+
+    await store.recheck(server)
+
+    expect(store.statuses[server.id]).toBe('host-key-required')
+    expect(store.hostKeyChallenge).toEqual(hostKey)
+    expect(store.pendingHostKeyAction).toMatchObject({ kind: 'start', server })
+  })
+
+  it('surfaces a recheck command error instead of leaving rechecking forever', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    const server = { id: 'recheck-failure', label: 'Recheck failure', host: 'recheck-failure', monitored: true, passwordless: true }
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('host key probe timed out'))
+
+    await expect(store.recheck(server)).rejects.toThrow('host key probe timed out')
+    expect(store.statuses[server.id]).toBe('offline')
+    expect(store.errors[server.id]).toBe('host key probe timed out')
+  })
 })

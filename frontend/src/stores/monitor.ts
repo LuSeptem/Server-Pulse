@@ -394,11 +394,22 @@ export const useMonitorStore = defineStore('monitor', {
       delete this.errors[serverId]
     },
     async recheck(server: ServerConfig) {
-      await invoke('recheck_monitoring', { server })
-      this.statuses = { ...this.statuses, [server.id]: 'rechecking' }
-      setTimeout(() => {
-        void this.refreshMonitoringState()
-      }, 500)
+      const interval = this.intervalSeconds
+      try {
+        const result = await invoke<StartResult>('recheck_monitoring', { server })
+        this.applyStartResult(result, { kind: 'start', server, interval })
+        if (result.status !== 'started') {
+          setTimeout(() => {
+            void this.refreshMonitoringState()
+          }, 500)
+        }
+        return result
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.statuses = { ...this.statuses, [server.id]: 'offline' }
+        this.errors = { ...this.errors, [server.id]: message }
+        throw error
+      }
     },
     async openWindow(kind: 'manage' | 'history') {
       await invoke('open_window', { kind })

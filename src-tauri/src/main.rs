@@ -990,12 +990,36 @@ async fn recheck_monitoring(
     app: AppHandle,
     state: State<'_, AppState>,
     server: ServerConfig,
-) -> Result<(), String> {
+) -> Result<StartResult, String> {
     let server_id = server.id.clone();
     stop_task(&state, &server_id, false).await;
-    state.statuses.lock().await.insert(server_id, "rechecking".to_owned());
+    state
+        .statuses
+        .lock()
+        .await
+        .insert(server_id.clone(), "rechecking".to_owned());
+    state.errors.lock().await.remove(&server_id);
     let interval = *state.interval_seconds.lock().await;
-    start_task(app, &state, server, Some(interval)).await.map(|_| ())
+    let result = match start_task(app, &state, server, Some(interval)).await {
+        Ok(result) => result,
+        Err(error) => {
+            state
+                .statuses
+                .lock()
+                .await
+                .insert(server_id.clone(), "offline".to_owned());
+            state.errors.lock().await.insert(server_id, error.clone());
+            return Err(error);
+        }
+    };
+    if result.status != "started" {
+        state
+            .statuses
+            .lock()
+            .await
+            .insert(server_id, result.status.clone());
+    }
+    Ok(result)
 }
 
 #[tauri::command]
