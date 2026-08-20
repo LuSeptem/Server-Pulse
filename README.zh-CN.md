@@ -8,11 +8,30 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 当前版本：**v1.1.0** · [中英双语更新说明](CHANGELOG.md)
 
+## Tauri 2.0 Preview
+
+`codex/tauri-port` 分支包含跨平台重写版本。现有 PowerShell/WPF 版本通过 `port-baseline-v1.1.0` 标签保留，新版本在同一仓库中独立开发。Preview 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不纳入 v1。
+
+当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现与诊断、旧版 Windows 服务器配置兼容、主机指纹确认、系统凭据库与仅本次会话密码、持久化分帧 SSH 采集、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，但代码保持可编译兼容。
+
+在仓库根目录执行：
+
+```powershell
+npm ci --prefix frontend
+npm --prefix frontend run typecheck
+npm --prefix frontend run test:unit
+npm --prefix frontend run build
+cargo test --workspace --manifest-path src-tauri/Cargo.toml
+npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
+```
+
+完整范围、里程碑、CI 矩阵、迁移规则和验收门槛见 [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md)。该分支不应视为稳定公开发行版。
+
 ## 功能概览
 
 - 在一个紧凑、可置顶的浮窗中同时查看多台 SSH 服务器。
 - 重点显示每张 GPU 的型号、利用率、显存占用和温度。
-- 查看 CPU、系统内存和逐卡显存的用户归属；用户明细默认隐藏，悬停预览、单击固定。
+- 查看 CPU、系统内存和逐卡显存的用户归属（多进程占用时显示活跃进程数如 `(x2)`）；用户明细默认隐藏，悬停预览、单击固定。
 - 窗口可以贴到左侧、右侧或顶部自动隐藏，并可调节尺寸、背景透明度和刷新间隔。
 - 从托盘恢复、隐藏或退出，不在任务栏重复显示窗口。
 - 支持暗色、亮色、跟随系统主题，以及中文、English、跟随系统语言。
@@ -40,22 +59,25 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 ### 环境要求
 
-- Windows 10 或 Windows 11。
-- 系统自带 Windows PowerShell 5.1 和 WPF。
-- 本机可以调用 OpenSSH 客户端 `ssh.exe`。
+- Windows 10/11 x64 或 macOS (Intel / Apple Silicon)。
+- 本机可以调用 OpenSSH 客户端 `ssh.exe`（Windows）或 `ssh`（macOS）。
 - 远端 Linux 提供 `/proc`、POSIX `sh` 和 `nvidia-smi`。没有 NVIDIA GPU 时，CPU 和内存仍可监控。
 
-### 启动
+### 启动与运行
 
-双击 `ServerPulse.exe` 即可。也可以双击 `Start Server Pulse.vbs`；它会优先启动 EXE，在 EXE 不存在时回退到 PowerShell 脚本。
-
-需要查看启动错误时，在项目目录执行：
-
-```powershell
-.\ServerPulse.exe
-# 或直接运行脚本
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
-```
+- **便携版直接运行**：双击根目录的 `ServerPulse.exe`（已编译的独立便携版）。
+- **开发模式**：
+  ```powershell
+  # 启动 Tauri 桌面开发窗口
+  npm run tauri dev --prefix frontend
+  # 或仅启动前端浏览器预览
+  npm run dev --prefix frontend
+  ```
+- **生产构建**：
+  ```powershell
+  npm run build --prefix frontend
+  cargo build --release --manifest-path src-tauri/Cargo.toml
+  ```
 
 首次运行前可以验证现有免密配置：
 
@@ -68,25 +90,27 @@ ssh -o BatchMode=yes a6000 hostname
 
 ## SSH 服务器与认证
 
-点击主窗口在线统计右侧的“管理”，或右键托盘图标选择“SSH 服务器”。候选服务器来自仓库 `config/servers.json`、当前用户 `~/.ssh/config` 中不含通配符的 `Host`，以及管理窗口手动添加的服务器。
+点击主窗口在线统计右侧的“管理”，或右键托盘图标选择“SSH 服务器”。候选服务器来自数据根目录中的 `servers.json`（兼容旧版 Windows 的 `Servers` / `SshTarget` / `HostName` 格式）、当前用户 `~/.ssh/config` 中不含通配符的 `Host` 及 `Include` 包含文件（通过系统 `ssh -G` 解析用户与端口），以及管理窗口手动添加的服务器。
+
+管理窗口现在提供“添加服务器”、“重新加载”、可点击预填的别名标签，以及“SSH 配置发现候选”列表，支持单键“+ 加入监控”与“全部导入”。页面会显示实际配置路径、已发现别名、候选服务器及读取错误；密码只通过主进程的一次性本地通道使用，不会写入 `servers.json`。
 
 “监视”复选框决定服务器是否生成实时卡片。缺少认证的服务器保持暂停，不会阻塞其他服务器。
 
 ### 固定认证顺序
 
-1. 使用密钥或 `ssh-agent` 的免密 SSH（`BatchMode`）；
-2. Windows 凭据管理器中已保存的密码；
-3. 仅用于本次运行的密码。
+1. 仅用于本次运行的会话密码；
+2. Windows 凭据管理器或 macOS Keychain 中已保存的密码；
+3. 使用密钥或 `ssh-agent` 的免密身份。
 
-“免密登录”是检测结果，不是绕过认证的开关。旁边的 `!` 提示会解释密钥、`ssh-agent`、凭据管理器和终端 SSH 的区别。
+“免密 SSH”选项会使用密钥或 `ssh-agent`，并以 `BatchMode=yes` 连接。需要密码时关闭该选项；密码可以只在当前运行中使用，也可以明确保存到系统凭据库。
 
 Windows 凭据管理器是 Windows 自带的安全存储，不需要安装。Server Pulse 保存的凭据只供本程序使用，普通终端中的 `ssh` 不会读取，也不会修改全局 OpenSSH 或 `SSH_ASKPASS` 配置。
 
-密码框默认不保存密码。只有明确勾选“存入 Windows 凭据管理器”并且验证成功后才会写入凭据。未保存的密码在取消监视或退出程序时清除，不写入服务器配置、日志或历史文件。
+密码框默认不保存密码。只有明确勾选“存入系统凭据库”并且验证成功后才会写入凭据。未保存的密码在停止监控、取消验证或退出程序时清除，不写入服务器配置、命令行、普通环境变量、日志或历史文件。
 
-首次遇到未知主机时，程序会显示主机密钥算法和 SHA256 指纹，确认后才写入当前用户的 `known_hosts`。指纹变化会严格阻断，不会自动覆盖。
+管理页保存服务器或首次自动启动监控遇到未知主机时，程序会显示主机密钥算法和 SHA256 指纹，确认后才写入应用数据根目录的 `known_hosts`。用户现有的 `~/.ssh/known_hosts` 只读兼容，不会被修改。指纹变化会严格阻断，不会自动覆盖；确认新指纹前应先检查并使用“忘记应用密钥并重新验证”。
 
-每台服务器维持一个长期 SSH 采集会话，在同一连接中连续输出监控结果。网络断线后按 5 秒、15 秒、30 秒、1 分钟、5 分钟并加入随机抖动进行退避；连续失败会熔断并显示下次重试时间，点击“重新检测”可立即解除暂停，避免每次刷新都建立新连接。
+每台服务器维持一个长期 SSH 采集会话，远端在同一连接中连续输出带边界的协议 v2 采样帧。网络断线后按 5 秒、15 秒、30 秒、1 分钟、5 分钟并加入随机抖动进行退避；连续失败会熔断并显示下次重试时间，点击“重新检测”可立即解除暂停，避免每次刷新都建立新连接。
 
 ## 主窗口
 
@@ -100,6 +124,7 @@ Windows 凭据管理器是 Windows 自带的安全存储，不需要安装。Ser
 - **刷新**：输入 `1`–`300` 秒，按 Enter 或移开焦点生效。
 - **记录**：打开历史记录窗口。
 - **管理**：打开 SSH 服务器管理窗口。
+- **关闭（×）**：关闭主窗口；顶栏空白区域可拖动，按钮区域不会触发拖动。
 
 ### 移动、贴边和托盘
 
@@ -191,12 +216,12 @@ Windows 凭据管理器是 Windows 自带的安全存储，不需要安装。Ser
 - **注入**：写入代理并以脱离 SSH 会话的方式启动；应用退出或连接断开后继续运行。已在运行时再次注入为无操作。
 - **停止**：发送 TERM（宽限后 KILL 兜底）；**重启**重写并重新启动；**卸载**停止代理并删除 `~/.serverpulse`（含全部服务器端记录——如还需要请先合并）。
 - **配置**：设置采样间隔（1–3600 秒）、服务器端保留天数（1–3650），以及应用启动时是否自动恢复已停止的代理。
-- **合并记录**：拉取服务器端记录，把 UTC 分钟换算成本地时区后并入本地历史。同一分钟双方都有记录时，有效样本数多者胜，平局保留本地；增量游标避免重复拉取已合并的分钟；**合并全部**对所有已配置服务器执行。合并对话框还可选择合并后删除服务器端已合并记录（默认不删；代理自身按配置的保留天数自动清理旧记录）。
+- **合并记录**：拉取服务器端记录，保留 UTC `Z` 时间戳和 UTC 日期文件分片后并入本地历史；按本地日期查询和图表显示时再把匹配的时间点换算成本地时区。同一分钟双方都有记录时，有效样本数多者胜，平局保留本地；增量游标避免重复拉取已合并的分钟；**合并全部**对所有已配置服务器执行。历史批量拉取使用独立的 120 秒操作期限，代理状态和控制命令仍使用较短的交互式 SSH 期限。合并对话框还可选择合并后删除服务器端已合并记录（默认不删；代理自身按配置的保留天数自动清理旧记录）。
 - 记录页设置面板提供“启动时自动合并服务器端记录”开关（默认关闭）。
 
 注意事项与限制：
 
-- 代理写入 UTC 分钟时间戳，合并时换算为你的本地时区，服务器与电脑时区不同也能正确对齐。
+- 代理写入 UTC 分钟时间戳；本地历史保持 UTC 存储，仅在按本地日期查询和显示时换算，因此服务器与电脑时区不同也能正确对齐。
 - 服务器重启会使代理停止（普通用户进程），徽标显示“已停止”；可手动重新注入，或在“配置”中开启启动时自动恢复。
 - 记录内容与本地历史一致：UID、用户名、分钟聚合，绝不包含 PID、进程名、命令行或密码。
 - 服务器需要 POSIX `sh`、`awk`、`/proc`，可选 `nvidia-smi`——与实时监控要求相同。
@@ -207,11 +232,12 @@ Windows 凭据管理器是 Windows 自带的安全存储，不需要安装。Ser
 %LOCALAPPDATA%\\ServerPulse\\
 ├─ settings.json       # 主题、语言、位置、尺寸、刷新和保留策略
 ├─ servers.json        # 当前服务器列表，不含密码
+├─ known_hosts          # 应用专用主机密钥；不修改用户 known_hosts
 ├─ history\\            # 分钟历史
 └─ error.log           # UI/历史异常摘要
 ```
 
-持久密码由 Windows 凭据管理器按规范化的 `用户名@主机:端口` 保存，不写入上述 JSON。仓库中的 `config/servers.json` 只是首次运行种子配置，不保存密码。
+持久密码由 Windows 凭据管理器或 macOS Keychain 按规范化的 `用户名@主机:端口` 保存，不写入上述 JSON。新历史记录使用 UTC `Z` 时间戳和 UTC 日期文件名；历史查询接收本地日期并转换为 UTC 范围，图表再按本地时间显示。仓库中的 `config/servers.json` 只是首次运行种子配置，不保存密码。
 
 ## 仓库目录
 
@@ -224,6 +250,10 @@ server_monitoring/
 ├─ config/                  # 首次运行种子配置
 ├─ scripts/                 # 构建脚本
 ├─ src/                     # 采集、历史、存储、SSH、主题和宿主源码
+├─ frontend/                # Vue 3 + TypeScript Preview 界面
+├─ src-tauri/               # Tauri 宿主与平台无关 Rust crate
+├─ assets/serverpulse-sample.sh # canonical、仅 LF 的远端采样脚本
+├─ tests/fixtures/           # 协议与历史黄金样例
 ├─ tests/                   # 自动化测试和模拟 SSH
 ├─ docs/DEVELOPMENT.md      # 开发者文档
 ├─ docs/TAURI-PORT-PLAN.md  # Tauri 跨平台移植方案
@@ -243,6 +273,10 @@ server_monitoring/
 **保存的密码会被终端 ssh 使用吗？** 不会。它只供 Server Pulse 使用，终端 `ssh` 仍按自己的密钥、agent 或手动密码流程工作。
 
 **窗口找不到了？** 触碰启用的贴边位置或点击托盘图标；若位置不可用，删除 `%LOCALAPPDATA%\\ServerPulse\\settings.json` 恢复默认位置。
+
+**启动 Preview 时为什么有终端窗口？** 请从资源管理器或快捷方式启动生成的 `serverpulse-tauri.exe`；Release 版本使用 GUI 子系统，不会主动创建控制台。如果从 Windows Terminal 中输入命令启动，父终端按设计会继续保持打开。
+
+**SSH aliases 没有显示怎么办？** 打开“管理”并点击“重新加载”，检查页面显示的配置路径、已发现别名和读取错误。Preview 会读取 `~/.ssh/config` 及简单 `Include` 文件中的具体 `Host`，只含通配符的条目会被跳过。
 
 **如何报告问题？** 请附版本、Windows 版本、EXE/脚本模式、复现步骤和脱敏后的 `error.log`。不要上传历史目录、密码、私钥、真实主机地址或用户列表。
 

@@ -8,11 +8,30 @@ The repository seed configuration contains two SSH aliases, `3090` and `a6000`. 
 
 Current release: **v1.1.0** · [Bilingual release notes](CHANGELOG.md)
 
+## Tauri 2.0 Preview
+
+The `codex/tauri-port` branch contains the cross-platform rewrite. It keeps the existing PowerShell/WPF release as the `port-baseline-v1.1.0` tag while the new application is developed in the same repository. The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop is out of scope for v1.
+
+The current vertical slice includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OpenSSH config discovery and diagnostics, legacy Windows server-config migration, host-key confirmation, OS-keyring and session-only password authentication, persistent framed SSH collection, retry backoff, and redacted error events. The Preview is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac; macOS code is kept compile-compatible.
+
+From the repository root:
+
+```powershell
+npm ci --prefix frontend
+npm --prefix frontend run typecheck
+npm --prefix frontend run test:unit
+npm --prefix frontend run build
+cargo test --workspace --manifest-path src-tauri/Cargo.toml
+npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
+```
+
+The complete scope, milestones, CI matrix, migration rules, and acceptance gates are documented in [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md). Do not treat this branch as a stable public release.
+
 ## What you can do
 
 - Watch several SSH servers in one compact, always-on-top floating window.
 - Focus on each GPU's utilization, VRAM, temperature, and model name.
-- Inspect CPU, system memory, and per-GPU VRAM attribution by user; user details are hidden until you hover or click a metric.
+- Inspect CPU, system memory, and per-GPU VRAM attribution by user (displaying active process counts such as `(x2)` when >= 2); user details are hidden until you hover or click a metric.
 - Dock the window to the left, right, or top edge, adjust its size, background opacity, and refresh interval.
 - Restore, hide, or exit from the system tray without keeping a duplicate taskbar window.
 - Switch between dark, light, and system themes, and between Chinese, English, and system language.
@@ -40,22 +59,25 @@ The images in `demo/` are sanitized examples; host addresses and usernames are b
 
 ### Requirements
 
-- Windows 10 or Windows 11.
-- Windows PowerShell 5.1 and WPF (included with Windows).
-- An OpenSSH client available as `ssh.exe`.
+- Windows 10/11 x64 or macOS (Intel / Apple Silicon).
+- An OpenSSH client available as `ssh.exe` (Windows) or `ssh` (macOS).
 - A Linux remote host with `/proc`, POSIX `sh`, and `nvidia-smi`. Without NVIDIA GPUs, CPU and memory monitoring still works.
 
 ### Start the application
 
-Double-click `ServerPulse.exe`. You can also double-click `Start Server Pulse.vbs`; it prefers the EXE and falls back to the PowerShell entry point when the EXE is absent.
-
-To see startup errors from a terminal:
-
-```powershell
-.\ServerPulse.exe
-# or run the script directly
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ServerPulse.ps1
-```
+- **Direct Portable Run**: Double-click `ServerPulse.exe` (standalone portable build).
+- **Development Mode**:
+  ```powershell
+  # Start desktop dev window
+  npm run tauri dev --prefix frontend
+  # Or start frontend browser preview
+  npm run dev --prefix frontend
+  ```
+- **Build Release Bundle**:
+  ```powershell
+  npm run build --prefix frontend
+  cargo build --release --manifest-path src-tauri/Cargo.toml
+  ```
 
 Before the first run, check existing passwordless SSH aliases:
 
@@ -72,29 +94,31 @@ Open **Manage** beside the online count in the main window, or choose **SSH serv
 
 Candidates are merged from:
 
-1. `config/servers.json` in this repository;
-2. concrete, non-wildcard `Host` entries in the current Windows user's `~/.ssh/config`;
+1. the existing data-root `servers.json` (including the legacy Windows `Servers` / `SshTarget` / `HostName` schema);
+2. concrete, non-wildcard `Host` entries in the current user's `~/.ssh/config` and `Include` files, automatically resolved via OpenSSH `ssh -G`;
 3. servers added manually in the manager.
+
+The manager provides an **Add server** form, a **Reload** action, interactive discovered alias badges, and a **Discovered from SSH config** candidates section with one-click **+ Add to monitor** and **Import all**. Discovered aliases automatically resolve default hostnames, ports, and usernames. Passwords are never written to `servers.json`. The page shows the exact config path, discovered aliases, candidates, and any read error.
 
 The **Monitor** checkbox controls whether a server produces a live card. A server that is not authenticated remains paused and does not block other servers.
 
 ### Authentication order
 
-The fixed order is:
+When password authentication is selected, the fixed order is:
 
-1. Passwordless SSH using a key or `ssh-agent` (`BatchMode`);
-2. a password saved in Windows Credential Manager;
-3. a password entered for the current run only.
+1. a password entered for the current run only;
+2. a password saved in Windows Credential Manager or macOS Keychain;
+3. a key or `ssh-agent` identity.
 
-The **Passwordless login** checkbox is a verification result, not a way to bypass SSH authentication. Hover the `!` icon for an explanation of keys, `ssh-agent`, Credential Manager, and normal terminal SSH.
+The **Passwordless SSH** checkbox selects key/`ssh-agent` authentication with `BatchMode=yes`. Turn it off when the server needs a password. The manager can use the password only for the current run, or save it explicitly in the OS credential store.
 
 Windows Credential Manager is built into Windows; no separate installation is needed. Credentials saved by Server Pulse are used only by Server Pulse. A normal terminal `ssh` command does not read them, and the application does not modify global OpenSSH or `SSH_ASKPASS` settings.
 
-The password field is not saved by default. A credential is written only after you explicitly select **Save to Windows Credential Manager** and verification succeeds. Session-only passwords are cleared when monitoring is cancelled or the application exits; they are never written to server configuration, logs, or history.
+The password field is not saved by default. A credential is written only after you explicitly select **Save password in the OS credential store** and verification succeeds. Session-only passwords are cleared when monitoring stops, verification is cancelled, or the application exits; they are never written to server configuration, command lines, ordinary environment variables, logs, or history.
 
-For a new host, the manager shows the host-key algorithm and SHA256 fingerprint before writing to the current user's `known_hosts`. A changed fingerprint blocks the connection and is never overwritten automatically.
+For a new host, the manager—or the first automatic monitoring start—shows the host-key algorithm and SHA256 fingerprint before writing to the application data-root `known_hosts`. The user's existing `~/.ssh/known_hosts` is read-only compatibility input. A changed fingerprint blocks the connection and is never overwritten automatically; use **Forget application key and reverify** only after checking the new fingerprint.
 
-Each monitored server uses one long-lived SSH collection session. After a network failure, reconnects use backoff (5 s, 15 s, 30 s, 1 min, then 5 min) with jitter. Repeated failures enter a circuit-breaker pause and show the next retry time; **Recheck** immediately clears that pause. This avoids opening a new SSH connection on every refresh.
+Each monitored server uses one long-lived SSH collection session. The remote sampler emits framed protocol-v2 snapshots over that connection. After a network failure, reconnects use backoff (5 s, 15 s, 30 s, 1 min, then 5 min) with jitter. Repeated failures enter a circuit-breaker pause and show the next retry time; **Recheck** immediately clears that pause. This avoids opening a new SSH connection on every refresh.
 
 ## Main window
 
@@ -108,6 +132,7 @@ Each monitored server uses one long-lived SSH collection session. After a networ
 - **Refresh**: enter `1`–`300` seconds, then press Enter or leave the field.
 - **History**: open the usage-history window.
 - **Manage**: open SSH server management.
+- **Close (×)**: close the main window. The empty title-bar area is draggable; the buttons themselves are not.
 
 ### Move, dock, and tray
 
@@ -150,6 +175,7 @@ History stays on the current Windows user's machine. The default data root is `%
 %LOCALAPPDATA%\\ServerPulse\\
 ├─ settings.json           # UI, refresh, and retention settings
 ├─ servers.json            # server list; no passwords
+├─ known_hosts             # application-owned host keys; user known_hosts is never modified
 ├─ error.log               # local error summary
 └─ history\\
    ├─ yyyy-MM-dd.v2.jsonl  # new format: one appended minute record per line
@@ -158,7 +184,7 @@ History stays on the current Windows user's machine. The default data root is `%
 
 Storage rules:
 
-- New records append to `yyyy-MM-dd.v2.jsonl`. Retention is calendar-day based and accepts 1–3650 days; **Never clean up** disables automatic deletion.
+- New records append to `yyyy-MM-dd.v2.jsonl` using UTC `Z` timestamps and UTC file dates. A History query accepts a local calendar date, converts it to a UTC range, and displays matching timestamps in local time. Retention is calendar-day based and accepts 1–3650 days; **Never clean up** disables automatic deletion.
 - Corrupt or out-of-range settings return safely to the unconfigured state and ask for confirmation on the next History visit; they do not stop the main monitor.
 - Saving History settings applies retention, Never clean up, and cleanup-paused state together. Invalid input stays in the dialog and does not stop monitoring.
 - Legacy JSON and new JSONL can be queried together; old files are not migrated or deleted.
@@ -199,12 +225,12 @@ Open **Manage** and use the server-side monitoring row under each server:
 - **Inject** writes the agent and starts it detached from the SSH session; it keeps running when the app exits or the connection drops. Injecting again while it is running is a no-op.
 - **Stop** sends TERM (KILL after a grace period); **Restart** rewrites and restarts the agent; **Uninstall** stops it and removes `~/.serverpulse` (records included — merge them first if you still need them).
 - **Configure** sets the sample interval (1–3600 s), server-side retention in days (1–3650), and whether a stopped agent is re-injected automatically when the app starts.
-- **Merge records** pulls the server-side records, converts their UTC minutes to local time, and merges them into local history. Per-user CPU, memory, and per-GPU VRAM attribution is preserved whenever the server sample contains it; unavailable or partial collection remains explicit. For a minute that exists on both sides, the record with more online samples wins; a tie keeps the local record. An incremental cursor avoids re-pulling merged minutes, and **Merge all** does this for every configured server. The merge dialog can also delete the merged server-side files afterwards (off by default; the agent itself prunes records older than the configured retention).
+- **Merge records** pulls the server-side records, keeps their UTC `Z` timestamps and UTC file-date partitions, and merges them into local history. Local-date history queries and chart labels convert matching instants to the local timezone. Per-user CPU, memory, and per-GPU VRAM attribution is preserved whenever the server sample contains it; unavailable or partial collection remains explicit. For a minute that exists on both sides, the record with more online samples wins; a tie keeps the local record. An incremental cursor avoids re-pulling merged minutes, and **Merge all** does this for every configured server. Bulk history pulls have a dedicated 120-second operation deadline; Agent status and control commands retain the shorter interactive SSH deadline. The merge dialog can also delete the merged server-side files afterwards (off by default; the agent itself prunes records older than the configured retention).
 - The History settings panel has **Auto-merge server records on startup** (off by default).
 
 Notes and limits:
 
-- The agent writes UTC minute timestamps and the merge converts them to your local timezone, so timezone differences between the server and your machine are handled.
+- The agent writes UTC minute timestamps; local history retains UTC storage and converts instants only for local-date queries and display, so timezone differences between the server and your machine are handled.
 - After updating Server Pulse, use **Restart** or **Inject** once for an existing server-side agent so it receives the current aggregation script; previously generated records cannot be retroactively reconstructed with user details.
 - A server reboot stops the agent (it is a plain user process). The badge shows Stopped; re-inject manually or enable auto-restore in Configure.
 - Records contain the same data as local history — UIDs, usernames, and minute aggregates — never PIDs, process names, command lines, or passwords.
@@ -216,11 +242,12 @@ Notes and limits:
 %LOCALAPPDATA%\\ServerPulse\\
 ├─ settings.json       # theme, language, position, size, refresh, retention
 ├─ servers.json        # current server list; no passwords
+├─ known_hosts         # application-owned host keys; user known_hosts is read-only
 ├─ history\\            # minute history
 └─ error.log           # UI/history error summary
 ```
 
-Persistent passwords are stored by Windows Credential Manager under a normalized `username@host:port` identity, not in these JSON files. The repository `config/servers.json` is only a first-run seed and contains no password.
+Persistent passwords are stored by Windows Credential Manager or macOS Keychain under a normalized `username@host:port` identity, not in these JSON files. The repository `config/servers.json` is only a first-run seed and contains no password.
 
 ## Repository layout
 
@@ -233,6 +260,10 @@ server_monitoring/
 ├─ config/                  # first-run seed configuration
 ├─ scripts/                 # build scripts
 ├─ src/                     # collector, history, storage, SSH, agent, theme, and host code
+├─ frontend/                # Vue 3 + TypeScript Preview UI
+├─ src-tauri/               # Tauri shell and platform-independent Rust crates
+├─ assets/serverpulse-sample.sh # canonical LF-only remote sampler
+├─ tests/fixtures/          # protocol and history golden fixtures
 ├─ tests/                   # automation and mock SSH
 ├─ docs/DEVELOPMENT.md      # contributor/developer documentation
 ├─ docs/TAURI-PORT-PLAN.md  # Tauri cross-platform port plan
@@ -252,6 +283,10 @@ server_monitoring/
 **Will a saved password be used by terminal SSH?** No. It is available only to Server Pulse; terminal `ssh` continues to use its own keys, agent, or interactive password flow.
 
 **The window is hidden.** Touch the enabled edge or click the tray icon. If its position is unusable, remove `%LOCALAPPDATA%\\ServerPulse\\settings.json` to restore defaults.
+
+**A terminal window appears when launching the Preview.** Use the generated `serverpulse-tauri.exe` from Explorer or a shortcut; the release build is a GUI-subsystem application and does not create a console. If it was started by typing the command in Windows Terminal, that parent terminal remains open by design.
+
+**SSH aliases are not listed.** Open **Manage** and press **Reload**. Check the displayed config path, detected aliases, and read error. The Preview reads concrete `Host` entries from `~/.ssh/config` and simple `Include` files; wildcard-only entries are intentionally skipped.
 
 **How should I report a problem?** Include the app version, Windows version, EXE/script mode, reproduction steps, and a sanitized `error.log`. Never upload history, passwords, private keys, real host addresses, or user lists.
 
