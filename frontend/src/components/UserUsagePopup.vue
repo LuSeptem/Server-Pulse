@@ -21,6 +21,7 @@ const emit = defineEmits<{
 interface FormattedUserRow {
   key: string
   name: string
+  processCount?: number | null
   displayValue: string
   sortValue: number
 }
@@ -69,6 +70,7 @@ const userRows = computed<FormattedUserRow[]>(() => {
       .map((u) => ({
         key: `cpu-${u.uid || u.name}`,
         name: u.name || `UID ${u.uid}`,
+        processCount: u.processCount,
         displayValue: `${u.percent.toFixed(1)}%`,
         sortValue: u.percent,
       }))
@@ -85,6 +87,7 @@ const userRows = computed<FormattedUserRow[]>(() => {
         return {
           key: `mem-${u.uid || u.name}`,
           name: u.name || `UID ${u.uid}`,
+          processCount: u.processCount,
           displayValue: `${(u.usedMib / 1024).toFixed(1)} GB · ${pct.toFixed(1)}%`,
           sortValue: u.usedMib,
         }
@@ -104,6 +107,7 @@ const userRows = computed<FormattedUserRow[]>(() => {
       return {
         key: `gpu-${gpu.index}-${u.uid || u.name}`,
         name: u.name || `UID ${u.uid}`,
+        processCount: u.processCount,
         displayValue: `${(u.usedMib / 1024).toFixed(1)} GB · ${pct.toFixed(1)}%`,
         sortValue: u.usedMib,
       }
@@ -150,20 +154,16 @@ const systemRow = computed(() => {
   const sys = Math.max(0, totalUsed - usersSum)
   const pct = totalVram > 0 ? (sys / totalVram) * 100 : 0
   return {
-    name: '系统 / 驱动未归属',
+    name: '系统 / 未归属',
     displayValue: `${(sys / 1024).toFixed(1)} GB · ${pct.toFixed(1)}%`,
   }
 })
 
 const footnote = computed(() => {
-  if (!props.target) return ''
-  if (props.target.kind === 'cpu') {
-    return '* CPU 为瞬时多核核心负载占用率'
+  if (props.isPinned) {
+    return '* 点击服务器卡片任意区域或右上角关闭按钮可解除固定'
   }
-  if (props.target.kind === 'memory') {
-    return '* 内存为物理常驻内存总量 (RSS)'
-  }
-  return '* 显存包含 PyTorch/CUDA 上下文与缓存分配'
+  return '* 单击服务器卡片对应区域可固定详细信息'
 })
 </script>
 
@@ -173,7 +173,10 @@ const footnote = computed(() => {
       v-if="target"
       class="user-usage-popup"
       :class="{ 'is-pinned': isPinned }"
-      :style="{ left: coords.x + 'px', top: coords.y + 'px' }"
+      :style="{
+        left: `${coords.x}px`,
+        top: `${coords.y}px`,
+      }"
       @mouseenter="emit('mouseenter')"
       @mouseleave="emit('mouseleave')"
     >
@@ -212,7 +215,10 @@ const footnote = computed(() => {
             :key="row.key"
             class="user-usage-row"
           >
-            <span class="user-name" :title="row.name">{{ row.name }}</span>
+            <span class="user-name" :title="row.name">
+              {{ row.name }}
+              <span v-if="row.processCount && row.processCount >= 2" class="user-proc-count">(x{{ row.processCount }})</span>
+            </span>
             <span class="user-value">{{ row.displayValue }}</span>
           </div>
 

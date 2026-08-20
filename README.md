@@ -31,7 +31,7 @@ The complete scope, milestones, CI matrix, migration rules, and acceptance gates
 
 - Watch several SSH servers in one compact, always-on-top floating window.
 - Focus on each GPU's utilization, VRAM, temperature, and model name.
-- Inspect CPU, system memory, and per-GPU VRAM attribution by user; user details are hidden until you hover or click a metric.
+- Inspect CPU, system memory, and per-GPU VRAM attribution by user (displaying active process counts such as `(x2)` when >= 2); user details are hidden until you hover or click a metric.
 - Dock the window to the left, right, or top edge, adjust its size, background opacity, and refresh interval.
 - Restore, hide, or exit from the system tray without keeping a duplicate taskbar window.
 - Switch between dark, light, and system themes, and between Chinese, English, and system language.

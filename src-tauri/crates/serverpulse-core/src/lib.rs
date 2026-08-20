@@ -229,6 +229,8 @@ pub struct CpuUserUsage {
     pub uid: String,
     pub name: String,
     pub percent: f64,
+    #[serde(default)]
+    pub process_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -238,6 +240,8 @@ pub struct MemoryUserUsage {
     pub name: String,
     pub used_mib: f64,
     pub percent: Option<f64>,
+    #[serde(default)]
+    pub process_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -247,6 +251,8 @@ pub struct GpuUserUsage {
     pub name: String,
     pub used_mib: f64,
     pub percent: Option<f64>,
+    #[serde(default)]
+    pub process_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -322,13 +328,13 @@ fn split_csv_line(line: &str) -> Vec<String> {
     fields
 }
 
-fn parse_user_line(line: &str) -> Option<(String, String, String)> {
-    let mut fields = line.splitn(3, '\t');
-    Some((
-        fields.next()?.to_owned(),
-        fields.next()?.to_owned(),
-        fields.next()?.to_owned(),
-    ))
+fn parse_user_line(line: &str) -> Option<(String, String, String, Option<u32>)> {
+    let mut fields = line.splitn(4, '\t');
+    let uid = fields.next()?.to_owned();
+    let name = fields.next()?.to_owned();
+    let raw = fields.next()?.to_owned();
+    let process_count = fields.next().and_then(|v| v.trim().parse::<u32>().ok());
+    Some((uid, name, raw, process_count))
 }
 
 pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseError> {
@@ -361,39 +367,43 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
         };
         match key {
             "CPU_USER" => {
-                if let Some((uid, name, raw)) = parse_user_line(value) {
+                if let Some((uid, name, raw, process_count)) = parse_user_line(value) {
                     if let Ok(percent) = raw.parse::<f64>() {
                         cpu_users.push(CpuUserUsage {
                             uid,
                             name,
                             percent: percent.clamp(0.0, 100.0),
+                            process_count,
                         });
                     }
                 }
             }
             "MEMORY_USER" => {
-                if let Some((uid, name, raw)) = parse_user_line(value) {
+                if let Some((uid, name, raw, process_count)) = parse_user_line(value) {
                     if let Ok(used_mib) = raw.parse::<f64>() {
                         memory_users.push(MemoryUserUsage {
                             uid,
                             name,
                             used_mib: used_mib.max(0.0),
                             percent: None,
+                            process_count,
                         });
                     }
                 }
             }
             "GPU_USER" => {
-                let mut fields = value.splitn(4, '\t');
+                let mut fields = value.splitn(5, '\t');
                 if let (Some(uuid), Some(uid), Some(name), Some(raw)) =
                     (fields.next(), fields.next(), fields.next(), fields.next())
                 {
+                    let process_count = fields.next().and_then(|v| v.trim().parse::<u32>().ok());
                     if let Ok(used_mib) = raw.parse::<f64>() {
                         gpu_users.entry(uuid.to_owned()).or_default().push(GpuUserUsage {
                             uid: uid.to_owned(),
                             name: name.to_owned(),
                             used_mib: used_mib.max(0.0),
                             percent: None,
+                            process_count,
                         });
                     }
                 }
@@ -618,14 +628,15 @@ LOAD_1=1.0
 LOAD_5=0.5
 LOAD_15=0.25
 UPTIME_SECONDS=120
-CPU_USER=1000	alice	20
+CPU_USER=1000	alice	20	3
 CPU_USER_STATUS=partial
 MEMORY_USER=1000	alice	512
 MEMORY_USER_STATUS=ok
 GPUS_BEGIN
 0,NVIDIA RTX 3090,uuid-0,80,4000,24000,55,100,350,50
 GPUS_END
-GPU_USER_STATUS=unavailable"#;
+GPU_USER=uuid-0	1000	alice	4000	2
+GPU_USER_STATUS=ok"#;
 
     #[test]
     fn parses_protocol_v2_and_user_usage() {
@@ -633,8 +644,11 @@ GPU_USER_STATUS=unavailable"#;
         assert_eq!(snapshot.hostname, "demo");
         assert_eq!(snapshot.protocol_version, 2);
         assert_eq!(snapshot.cpu_users[0].name, "alice");
+        assert_eq!(snapshot.cpu_users[0].process_count, Some(3));
         assert_eq!(snapshot.memory_users[0].percent, Some(25.6));
+        assert_eq!(snapshot.memory_users[0].process_count, None);
         assert_eq!(snapshot.gpus[0].name, "NVIDIA RTX 3090");
+        assert_eq!(snapshot.gpus[0].user_memory[0].process_count, Some(2));
     }
 
     #[test]

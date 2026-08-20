@@ -86,9 +86,11 @@ function reset_sample() {
   in_gpus = 0
   delete s_cpu_usr
   delete s_cpu_usr_name
+  delete s_cpu_usr_pcount
   delete s_cpu_usr_seen
   delete s_mem_usr
   delete s_mem_usr_name
+  delete s_mem_usr_pcount
   delete s_mem_usr_pct
   delete s_mem_usr_pct_has
   delete s_mem_usr_seen
@@ -112,6 +114,7 @@ function reset_sample() {
   delete s_g_uuid_to_idx
   delete s_gu_usr
   delete s_gu_usr_name
+  delete s_gu_usr_pcount
   delete s_gu_usr_pct
   delete s_gu_usr_pct_has
   delete s_gu_uid_seen
@@ -163,6 +166,7 @@ function finalize_sample() {
           if (!(key in m_gu_usr_sum)) m_gu_keys[uuid] = m_gu_keys[uuid] " " uid
           m_gu_usr_sum[key] += s_gu_usr[key]
           m_gu_usr_name[key] = s_gu_usr_name[key]
+          if (s_gu_usr_pcount[key] > m_gu_usr_max_pcount[key]) m_gu_usr_max_pcount[key] = s_gu_usr_pcount[key]
           if (s_gu_usr_pct_has[key]) { m_gu_usr_pct_sum[key] += s_gu_usr_pct[key]; m_gu_usr_pct_has[key] = 1 }
         }
       }
@@ -177,6 +181,7 @@ function finalize_sample() {
       if (!(uid in m_cpu_usr_sum)) m_cpu_keys = m_cpu_keys " " uid
       m_cpu_usr_sum[uid] += s_cpu_usr[uid]
       m_cpu_usr_name[uid] = s_cpu_usr_name[uid]
+      if (s_cpu_usr_pcount[uid] > m_cpu_usr_max_pcount[uid]) m_cpu_usr_max_pcount[uid] = s_cpu_usr_pcount[uid]
     }
     m_cpu_attr_sum += s_cpu_attr
     m_cpu_attr_cnt++
@@ -195,6 +200,7 @@ function finalize_sample() {
       if (!(uid in m_mem_usr_sum)) m_mem_keys = m_mem_keys " " uid
       m_mem_usr_sum[uid] += s_mem_usr[uid]
       m_mem_usr_name[uid] = s_mem_usr_name[uid]
+      if (s_mem_usr_pcount[uid] > m_mem_usr_max_pcount[uid]) m_mem_usr_max_pcount[uid] = s_mem_usr_pcount[uid]
       if (s_mem_usr_pct_has[uid]) { m_mem_usr_pct_sum[uid] += s_mem_usr_pct[uid]; m_mem_usr_pct_has[uid] = 1 }
     }
     m_mem_attr_sum += s_mem_attr
@@ -206,7 +212,7 @@ function finalize_sample() {
     m_mem_skipped_cnt++
   }
 }
-function emit_cpu_users(   i, j, n, ku, t, first) {
+function emit_cpu_users(   i, j, n, ku, t, first, pc) {
   if (m_cpu_valid <= 0) {
     printf "\"CpuUserUsage\":{\"Status\":\"unavailable\",\"ValidSamples\":0,\"Users\":[]},"
     return
@@ -222,11 +228,12 @@ function emit_cpu_users(   i, j, n, ku, t, first) {
   for (i = 1; i <= n; i++) {
     if (!first) printf ","
     first = 0
-    printf "{\"Uid\":\"%s\",\"Name\":\"%s\",\"Percent\":%s}", jstr(ku[i]), jstr(m_cpu_usr_name[ku[i]]), jnum(avg(m_cpu_usr_sum[ku[i]], m_cpu_valid), 1)
+    pc = m_cpu_usr_max_pcount[ku[i]] > 0 ? m_cpu_usr_max_pcount[ku[i]] : 1
+    printf "{\"Uid\":\"%s\",\"Name\":\"%s\",\"Percent\":%s,\"ProcessCount\":%d}", jstr(ku[i]), jstr(m_cpu_usr_name[ku[i]]), jnum(avg(m_cpu_usr_sum[ku[i]], m_cpu_valid), 1), pc
   }
   printf "],\"UnattributedPercent\":%s,\"OverlapPercent\":%s,\"AttributedPercent\":%s,\"SkippedProcesses\":%s},", jnum(avg(m_cpu_unattr_sum, m_cpu_unattr_cnt), m_cpu_unattr_cnt > 0), jnum(avg(m_cpu_overlap_sum, m_cpu_overlap_cnt), m_cpu_overlap_cnt > 0), jnum(avg(m_cpu_attr_sum, m_cpu_attr_cnt), m_cpu_attr_cnt > 0), jnum(avg(m_cpu_skipped_sum, m_cpu_skipped_cnt), m_cpu_skipped_cnt > 0)
 }
-function emit_mem_users(   i, j, n, ku, t, first) {
+function emit_mem_users(   i, j, n, ku, t, first, pc) {
   if (m_mem_valid <= 0) {
     printf "\"MemoryUserUsage\":{\"Status\":\"unavailable\",\"ValidSamples\":0,\"Users\":[]},"
     return
@@ -242,11 +249,12 @@ function emit_mem_users(   i, j, n, ku, t, first) {
   for (i = 1; i <= n; i++) {
     if (!first) printf ","
     first = 0
-    printf "{\"Uid\":\"%s\",\"Name\":\"%s\",\"UsedMiB\":%s,\"Percent\":%s}", jstr(ku[i]), jstr(m_mem_usr_name[ku[i]]), jnum(avg(m_mem_usr_sum[ku[i]], m_mem_valid), 1), jnum(avg(m_mem_usr_pct_sum[ku[i]], m_mem_valid), m_mem_usr_pct_has[ku[i]])
+    pc = m_mem_usr_max_pcount[ku[i]] > 0 ? m_mem_usr_max_pcount[ku[i]] : 1
+    printf "{\"Uid\":\"%s\",\"Name\":\"%s\",\"UsedMiB\":%s,\"Percent\":%s,\"ProcessCount\":%d}", jstr(ku[i]), jstr(m_mem_usr_name[ku[i]]), jnum(avg(m_mem_usr_sum[ku[i]], m_mem_valid), 1), jnum(avg(m_mem_usr_pct_sum[ku[i]], m_mem_valid), m_mem_usr_pct_has[ku[i]]), pc
   }
   printf "],\"UnattributedMiB\":%s,\"OverlapMiB\":%s,\"AttributedMiB\":%s,\"SkippedProcesses\":%s},", jnum(avg(m_mem_unattr_sum, m_mem_unattr_cnt), m_mem_unattr_cnt > 0), jnum(avg(m_mem_overlap_sum, m_mem_overlap_cnt), m_mem_overlap_cnt > 0), jnum(avg(m_mem_attr_sum, m_mem_attr_cnt), m_mem_attr_cnt > 0), jnum(avg(m_mem_skipped_sum, m_mem_skipped_cnt), m_mem_skipped_cnt > 0)
 }
-function emit_gpu_users(uuid,   i, j, n, ku, t, k1, k2, k, first) {
+function emit_gpu_users(uuid,   i, j, n, ku, t, k1, k2, k, first, pc) {
   n = split(m_gu_keys[uuid], ku, " ")
   for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) {
     k1 = uuid "\t" ku[j]
@@ -260,7 +268,8 @@ function emit_gpu_users(uuid,   i, j, n, ku, t, k1, k2, k, first) {
     if (!first) printf ","
     first = 0
     k = uuid "\t" ku[i]
-    printf "{\"Uid\":\"%s\",\"Name\":\"%s\",\"UsedMiB\":%s,\"Percent\":%s}", jstr(ku[i]), jstr(m_gu_usr_name[k]), jnum(avg(m_gu_usr_sum[k], m_gu_valid[uuid]), 1), jnum(avg(m_gu_usr_pct_sum[k], m_gu_valid[uuid]), m_gu_usr_pct_has[k])
+    pc = m_gu_usr_max_pcount[k] > 0 ? m_gu_usr_max_pcount[k] : 1
+    printf "{\"Uid\":\"%s\",\"Name\":\"%s\",\"UsedMiB\":%s,\"Percent\":%s,\"ProcessCount\":%d}", jstr(ku[i]), jstr(m_gu_usr_name[k]), jnum(avg(m_gu_usr_sum[k], m_gu_valid[uuid]), 1), jnum(avg(m_gu_usr_pct_sum[k], m_gu_valid[uuid]), m_gu_usr_pct_has[k]), pc
   }
 }
 function emit_record(   i, n, first, uuid) {
@@ -305,6 +314,9 @@ BEGIN {
   m_g_maxidx = -1
   m_cpu_keys = ""
   m_mem_keys = ""
+  delete m_cpu_usr_max_pcount
+  delete m_mem_usr_max_pcount
+  delete m_gu_usr_max_pcount
   reset_sample()
 }
 /^__SP_SAMPLE__$/ {
@@ -365,6 +377,7 @@ BEGIN {
       uid = f3[1]
       s_cpu_usr[uid] = f3[3] + 0
       s_cpu_usr_name[uid] = f3[2]
+      s_cpu_usr_pcount[uid] = (nv >= 4 && isnum(f3[4])) ? f3[4] + 0 : 1
       if (!(uid in s_cpu_usr_seen)) { s_cpu_usr_seen[uid] = 1; s_cpu_usr_list = s_cpu_usr_list " " uid }
       s_cpu_attr += f3[3] + 0
     }
@@ -376,6 +389,7 @@ BEGIN {
       uid = f3[1]
       s_mem_usr[uid] = f3[3] + 0
       s_mem_usr_name[uid] = f3[2]
+      s_mem_usr_pcount[uid] = (nv >= 4 && isnum(f3[4])) ? f3[4] + 0 : 1
       if (!(uid in s_mem_usr_seen)) { s_mem_usr_seen[uid] = 1; s_mem_usr_list = s_mem_usr_list " " uid }
       if (s_mem_total_has && s_mem_total > 0) { s_mem_usr_pct[uid] = (f3[3] + 0) * 102400.0 / s_mem_total; s_mem_usr_pct_has[uid] = 1 }
       s_mem_attr += f3[3] + 0
@@ -394,6 +408,7 @@ BEGIN {
       k = uuid "\t" uid
       s_gu_usr[k] = f4[4] + 0
       s_gu_usr_name[k] = f4[3]
+      s_gu_usr_pcount[k] = (nv >= 5 && isnum(f4[5])) ? f4[5] + 0 : 1
       idx = s_g_uuid_to_idx[uuid]
       if (idx != "" && s_g_total_has[idx] && s_g_total[idx] > 0) { s_gu_usr_pct[k] = (f4[4] + 0) * 100.0 / s_g_total[idx]; s_gu_usr_pct_has[k] = 1 }
       if (!(k in s_gu_uid_seen)) { s_gu_uid_seen[k] = 1; s_gu_uid_list[uuid] = s_gu_uid_list[uuid] " " uid }

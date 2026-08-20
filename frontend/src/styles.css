@@ -1340,6 +1340,13 @@ input:focus {
   font-weight: normal;
 }
 
+.user-proc-count {
+  color: #7a8c80;
+  font-size: 10.5px;
+  font-weight: 500;
+  margin-left: 3px;
+}
+
 .gpu-row-header {
   background: rgba(56, 189, 248, 0.08) !important;
   border: 1px solid rgba(56, 189, 248, 0.15);

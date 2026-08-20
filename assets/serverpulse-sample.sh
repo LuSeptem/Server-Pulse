@@ -127,23 +127,33 @@ if [ "$process_collection" -eq 2 ] && [ -n "$page_size" ]; then
   process_skipped=$((skipped_1+skipped_2))
   if [ "$process_skipped" -eq 0 ]; then process_status=ok; else process_status=partial; fi
   awk 'NR==FNR { first[$1 SUBSEP $2]=$4; next }
-       { key=$1 SUBSEP $2; if (key in first) { delta=$4-first[key]; if (delta >= 0) cpu[$3]+=delta } memory[$3]+=$5 }
-       END { for (uid in cpu) print uid, cpu[uid] > cpu_file; for (uid in memory) print uid, memory[uid] > memory_file }' \
+       {
+         key=$1 SUBSEP $2;
+         if (key in first) {
+           delta=$4-first[key];
+           if (delta > 0) { cpu[$3]+=delta; cpu_pcount[$3]++ }
+         }
+         if ($5 > 0) { memory[$3]+=$5; mem_pcount[$3]++ }
+       }
+       END {
+         for (uid in cpu) print uid, cpu[uid], (cpu_pcount[uid] > 0 ? cpu_pcount[uid] : 1) > cpu_file;
+         for (uid in memory) print uid, memory[uid], (mem_pcount[uid] > 0 ? mem_pcount[uid] : 1) > memory_file
+       }' \
       cpu_file="$metrics_tmp/cpu-users" memory_file="$metrics_tmp/memory-users" \
       "$metrics_tmp/processes-1" "$metrics_tmp/processes-2" 2>/dev/null || process_status=partial
 
   if [ -f "$metrics_tmp/cpu-users" ]; then
-    while read user_id ticks; do
+    while read user_id ticks pcount; do
       [ -n "$user_id" ] || continue
       user_percent=$(awk -v ticks="$ticks" -v total_delta_doubled="$total_delta_doubled" 'BEGIN { if (total_delta_doubled > 0) printf "%.3f", ticks*200/total_delta_doubled; else print "0.000" }')
-      printf 'CPU_USER=%s\t%s\t%s\n' "$user_id" "$(user_name "$user_id")" "$user_percent"
+      printf 'CPU_USER=%s\t%s\t%s\t%s\n' "$user_id" "$(user_name "$user_id")" "$user_percent" "${pcount:-1}"
     done < "$metrics_tmp/cpu-users"
   fi
   if [ -f "$metrics_tmp/memory-users" ]; then
-    while read user_id rss_pages; do
+    while read user_id rss_pages pcount; do
       [ -n "$user_id" ] || continue
       user_mib=$(awk -v pages="$rss_pages" -v bytes="$page_size" 'BEGIN { printf "%.3f", pages*bytes/1048576 }')
-      printf 'MEMORY_USER=%s\t%s\t%s\n' "$user_id" "$(user_name "$user_id")" "$user_mib"
+      printf 'MEMORY_USER=%s\t%s\t%s\t%s\n' "$user_id" "$(user_name "$user_id")" "$user_mib" "${pcount:-1}"
     done < "$metrics_tmp/memory-users"
   fi
 fi
@@ -189,11 +199,11 @@ if [ -n "$metrics_tmp" ] && [ -f "$metrics_tmp/gpus" ]; then
       fi
     done < "$metrics_tmp/gpu-processes"
 
-    awk -F '\t' '{ total[$1 SUBSEP $2]+=$3 } END { for (key in total) { split(key, fields, SUBSEP); print fields[1] "\t" fields[2] "\t" total[key] } }' \
+    awk -F '\t' '{ total[$1 SUBSEP $2]+=$3; pcount[$1 SUBSEP $2]++ } END { for (key in total) { split(key, fields, SUBSEP); print fields[1] "\t" fields[2] "\t" total[key] "\t" pcount[key] } }' \
       "$metrics_tmp/gpu-users" > "$metrics_tmp/gpu-user-totals" 2>/dev/null || gpu_query_status=partial
-    while IFS="$shell_tab" read gpu_uuid user_id user_mib; do
+    while IFS="$shell_tab" read gpu_uuid user_id user_mib pcount; do
       [ -n "$gpu_uuid" ] || continue
-      printf 'GPU_USER=%s\t%s\t%s\t%s\n' "$gpu_uuid" "$user_id" "$(user_name "$user_id")" "$user_mib"
+      printf 'GPU_USER=%s\t%s\t%s\t%s\t%s\n' "$gpu_uuid" "$user_id" "$(user_name "$user_id")" "$user_mib" "${pcount:-1}"
     done < "$metrics_tmp/gpu-user-totals"
     awk '{ count[$0]++ } END { for (uuid in count) print uuid "\t" count[uuid] }' "$metrics_tmp/gpu-unmapped" 2>/dev/null | \
       while IFS="$shell_tab" read gpu_uuid count; do

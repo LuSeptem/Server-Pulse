@@ -63,6 +63,7 @@ export interface UserUsageEntry {
   name: string
   percent?: number
   usedMib?: number
+  processCount?: number | null
 }
 
 export interface CpuUserUsageInfo {
@@ -133,6 +134,7 @@ function parseCpuUsers(s: any): CpuUserUsageInfo | null {
       uid: String(u.Uid ?? u.uid ?? ''),
       name: String(u.Name ?? u.name ?? 'user'),
       percent: typeof u.Percent === 'number' ? u.Percent : (typeof u.percent === 'number' ? u.percent : 0),
+      processCount: typeof u.ProcessCount === 'number' ? u.ProcessCount : (typeof u.processCount === 'number' ? u.processCount : null),
     }))
     .filter((u: UserUsageEntry) => (u.percent ?? 0) > 0.01)
     .sort((a: UserUsageEntry, b: UserUsageEntry) => (b.percent ?? 0) - (a.percent ?? 0))
@@ -154,6 +156,7 @@ function parseMemoryUsers(s: any): MemoryUserUsageInfo | null {
         name: String(u.Name ?? u.name ?? 'user'),
         usedMib,
         percent,
+        processCount: typeof u.ProcessCount === 'number' ? u.ProcessCount : (typeof u.processCount === 'number' ? u.processCount : null),
       }
     })
     .filter((u: UserUsageEntry) => (u.usedMib ?? 0) > 1 || (u.percent ?? 0) > 0.01)
@@ -176,6 +179,7 @@ function parseGpuUserMemory(g: any): GpuUserMemoryInfo | null {
         name: String(u.Name ?? u.name ?? 'user'),
         usedMib,
         percent,
+        processCount: typeof u.ProcessCount === 'number' ? u.ProcessCount : (typeof u.processCount === 'number' ? u.processCount : null),
       }
     })
     .filter((u: UserUsageEntry) => (u.usedMib ?? 0) > 1 || (u.percent ?? 0) > 0.01)
@@ -780,8 +784,9 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
         if (isCpuVisible && cpuUsers.length > 0) {
           html += `<div style="font-size: 10.5px; font-weight: 600; color: #7dd3fc; margin: 4px 0 2px;">CPU 用户占用:</div>`
           for (const u of cpuUsers.slice(0, 5)) {
+            const pcount = u.processCount && u.processCount >= 2 ? ` <span class="user-proc-count" style="color: #7a8c80; font-size: 10.5px;">(x${u.processCount})</span>` : ''
             html += `<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 2px 0; color: #d1ded6;">
-              <span>${u.name}</span>
+              <span>${u.name}${pcount}</span>
               <strong style="color: #ffffff;">${(u.percent || 0).toFixed(1)}%</strong>
             </div>`
           }
@@ -795,8 +800,9 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
           for (const u of memUsers.slice(0, 5)) {
             const gb = u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : ''
             const pct = u.percent ? ` · ${u.percent.toFixed(1)}%` : ''
+            const pcount = u.processCount && u.processCount >= 2 ? ` <span class="user-proc-count" style="color: #7a8c80; font-size: 10.5px;">(x${u.processCount})</span>` : ''
             html += `<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 2px 0; color: #d1ded6;">
-              <span>${u.name}</span>
+              <span>${u.name}${pcount}</span>
               <strong style="color: #ffffff;">${gb}${pct}</strong>
             </div>`
           }
@@ -958,8 +964,9 @@ const getGpuVramOption = (server: ServerHistoryRecord) => {
             for (const u of activeUsers.slice(0, 4)) {
               const gb = u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : ''
               const pct = u.percent ? ` · ${u.percent.toFixed(1)}%` : ''
+              const pcount = u.processCount && u.processCount >= 2 ? ` <span class="user-proc-count" style="color: #7a8c80; font-size: 10.5px;">(x${u.processCount})</span>` : ''
               html += `<div style="display: flex; justify-content: space-between; gap: 10px; color: #b8c7be; margin: 1px 0;">
-                <span>${u.name}</span>
+                <span>${u.name}${pcount}</span>
                 <span style="color: #85e89d; font-weight: 500;">${gb}${pct}</span>
               </div>`
             }
@@ -1389,7 +1396,11 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
                   :key="`cpu-${u.uid || u.name}`"
                   class="user-usage-row"
                 >
-                  <span class="user-name" :title="u.name">{{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
+                  <span class="user-name" :title="u.name">
+                    {{ u.name }}
+                    <span v-if="u.processCount && u.processCount >= 2" class="user-proc-count">(x{{ u.processCount }})</span>
+                    <span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span>
+                  </span>
                   <span class="user-value">{{ (u.percent || 0).toFixed(1) }}%</span>
                 </div>
               </div>
@@ -1401,7 +1412,11 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
                   :key="`mem-${u.uid || u.name}`"
                   class="user-usage-row"
                 >
-                  <span class="user-name" :title="u.name">{{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
+                  <span class="user-name" :title="u.name">
+                    {{ u.name }}
+                    <span v-if="u.processCount && u.processCount >= 2" class="user-proc-count">(x{{ u.processCount }})</span>
+                    <span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span>
+                  </span>
                   <span class="user-value">
                     {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
                     {{ u.percent ? ` · ${u.percent.toFixed(1)}%` : '' }}
@@ -1436,7 +1451,11 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
                   :key="`gpu-${g.index}-${u.uid || u.name}`"
                   class="user-usage-row sub-gpu-row"
                 >
-                  <span class="user-name">{{ u.name }}<span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span></span>
+                  <span class="user-name">
+                    {{ u.name }}
+                    <span v-if="u.processCount && u.processCount >= 2" class="user-proc-count">(x{{ u.processCount }})</span>
+                    <span v-if="u.uid" class="user-uid-sub"> ({{ u.uid }})</span>
+                  </span>
                   <span class="user-value">
                     {{ u.usedMib ? (u.usedMib / 1024).toFixed(1) + ' GB' : '' }}
                     {{ u.percent ? ` · ${u.percent.toFixed(1)}%` : '' }}

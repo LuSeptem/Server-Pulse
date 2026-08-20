@@ -13,6 +13,7 @@ export interface CpuUserUsage {
   uid: string
   name: string
   percent: number
+  processCount?: number | null
 }
 
 export interface MemoryUserUsage {
@@ -20,6 +21,7 @@ export interface MemoryUserUsage {
   name: string
   usedMib: number
   percent: number | null
+  processCount?: number | null
 }
 
 export interface GpuUserUsage {
@@ -27,6 +29,7 @@ export interface GpuUserUsage {
   name: string
   usedMib: number
   percent: number | null
+  processCount?: number | null
 }
 
 export interface GpuMetric {
