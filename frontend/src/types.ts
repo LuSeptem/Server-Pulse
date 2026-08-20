@@ -8,6 +8,34 @@ export interface ServerConfig {
   port?: number | null
   monitored: boolean
   passwordless: boolean
+  hostKeyRequired?: boolean
+}
+
+export type HostKeyState = 'unknown' | 'trusted' | 'changed'
+
+export interface HostKeyRecord {
+  algorithm: string
+  fingerprint: string
+}
+
+export interface HostKeyChallenge {
+  challengeId: string
+  server: string
+  port: number
+  keys: HostKeyRecord[]
+  state: HostKeyState
+}
+
+export interface StartResult {
+  serverId: string
+  status: 'started' | 'verified' | 'host-key-required' | 'host-key-changed' | 'password-required' | 'authentication-failed' | string
+  detail?: string | null
+  hostKey?: HostKeyChallenge | null
+}
+
+export interface ApplyServerResult {
+  servers: ServerConfig[]
+  start: StartResult
 }
 export interface CpuUserUsage {
   uid: string

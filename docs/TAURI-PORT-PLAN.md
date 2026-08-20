@@ -15,7 +15,7 @@
 | 前端 | Vue 3 + TypeScript + npm + Pinia + ECharts |
 | 后端 | Rust + Tokio；核心库不依赖 Tauri 或窗口环境 |
 | SSH | 系统 OpenSSH，不使用 `russh`；保留 SSH config、密钥、agent、ProxyJump、known_hosts 和别名 |
-| 凭据 | Windows Credential Manager / macOS Keychain，通过 `keyring` 抽象；支持保存密码与会话密码，但会话密码通道仍是合并前必补项 |
+| 凭据 | Windows Credential Manager / macOS Keychain，通过 `keyring` 抽象；支持保存密码与一次性会话密码 IPC |
 | 分发 | 未签名、未公证的内部 Preview；不要求 Apple Developer 账号，不面向公开分发 |
 | 合并条件 | 核心闭环完成、黄金样例差分测试通过、CI 双平台构建通过；无真实 Mac 时必须保留未验证风险，不宣称完整兼容 |
 
@@ -83,6 +83,11 @@ save_server(server)
 delete_server(server_id)
 start_monitoring(server, interval_seconds)
 stop_monitoring(server_id)
+probe_host_key(server)
+accept_host_key(challenge_id)
+forget_host_key(server)
+verify_and_apply_server(request)
+clear_session_credential(server_id)
 recheck_monitoring(server)
 query_history(day)
 get_data_root()
@@ -103,6 +108,7 @@ close_main_window()
 
 - `server.snapshot`
 - `server.status`
+- `server.host_key_required`
 - `server.error`（最终错误专用事件；Preview 当前把错误放在 status detail 中）
 
 每个事件必须包含 `server_id`、UTC `timestamp`、递增 `sequence` 和可序列化 `payload`。状态事件的错误结构为：
@@ -152,30 +158,32 @@ DataRootManager
 └─ apply_import()
 ```
 
-当前实现已经落地 `CredentialStore`、`DataRootManager`、JSONL store、核心解析/错误/退避、旧 Windows `Servers` 配置兼容、SSH config 别名发现/诊断、服务器新增/删除、免密/凭据模式和 OpenSSH short command；`CollectorManager`、完整 `SshTransport` 长连接/指纹接口和深度历史聚合仍需在 M2–M4 收口。
+当前实现已经落地 `CredentialStore`、`DataRootManager`、JSONL store、核心解析/错误/退避、旧 Windows `Servers` 配置兼容、SSH config 别名发现/诊断、服务器新增/删除、主机密钥挑战/变更阻断、一次性会话凭据、持久分帧 SSH 会话和 OpenSSH short command；历史查询按本地日期转换 UTC 范围，Agent 继续使用 short command。
 
 ## 6. SSH 与安全边界
 
 ### 6.1 连接方式
 
-- 使用系统 `ssh`/`ssh.exe`，默认 `BatchMode=yes`；发现已保存凭据时使用 askpass，密码由 askpass 子进程从 OS keyring 读取。
+- 使用系统 `ssh`/`ssh.exe`，默认 `BatchMode=yes`；会话密码优先于 OS keyring，再回退到 key/agent，askpass 子进程只接收随机 token。
 - 参数只放目标、端口、超时和 OpenSSH 选项；密码不得进入命令行、普通环境变量、配置、日志或历史。
-- `SSH_ASKPASS` 只指向当前应用的 askpass 入口，环境中最多传递非秘密 credential identity。
+- `SSH_ASKPASS` 只指向当前应用的 askpass 入口，环境中最多传递非秘密 credential identity、一次性 token 和本地 IPC endpoint；Windows 使用当前用户 ACL 的命名管道，Unix 使用一次性 Unix socket。
+- `UserKnownHostsFile` 指向应用数据根目录的 `known_hosts`，`GlobalKnownHostsFile` 只读指向用户现有 `~/.ssh/known_hosts`，并始终使用 `StrictHostKeyChecking=yes`。
 - 使用 LF 版本的 `assets/serverpulse-sample.sh` 通过 stdin 发送远端 shell。
+- 远端 sampler wrapper 在同一 SSH 子进程中循环输出 `SERVERPULSE_FRAME_BEGIN` / `SERVERPULSE_FRAME_END`，本地按帧解析；断线、损坏帧和超时销毁旧进程并按退避重连。
 - Windows 使用无控制台的新进程组，Unix 使用 process group，结合超时和取消清理本地 SSH 子进程；Release 桌面进程使用 GUI subsystem，避免启动时弹出终端。
 
 ### 6.2 主机指纹
 
-正式合并前必须实现并测试：
+当前实现与测试覆盖：
 
-1. 读取用户现有 SSH config 与 known_hosts；
-2. 首次未知主机展示算法和 SHA256 指纹，用户确认后才写入；
-3. 指纹变化严格阻断，禁止自动覆盖；
-4. 测试不写入真实用户的 known_hosts，也不使用真实指纹样本。
+1. 读取用户现有 SSH config 与 known_hosts，但只向应用数据根目录写入；
+2. 首次未知主机展示算法和 SHA256 指纹，用户确认后追加当前 key；
+3. 指纹变化严格阻断，必须先忘记应用密钥再重新验证，禁止自动覆盖；
+4. 测试使用临时应用文件，不写入真实用户的 known_hosts，也不使用真实指纹样本。
 
 ### 6.3 认证顺序与重试
 
-认证顺序固定为免密 key/agent、已保存密码、当前会话临时密码。网络失败退避为 5 秒、15 秒、30 秒、1 分钟、5 分钟并带抖动；重复失败进入熔断，Recheck 清除熔断。当前代码已实现基础退避和保存凭据 askpass；会话密码安全通道、指纹 UX 和完整长连接仍是合并门槛。
+认证顺序固定为当前会话密码、已保存密码、key/agent。网络失败退避为 5 秒、15 秒、30 秒、1 分钟、5 分钟并带抖动；重复失败进入熔断，Recheck 清除熔断。主机密钥错误、缺少密码和认证失败直接暂停，等待用户操作。
 
 ## 7. 存储与迁移
 
@@ -216,11 +224,11 @@ DataRootManager
 | --- | --- | --- |
 | M0 基线冻结 | 分支、tag、canonical sampler、黄金样例、配置/schema 固定 | 已完成 |
 | M1 Rust 核心 | 协议 v1/v2、CSV、缺失/partial、历史 JSON/JSONL、保留/迁移、错误模型、差分测试 | 基础能力已完成；加权聚合与完整差分待补 |
-| M2 SSH 垂直闭环 | OpenSSH、指纹、keyring/askpass、长期会话、退避、进程清理、单服务器 event→浮窗 | 基础闭环已完成；SSH config/旧配置读取已补；指纹、会话密码、长连接待补 |
+| M2 SSH 垂直闭环 | OpenSSH、指纹、keyring/askpass、长期会话、退避、进程清理、单服务器 event→浮窗 | 已完成；macOS 仅保留编译兼容声明 |
 | M3 桌面 UI | 主浮窗、托盘、管理/历史窗口、多服务器、主题语言、ECharts、生命周期 | 主浮窗、管理新增/删除和基础历史 UI 已完成；行为细节待补 |
 | M4 迁移稳定性 | 自定义根目录、导入向导、加权合并、异常回退、Windows 10/11 验证 | API 基础已完成；向导和 Windows 实机验收待补 |
 | M5 CI/Preview | Rust/Vitest/Playwright、Windows 构建、macOS Intel/ARM 构建、Preview 包 | workflow 已提交；macOS 与完整桌面测试待验证 |
-| v1.1 Agent | 保留 POSIX Agent、状态/注入/控制/拉取/合并/游标 | 不阻塞 Preview，但尚未迁移 |
+| v1.1 Agent | 保留 POSIX Agent、状态/注入/控制/拉取/合并/游标 | 保留现有 short command 接口，不纳入本轮流式采集 |
 
 ## 10. 测试与验收
 
@@ -266,7 +274,7 @@ GitHub-hosted runners 与 `tauri-action` 的具体 runner 架构和配额以 wor
 
 - [ ] 核心闭环可从 SSH 采样到浮窗展示，并支持停止、取消和退出清理。
 - [ ] 协议/历史黄金样例差分通过，包含坏末行、加权和时区用例。
-- [ ] 主机首次指纹确认、变更阻断、保存密码和会话密码均有脱敏测试。
+- [x] 主机首次指纹确认、变更阻断、保存密码和会话密码均有脱敏测试。
 - [ ] 数据根目录导入预览、取消、合并、冲突保留、备份和回滚通过。
 - [ ] Windows 10/11 x64 原生窗口/托盘测试通过。
 - [ ] CI Windows 构建与 macOS Intel/Apple Silicon 构建通过；macOS 未实机验证风险写入 Preview 文档。

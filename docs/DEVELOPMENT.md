@@ -116,7 +116,7 @@ CleanupOnStartup           # “下次启动清理”一次性标记
 
 `%LOCALAPPDATA%\ServerPulse.location.json` 是数据根目录之外的原子指针文件，只保存首选/活动路径和待同步状态，不保存密码、历史或用户指标。启动时先测试默认目录，再测试首选目录；首选目录删除、断盘或无权限时只回退到默认目录并标记 `PendingSync`，不会静默选择其他路径。
 
-新格式为 `history\yyyy-MM-dd.v2.jsonl`，一行一个版本 2 的分钟记录，采用追加写入。读取器同时兼容旧版 `yyyy-MM-dd.json`，同一天允许新旧格式混合。
+新格式为 `history\yyyy-MM-dd.v2.jsonl`，文件日期和记录时间统一使用 UTC；记录为带 `Z` 的 RFC3339，一行一个版本 2 的分钟记录，采用追加写入。查询参数是用户本地日期，读取覆盖本地日界的 UTC 文件范围并按本地时间显示。读取器同时兼容旧版 `yyyy-MM-dd.json` 和无时区时间戳，同一天允许新旧格式混合。
 
 读取性能：查询先按分钟窗口对 JSONL 行做字符串预过滤（`"Timestamp":"yyyy-MM-ddTHH:mm"` 前缀的序数比较），只解析窗口内的行，并拼接为单个 JSON 数组一次性 `ConvertFrom-Json`，避免为窄查询逐行解析全天文件；批量解析失败时退回逐行解析，保留“忽略损坏末行”语义（PS 5.1 数组输出带 NoEnumerate 标记，需先赋值再展开）。记录页首次查询在窗口显示后以后台优先级异步执行，避免阻塞窗口出现。
 
@@ -148,9 +148,9 @@ Windows 凭据管理器属于操作系统安全存储，不在迁移范围内；
 
 服务器配置候选来自 `config/servers.json`、当前用户 SSH config 和运行时 `%LOCALAPPDATA%\ServerPulse\servers.json`。仓库配置只作为首次导入种子。服务器 ID 变更策略、历史继承和凭据键逻辑在 `ServerPulse.Ssh.ps1` 中集中处理。
 
-凭据规范化键为解析后的 `username@hostname:port`，同一身份的多个 SSH 别名共享 Generic Credential。保存密码使用 Windows Credential Manager；会话密码通过标准输入和当前用户 SID 限定的一次性命名管道交给 ASKPASS 辅助程序。密码不进命令行、环境变量、配置、日志或历史。
+凭据规范化键为解析后的 `username@hostname:port`，同一身份的多个 SSH 别名共享 Generic Credential。保存密码使用 Windows Credential Manager 或 macOS Keychain；会话密码在 Tauri 主进程 zeroize 内存中暂存，通过 Windows 当前用户 ACL 的一次性命名管道或 macOS/Unix 一次性 socket 交给 ASKPASS 辅助程序。ASKPASS 只收到随机 token，不收到密码；密码不进命令行、普通环境变量、配置、日志或历史。
 
-主机密钥验证使用隔离临时 `known_hosts`。首次未知主机必须展示算法和 SHA256 指纹并经用户确认；已知指纹变化严格阻断，禁止自动覆盖真实 `known_hosts`。
+主机密钥验证使用数据根目录下的应用专用 `known_hosts`。用户现有 `~/.ssh/known_hosts` 只读兼容；首次未知主机必须展示算法和 SHA256 指纹并经用户确认，已知指纹变化严格阻断，禁止自动覆盖任一文件。
 
 认证失败只暂停该服务器并发一次托盘通知；网络错误和超时仍按退避策略重试。实现或测试中不得向真实服务器写入密码、修改全局 SSH 配置或使用真实主机指纹样本。
 
@@ -276,8 +276,9 @@ git status --short
 
 - `frontend/` 是 Vue 3 + TypeScript + Pinia + ECharts UI，使用 npm 和 Vitest；`frontend/dist/index.html` 是允许 Rust 编译在未先构建前端时使用的最小占位入口，正式构建会被 Vite 产物覆盖。
 - `src-tauri/crates/serverpulse-core` 不依赖 Tauri，负责 v2 采样协议、指标模型、JSON/JSONL 读取、错误模型和重试状态。
-- `src-tauri/crates/serverpulse-ssh` 通过系统 OpenSSH 执行 LF 采样脚本，使用进程组、超时和 `kill_on_drop` 清理本地 SSH 子进程；已保存密码通过系统 keyring + askpass 入口读取，密码不进入参数或环境变量。
-- `src-tauri/crates/serverpulse-platform` 负责 Windows/macOS 数据根目录、location pointer、原子写入、跨平台文件锁、JSONL 合并和 `keyring` 凭据抽象。
+- `src-tauri/crates/serverpulse-ssh` 通过系统 OpenSSH 执行 LF 采样脚本，使用应用专用 `known_hosts`、只读用户 `known_hosts`、严格指纹状态、进程组、超时和 `kill_on_drop` 清理本地 SSH 子进程；持久会话按帧读取远端循环 sampler，短命令仍供 Agent 使用。
+- `src-tauri/src/session_credentials.rs` 保存当前运行密码的 zeroize 内存副本；Windows 通过当前用户 ACL 命名管道、macOS/Unix 通过一次性 Unix socket 把 token 验证后的密码交给 askpass，密码不进入参数、普通环境变量或文件。
+- `src-tauri/crates/serverpulse-platform` 负责 Windows/macOS 数据根目录、location pointer、原子写入、跨平台文件锁、JSONL 合并和 `keyring` 凭据抽象；应用专用 known_hosts 位于当前数据根目录。
 - `assets/serverpulse-sample.sh` 是唯一 canonical 远端脚本，必须保持 POSIX `sh` 兼容和 LF 行尾；`tests/fixtures/` 保存协议与历史黄金样例。
 
 ### 本地命令
@@ -297,6 +298,6 @@ Tauri CLI 必须从仓库根目录解析 `src-tauri/tauri.conf.json`；直接在
 
 ### Preview 边界
 
-当前代码已经覆盖单服务器 SSH→采样→Rust snapshot→Tauri event→浮窗、多个服务器任务、托盘/管理/历史窗口、JSONL 单样本落盘、数据根目录与迁移 API 基础、重试退避和错误脱敏。以下内容仍是 Preview 合并前的明确工作项，而不是已验证能力：主机指纹首次确认与变更阻断的完整 UX、仅本次会话密码的安全通道、按分钟加权聚合与旧 JSON 深度混读、完整服务器配置编辑、贴边/拖拽/透明度/主题语言设置、POSIX Agent 注入/控制/增量合并，以及 macOS 真实机器上的透明窗口、托盘、贴边和睡眠恢复验证。
+当前代码已经覆盖单服务器持久 SSH→分帧采样→Rust snapshot→Tauri event→浮窗、多个服务器任务、主机密钥确认/变更阻断、一次性会话密码通道、托盘/管理/历史窗口、UTC JSONL 落盘与本地日期查询、数据根目录与迁移 API、重试退避、Agent short command 控制和错误脱敏。仍未实机验证的是 Windows 完整桌面验收以及 macOS 真实机器上的透明窗口、托盘、贴边和睡眠恢复；这些不应被描述为已验证能力。
 
 CI 由 `.github/workflows/tauri-preview.yml` 定义：Windows runner 执行 Rust/Vitest/类型检查和 Windows 构建；macOS matrix 生成 Intel 与 Apple Silicon 构建。没有真实 Mac 验证时，任何发布说明必须保留“macOS UI 未实机验证”的风险标记。Preview 不签名、不公证、不面向公开分发。

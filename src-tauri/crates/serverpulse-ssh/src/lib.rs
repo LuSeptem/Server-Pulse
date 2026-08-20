@@ -10,6 +10,15 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use tokio::time::timeout;
 
+pub mod known_hosts;
+pub mod stream;
+
+pub use known_hosts::{
+    HostKeyChallenge, HostKeyRecord, HostKeyState, KnownHostsManager, KnownHostsPaths,
+    ScannedHostKey,
+};
+pub use stream::{framed_sampler_script, parse_framed_text, SshStream};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SshTarget {
@@ -18,6 +27,14 @@ pub struct SshTarget {
     pub port: Option<u16>,
     #[serde(skip)]
     pub credential_identity: Option<String>,
+    #[serde(skip)]
+    pub session_credential_token: Option<String>,
+    #[serde(skip)]
+    pub session_credential_endpoint: Option<String>,
+    #[serde(skip)]
+    pub known_hosts_file: Option<PathBuf>,
+    #[serde(skip)]
+    pub user_known_hosts_file: Option<PathBuf>,
 }
 
 impl SshTarget {
@@ -27,6 +44,10 @@ impl SshTarget {
             user: server.user.clone(),
             port: server.port,
             credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
         }
     }
 }
@@ -113,7 +134,13 @@ impl SystemOpenSsh {
     }
 
     pub fn build_arguments(&self, target: &SshTarget) -> Vec<String> {
-        let batch_mode = if target.credential_identity.is_some() { "no" } else { "yes" };
+        let batch_mode = if target.credential_identity.is_some()
+            || target.session_credential_token.is_some()
+        {
+            "no"
+        } else {
+            "yes"
+        };
         let mut args = vec![
             "-T".to_owned(),
             "-o".to_owned(),
@@ -125,6 +152,14 @@ impl SystemOpenSsh {
             "-o".to_owned(),
             "NumberOfPasswordPrompts=1".to_owned(),
         ];
+        if let Some(path) = &target.known_hosts_file {
+            args.push("-o".to_owned());
+            args.push(format!("UserKnownHostsFile={}", path.to_string_lossy()));
+        }
+        if let Some(path) = &target.user_known_hosts_file {
+            args.push("-o".to_owned());
+            args.push(format!("GlobalKnownHostsFile={}", path.to_string_lossy()));
+        }
         if let Some(port) = target.port {
             args.push("-p".to_owned());
             args.push(port.to_string());
@@ -157,19 +192,27 @@ impl SystemOpenSsh {
         }
     }
 
-    async fn spawn_command(&self, target: &SshTarget) -> Result<Child, ServerPulseError> {
+    pub(crate) async fn spawn_command(&self, target: &SshTarget) -> Result<Child, ServerPulseError> {
         let mut command = Command::new(&self.executable);
         command.args(self.build_arguments(target));
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
-        if let Some(identity) = &target.credential_identity {
+        if target.credential_identity.is_some() || target.session_credential_token.is_some() {
             // The password is fetched by the askpass child from the OS
-            // credential store. Only the non-secret identity crosses the
-            // process boundary.
+            // credential store or a one-time local IPC endpoint. Only an
+            // identity or random token crosses the process boundary.
             command.env("SSH_ASKPASS", std::env::current_exe().map_err(ServerPulseError::Io)?);
             command.env("SSH_ASKPASS_REQUIRE", "force");
-            command.env("SERVERPULSE_CREDENTIAL_ID", identity);
+            if let Some(identity) = &target.credential_identity {
+                command.env("SERVERPULSE_CREDENTIAL_ID", identity);
+            }
+            if let Some(token) = &target.session_credential_token {
+                command.env("SERVERPULSE_SESSION_TOKEN", token);
+            }
+            if let Some(endpoint) = &target.session_credential_endpoint {
+                command.env("SERVERPULSE_SESSION_ENDPOINT", endpoint);
+            }
         }
         Self::configure_process(&mut command);
         command.spawn().map_err(ServerPulseError::Io)
@@ -438,6 +481,10 @@ mod tests {
             user: Some("alice".to_owned()),
             port: Some(2222),
             credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
         };
         assert_eq!(
             ssh.build_arguments(&target),
@@ -457,6 +504,10 @@ mod tests {
             user: Some("alice".to_owned()),
             port: None,
             credential_identity: None,
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
         };
         let args = ssh.build_arguments(&target).join(" ");
         assert!(!args.contains("password"));
@@ -470,11 +521,35 @@ mod tests {
             user: Some("alice".to_owned()),
             port: None,
             credential_identity: Some("alice@server:22".to_owned()),
+            session_credential_token: None,
+            session_credential_endpoint: None,
+            known_hosts_file: None,
+            user_known_hosts_file: None,
         };
         let args = ssh.build_arguments(&target).join(" ");
         assert!(args.contains("BatchMode=no"));
         assert!(args.contains("alice@server"));
         assert!(!args.contains("alice@server:22"));
+    }
+
+    #[test]
+    fn known_hosts_arguments_are_explicit_and_password_free() {
+        let ssh = SystemOpenSsh::default();
+        let target = SshTarget {
+            alias: "server".to_owned(),
+            user: None,
+            port: Some(2222),
+            credential_identity: None,
+            session_credential_token: Some("random-token".to_owned()),
+            session_credential_endpoint: Some(r"\\.\pipe\serverpulse-askpass-random".to_owned()),
+            known_hosts_file: Some(PathBuf::from(r"C:\ServerPulse\known_hosts")),
+            user_known_hosts_file: Some(PathBuf::from(r"C:\Users\alice\.ssh\known_hosts")),
+        };
+        let args = ssh.build_arguments(&target).join(" ");
+        assert!(args.contains("StrictHostKeyChecking=yes"));
+        assert!(args.contains(r"UserKnownHostsFile=C:\ServerPulse\known_hosts"));
+        assert!(args.contains(r"GlobalKnownHostsFile=C:\Users\alice\.ssh\known_hosts"));
+        assert!(!args.contains("random-password"));
     }
 
     #[test]
@@ -531,6 +606,10 @@ mod tests {
                 user: Some("test-user".to_owned()),
                 port: Some(22),
                 credential_identity: None,
+                session_credential_token: None,
+                session_credential_endpoint: None,
+                known_hosts_file: None,
+                user_known_hosts_file: None,
             };
             let script = include_str!("../../../../assets/serverpulse-sample.sh");
             let res = ssh.collect_once(&target, script).await;

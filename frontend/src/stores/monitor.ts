@@ -1,7 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
-import type { AgentMergeResult, AgentServerState, HistoryEntry, MetricSnapshot, ServerConfig, SshConfigInfo } from '../types'
+import type {
+  AgentMergeResult,
+  AgentServerState,
+  ApplyServerResult,
+  HistoryEntry,
+  HostKeyChallenge,
+  MetricSnapshot,
+  ServerConfig,
+  SshConfigInfo,
+  StartResult,
+} from '../types'
 
 interface SnapshotEvent {
   serverId: string
@@ -20,6 +30,16 @@ interface StatusEvent {
   }
 }
 
+interface VerifyAndApplyRequest {
+  server: ServerConfig
+  password?: string | null
+  savePassword: boolean
+}
+
+type PendingHostKeyAction =
+  | { kind: 'start'; server: ServerConfig; interval?: number }
+  | { kind: 'apply'; request: VerifyAndApplyRequest }
+
 interface MonitorState {
   servers: ServerConfig[]
   snapshots: Record<string, MetricSnapshot>
@@ -36,6 +56,8 @@ interface MonitorState {
   agentStates: Record<string, AgentServerState>
   agentLoading: Record<string, boolean>
   agentGlobalLoading: boolean
+  hostKeyChallenge: HostKeyChallenge | null
+  pendingHostKeyAction: PendingHostKeyAction | null
   initialized: boolean
 }
 
@@ -65,6 +87,8 @@ export const useMonitorStore = defineStore('monitor', {
     agentStates: {},
     agentLoading: {},
     agentGlobalLoading: false,
+    hostKeyChallenge: null,
+    pendingHostKeyAction: null,
     initialized: false,
   }),
   getters: {
@@ -88,6 +112,19 @@ export const useMonitorStore = defineStore('monitor', {
       ),
   },
   actions: {
+    applyStartResult(result: StartResult, pending?: PendingHostKeyAction) {
+      this.statuses = { ...this.statuses, [result.serverId]: result.status }
+      if (result.hostKey && (result.status === 'host-key-required' || result.status === 'host-key-changed')) {
+        this.hostKeyChallenge = result.hostKey
+        this.pendingHostKeyAction = pending ?? null
+      } else if (result.status === 'started') {
+        this.pendingHostKeyAction = null
+        setTimeout(() => {
+          void this.refreshMonitoringState()
+        }, 500)
+      }
+      return result
+    },
     async init() {
       if (this.initialized) return
       try {
@@ -137,6 +174,9 @@ export const useMonitorStore = defineStore('monitor', {
             } else if (event.payload.payload.detail?.detail) {
               this.errors = { ...this.errors, [id]: event.payload.payload.detail.detail }
             }
+          }),
+          await listen<HostKeyChallenge>('server.host_key_required', (event) => {
+            this.hostKeyChallenge = event.payload
           }),
           await listen<number>('interval.changed', (event) => {
             if (event.payload && event.payload >= 1 && event.payload <= 300) {
@@ -218,15 +258,55 @@ export const useMonitorStore = defineStore('monitor', {
     },
     async start(server: ServerConfig, customInterval?: number) {
       const interval = customInterval ?? this.intervalSeconds
-      await invoke('start_monitoring', { server, intervalSeconds: interval })
-      this.statuses = { ...this.statuses, [server.id]: 'connecting' }
-      setTimeout(() => {
-        void this.refreshMonitoringState()
-      }, 500)
+      const result = await invoke<StartResult>('start_monitoring', { server, intervalSeconds: interval })
+      return this.applyStartResult(result, { kind: 'start', server, interval })
     },
     async stop(serverId: string) {
-      await invoke('stop_monitoring', { serverId })
+      try {
+        await invoke('stop_monitoring', { serverId })
+      } finally {
+        await invoke('clear_session_credential', { serverId }).catch(() => undefined)
+      }
+      if (this.pendingHostKeyAction?.kind === 'start' && this.pendingHostKeyAction.server.id === serverId) {
+        this.pendingHostKeyAction = null
+        this.hostKeyChallenge = null
+      }
       this.statuses = { ...this.statuses, [serverId]: 'stopped' }
+    },
+    async clearSessionCredential(serverId: string) {
+      await invoke('clear_session_credential', { serverId })
+    },
+    async probeHostKey(server: ServerConfig) {
+      const challenge = await invoke<HostKeyChallenge>('probe_host_key', { server })
+      this.hostKeyChallenge = challenge
+      return challenge
+    },
+    async acceptHostKey() {
+      if (!this.hostKeyChallenge) return null
+      await invoke('accept_host_key', { challengeId: this.hostKeyChallenge.challengeId })
+      const pending = this.pendingHostKeyAction
+      this.hostKeyChallenge = null
+      this.pendingHostKeyAction = null
+      if (!pending) return null
+      if (pending.kind === 'start') {
+        return await this.start(pending.server, pending.interval)
+      }
+      return await this.verifyAndApplyServer(pending.request)
+    },
+    async forgetHostKey(server: ServerConfig) {
+      await invoke('forget_host_key', { server })
+      this.hostKeyChallenge = null
+      return await this.probeHostKey(server)
+    },
+    async verifyAndApplyServer(request: VerifyAndApplyRequest) {
+      const result = await invoke<ApplyServerResult>('verify_and_apply_server', { request })
+      this.servers = result.servers ?? this.servers
+      const retryRequest = { ...request, password: null }
+      this.applyStartResult(result.start, { kind: 'apply', request: retryRequest })
+      if (result.start.status !== 'host-key-required' && result.start.status !== 'host-key-changed') {
+        this.pendingHostKeyAction = null
+      }
+      return result
     },
     async reloadServers() {
       const servers = await invoke<ServerConfig[]>('list_servers')
@@ -270,17 +350,15 @@ export const useMonitorStore = defineStore('monitor', {
       if (existing && this.statuses[existing.id]) {
         await this.stop(existing.id).catch(() => undefined)
       }
-      this.servers = await invoke<ServerConfig[]>('save_server', { server })
+      const result = await this.verifyAndApplyServer({
+        server,
+        password: password || null,
+        savePassword,
+      })
       if (server.passwordless) {
-        await invoke('delete_credential', { server })
-      } else if (savePassword && password) {
-        await invoke('save_credential', { server, password })
+        await invoke('delete_credential', { server }).catch(() => undefined)
       }
-      if (server.monitored) {
-        await this.start(server)
-      } else {
-        await this.stop(server.id)
-      }
+      return result
     },
     async toggleServerMonitored(server: ServerConfig) {
       const updated: ServerConfig = {

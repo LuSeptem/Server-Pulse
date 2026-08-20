@@ -1,9 +1,10 @@
 import { setActivePinia, createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
+import { invoke } from '@tauri-apps/api/core'
 import { useMonitorStore } from './monitor'
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async (command: string) => {
+  invoke: vi.fn(async (command: string, args?: any) => {
     if (command === 'list_servers') {
       return [{ id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true }]
     }
@@ -26,6 +27,22 @@ vi.mock('@tauri-apps/api/core', () => ({
         { id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true },
         { id: '409', label: '409', host: '409', user: 'xzm', port: 22, monitored: true, passwordless: true },
       ]
+    }
+    if (command === 'start_monitoring') {
+      return { serverId: args?.server?.id, status: 'started', detail: null, hostKey: null }
+    }
+    if (command === 'verify_and_apply_server') {
+      const server = args?.request?.server
+      const servers = server?.id === '409'
+        ? [
+            { id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true },
+            server,
+          ]
+        : server ? [server] : []
+      return {
+        servers,
+        start: { serverId: server?.id, status: server?.monitored ? 'started' : 'verified', detail: null, hostKey: null },
+      }
     }
     return undefined
   }),
@@ -60,5 +77,64 @@ describe('monitor store', () => {
     const store = useMonitorStore()
     store.statuses = { a: 'online', b: 'offline', c: 'online' }
     expect(store.onlineCount).toBe(2)
+  })
+
+  it('passes a session-only password through the apply request without saving it', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    const server = { id: 'session-1', label: 'Session', host: 'session-1', monitored: false, passwordless: false }
+    await store.saveServer(server, 'one-run-secret', false)
+    expect(invoke).toHaveBeenCalledWith('verify_and_apply_server', {
+      request: { server, password: 'one-run-secret', savePassword: false },
+    })
+    expect(invoke).not.toHaveBeenCalledWith('save_credential', expect.anything())
+  })
+
+  it('does not keep a password in a pending host-key retry request', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    const server = { id: 'pending-secret', label: 'Pending', host: 'pending-secret', monitored: true, passwordless: false }
+    vi.mocked(invoke).mockResolvedValueOnce({
+      servers: [server],
+      start: {
+        serverId: server.id,
+        status: 'host-key-required',
+        detail: null,
+        hostKey: {
+          challengeId: 'challenge-secret',
+          server: server.host,
+          port: 22,
+          keys: [{ algorithm: 'ssh-ed25519', fingerprint: 'SHA256:test' }],
+          state: 'unknown',
+        },
+      },
+    })
+
+    await store.saveServer(server, 'one-run-secret', true)
+    expect(store.pendingHostKeyAction).toMatchObject({
+      kind: 'apply',
+      request: { password: null, savePassword: true },
+    })
+    expect(JSON.stringify(store.pendingHostKeyAction)).not.toContain('one-run-secret')
+  })
+
+  it('retries the pending action after host-key acceptance', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    const server = { id: 'host-key-1', label: 'Host key', host: 'host-key-1', monitored: true, passwordless: true }
+    store.hostKeyChallenge = {
+      challengeId: 'challenge-1',
+      server: 'host-key-1',
+      port: 22,
+      keys: [{ algorithm: 'ssh-ed25519', fingerprint: 'SHA256:test' }],
+      state: 'unknown',
+    }
+    store.pendingHostKeyAction = { kind: 'start', server }
+    vi.mocked(invoke).mockResolvedValueOnce(undefined)
+    vi.mocked(invoke).mockResolvedValueOnce({ serverId: server.id, status: 'started', detail: null, hostKey: null })
+    const result = await store.acceptHostKey()
+    expect(result).toMatchObject({ status: 'started' })
+    expect(store.hostKeyChallenge).toBeNull()
+    expect(store.pendingHostKeyAction).toBeNull()
   })
 })

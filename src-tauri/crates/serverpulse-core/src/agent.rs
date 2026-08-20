@@ -818,9 +818,14 @@ pub fn parse_agent_status_output(output: &str, stale_threshold_secs: u64) -> Age
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentPulledEntry {
-    pub local_minute: String, // e.g. "2026-08-19 19:30:00"
+    /// Legacy local-time fields retained for callers that still display the
+    /// pulled entry directly. History persistence must use the UTC fields.
+    pub local_minute: String, // e.g. "2026-08-19T19:30:00"
     pub local_day: String,    // e.g. "2026-08-19"
     pub utc_minute: String,   // e.g. "2026-08-19T11:30"
+    /// Canonical storage partition and timestamp for newly merged history.
+    pub utc_day: String,       // e.g. "2026-08-19"
+    pub utc_timestamp: String, // e.g. "2026-08-19T11:30:00Z"
     pub entry: serde_json::Value,
     pub sample_count: u64,
 }
@@ -909,6 +914,8 @@ pub fn parse_agent_pull_output(
         }
 
         let utc_min_str = utc_naive.format("%Y-%m-%dT%H:%M").to_string();
+        let utc_day = utc_naive.format("%Y-%m-%d").to_string();
+        let utc_timestamp = utc_naive.format("%Y-%m-%dT%H:%M:00Z").to_string();
         if max_utc_minute.as_ref().map(|m| &utc_min_str > m).unwrap_or(true) {
             max_utc_minute = Some(utc_min_str.clone());
         }
@@ -928,6 +935,8 @@ pub fn parse_agent_pull_output(
                     local_minute: local_minute.clone(),
                     local_day: local_day.clone(),
                     utc_minute: utc_min_str.clone(),
+                    utc_day: utc_day.clone(),
+                    utc_timestamp: utc_timestamp.clone(),
                     entry: server.clone(),
                     sample_count,
                 });
@@ -983,7 +992,7 @@ pub fn merge_agent_day_entries(
 
     // Merge pulled entries
     for item in entries {
-        let ts = &item.local_minute;
+        let ts = &item.utc_timestamp;
         if let Some((_container, _sc, servers)) = minute_map.get_mut(ts) {
             // Minute exists: check server conflict
             let item_server_id = item.entry.get("Id").and_then(|v| v.as_str()).unwrap_or_default();

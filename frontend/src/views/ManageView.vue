@@ -55,6 +55,11 @@ const uninstallLoading = ref(false)
 
 const closeWindow = () => { void getCurrentWindow().close() }
 
+function toggleForm() {
+  if (showForm.value) resetForm()
+  showForm.value = !showForm.value
+}
+
 function resetForm() {
   form.label = ''
   form.host = ''
@@ -65,6 +70,44 @@ function resetForm() {
   form.password = ''
   form.savePassword = false
   formError.value = ''
+}
+
+async function cancelHostKeyAction() {
+  const pending = store.pendingHostKeyAction
+  const serverId = pending?.kind === 'start' ? pending.server.id : pending?.request.server.id
+  if (serverId) {
+    await store.clearSessionCredential(serverId).catch(() => undefined)
+  }
+  store.hostKeyChallenge = null
+  store.pendingHostKeyAction = null
+}
+
+async function acceptHostKey() {
+  try {
+    const result = await store.acceptHostKey()
+    const start = result && 'start' in result ? result.start : result
+    if (start && start.status === 'started') {
+      savedNotice.value = 'Host key verified; monitoring started.'
+    } else if (start && start.status === 'verified') {
+      savedNotice.value = 'Host key verified and server saved.'
+      resetForm()
+    }
+  } catch (error) {
+    formError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function forgetHostKey() {
+  const pending = store.pendingHostKeyAction
+  const server = pending
+    ? (pending.kind === 'start' ? pending.server : pending.request.server)
+    : store.servers.find((candidate) => candidate.host === store.hostKeyChallenge?.server)
+  if (!server) return
+  try {
+    await store.forgetHostKey(server)
+  } catch (error) {
+    formError.value = error instanceof Error ? error.message : String(error)
+  }
 }
 
 function fillFormWithCandidate(candidate: ServerConfig) {
@@ -117,8 +160,8 @@ async function submit() {
     formError.value = 'Port must be between 1 and 65535.'
     return
   }
-  if (!form.passwordless && (!form.password || !form.savePassword)) {
-    formError.value = 'Choose passwordless SSH or enter a password and save it in the OS credential store.'
+  if (!form.passwordless && !form.password) {
+    formError.value = 'Enter a password, or choose passwordless SSH.'
     return
   }
   const server: ServerConfig = {
@@ -130,10 +173,24 @@ async function submit() {
     monitored: form.monitored,
     passwordless: form.passwordless,
   }
+  const password = form.password
+  const savePassword = form.savePassword
+  // The input is cleared before IPC returns. The store keeps only the
+  // in-memory retry request needed for host-key confirmation.
+  form.password = ''
+  form.savePassword = false
   try {
-    await store.saveServer(server, form.password, form.savePassword)
-    savedNotice.value = `${label} saved.`
-    resetForm()
+    const result = await store.saveServer(server, password, savePassword)
+    if (result.start.status === 'host-key-required' || result.start.status === 'host-key-changed') {
+      savedNotice.value = result.start.status === 'host-key-changed'
+        ? 'Host key changed; verify the new fingerprint before continuing.'
+        : 'Verify the host fingerprint before continuing.'
+    } else if (result.start.status === 'password-required') {
+      formError.value = result.start.detail ?? 'A password is required for this server.'
+    } else {
+      savedNotice.value = `${label} saved.`
+      resetForm()
+    }
   } catch (error) {
     formError.value = error instanceof Error ? error.message : String(error)
   }
@@ -382,7 +439,7 @@ async function handleExecuteUninstall() {
           一键同步所有
         </button>
         <button title="Reload SSH config" @click="reloadServers">Reload SSH</button>
-        <button class="primary-button" @click="showForm = !showForm">{{ showForm ? 'Cancel' : '+ Add server' }}</button>
+        <button class="primary-button" @click="toggleForm">{{ showForm ? 'Cancel' : '+ Add server' }}</button>
         <button @click="closeWindow">Close</button>
       </div>
     </header>
@@ -461,12 +518,12 @@ async function handleExecuteUninstall() {
       </label>
       <template v-if="!form.passwordless">
         <label class="field password-field">
-          <span>Password (saved only in the OS credential store)</span>
+          <span>Password (used for this run; optionally save it in the OS credential store)</span>
           <input v-model="form.password" type="password" autocomplete="new-password" />
         </label>
         <label class="check-row" :class="{ disabled: !form.password }">
           <input v-model="form.savePassword" type="checkbox" :disabled="!form.password" />
-          <span>Save password for this server</span>
+          <span>Save password in the OS credential store</span>
         </label>
       </template>
       <p v-if="formError" class="error-text">{{ formError }}</p>
@@ -475,6 +532,49 @@ async function handleExecuteUninstall() {
         <button type="submit">Save server</button>
       </div>
     </form>
+
+    <!-- Host key confirmation -->
+    <div v-if="store.hostKeyChallenge" class="modal-backdrop" @click.self="cancelHostKeyAction">
+      <div class="modal-card host-key-modal">
+        <div class="modal-header">
+          <h3>{{ store.hostKeyChallenge.state === 'changed' ? 'Host key changed' : 'Verify host fingerprint' }}</h3>
+          <button class="modal-close-btn" type="button" @click="cancelHostKeyAction">✕</button>
+        </div>
+        <div class="modal-body">
+          <p>
+            <strong>{{ store.hostKeyChallenge.server }}</strong>:{{ store.hostKeyChallenge.port }}
+            {{ store.hostKeyChallenge.state === 'changed'
+              ? 'no longer matches a previously trusted key. The connection is blocked until you forget the application key and verify again.'
+              : 'is not yet trusted by Server Pulse.' }}
+          </p>
+          <div v-for="key in store.hostKeyChallenge.keys" :key="key.algorithm + key.fingerprint" class="host-key-row">
+            <strong>{{ key.algorithm }}</strong>
+            <code>{{ key.fingerprint }}</code>
+          </div>
+          <p class="modal-hint">
+            The existing user <code>~/.ssh/known_hosts</code> is read-only. Server Pulse writes only its data-root <code>known_hosts</code> file.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" @click="cancelHostKeyAction">Cancel</button>
+          <button
+            v-if="store.hostKeyChallenge.state === 'changed'"
+            type="button"
+            @click="forgetHostKey"
+          >
+            Forget application key and reverify
+          </button>
+          <button
+            v-else
+            class="primary-button"
+            type="button"
+            @click="acceptHostKey"
+          >
+            Verify and apply
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Server List with Agent Management -->
     <div v-if="store.servers.length" class="manage-list">

@@ -750,10 +750,13 @@ __SP_DONE__
         let pull_res = parse_agent_pull_output(pull_output, &known, None);
         assert_eq!(pull_res.pulled_lines, 1);
         assert_eq!(pull_res.entries.len(), 1);
+        assert_eq!(pull_res.entries[0].utc_day, "2026-08-19");
+        assert_eq!(pull_res.entries[0].utc_timestamp, "2026-08-19T10:00:00Z");
 
         let existing: Vec<String> = vec![];
         let (merged, stats) = merge_agent_day_entries(&existing, &pull_res.entries);
         assert_eq!(stats.added_minutes, 1);
         assert_eq!(merged.len(), 1);
+        assert!(merged[0].contains("\"Timestamp\":\"2026-08-19T10:00:00Z\""));
     }
 }
