@@ -872,6 +872,18 @@ if [ -d "$sp/records" ]; then
     cat "$sp_file"
   done
 fi
+if [ -d "$sp/attribution" ]; then
+  for sp_file in "$sp/attribution"/*.jsonl; do
+    [ -e "$sp_file" ] || continue
+    sp_base=${{sp_file##*/}}
+    case "$sp_base" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl) ;;
+      *) continue ;;
+    esac
+    echo "__SP_ATTR_FILE__${{sp_base%.jsonl}}"
+    cat "$sp_file"
+  done
+fi
 echo "SP_AGENT_RECORD_FILES=$sp_record_files"
 echo '__SP_DONE__'"#,
         cursor = cursor
@@ -895,6 +907,21 @@ if [ -n "$sp_cursor" ] && [ -d "$sp/records" ]; then
     if awk -v a="$sp_date" -v b="$sp_cursor_date" 'BEGIN {{ exit !(a < b) }}'; then
       rm -f "$sp_file" 2>/dev/null
       echo "SP_AGENT_CLEANED=$sp_date"
+    fi
+  done
+fi
+if [ -n "$sp_cursor" ] && [ -d "$sp/attribution" ]; then
+  for sp_file in "$sp/attribution"/*.jsonl; do
+    [ -e "$sp_file" ] || continue
+    sp_base=${{sp_file##*/}}
+    sp_date=${{sp_base%.jsonl}}
+    case "$sp_date" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+      *) continue ;;
+    esac
+    if awk -v a="$sp_date" -v b="$sp_cursor_date" 'BEGIN {{ exit !(a < b) }}'; then
+      rm -f "$sp_file" 2>/dev/null
+      echo "SP_AGENT_CLEANED_ATTR=$sp_date"
     fi
   done
 fi
@@ -1129,6 +1156,38 @@ pub fn parse_agent_pull_output(
     }
 }
 
+pub fn parse_agent_attribution_output(output: &str) -> (Vec<(String, String)>, usize) {
+    let mut rows = Vec::new();
+    let mut corrupt = 0usize;
+    let mut current_day: Option<String> = None;
+    for line in output.lines() {
+        let clean = line.trim();
+        if clean.is_empty() || clean == "__SP_DONE__" {
+            continue;
+        }
+        if let Some(day) = clean.strip_prefix("__SP_ATTR_FILE__") {
+            current_day = Some(day.to_owned());
+            continue;
+        }
+        if clean.starts_with("SP_AGENT_") || clean.starts_with("__SP_FILE__") || clean.starts_with("SP_AGENT_CLEANED") {
+            continue;
+        }
+        // Minute-record lines belong to parse_agent_pull_output; skip them here.
+        let parsed: Option<serde_json::Value> = serde_json::from_str(clean).ok();
+        if parsed.as_ref().and_then(|v| v.get("Record")).is_some() {
+            continue;
+        }
+        let Some(day) = current_day.clone() else {
+            continue;
+        };
+        match super::parse_disk_attribution_line(clean) {
+            Ok(_) => rows.push((day, clean.to_owned())),
+            Err(_) => corrupt += 1,
+        }
+    }
+    (rows, corrupt)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeStats {
@@ -1258,5 +1317,28 @@ mod scan_tests {
         let inject = generate_agent_inject_script("#!/bin/sh\nagent", "interval=5\n", "#!/bin/sh\nscan");
         assert!(inject.contains("SERVERPULSE_SCAN_EOF"));
         assert!(inject.contains("#!/bin/sh\nscan"));
+    }
+}
+
+#[cfg(test)]
+mod attribution_pull_tests {
+    use super::*;
+
+    #[test]
+    fn parses_attribution_lines_from_pull_output() {
+        let output = concat!(
+            "__SP_FILE__2026-08-19\n",
+            "{\"Version\":2,\"Record\":{\"Timestamp\":\"2026-08-19T10:00:00Z\",\"SampleCount\":1,\"Servers\":[]}}\n",
+            "SP_AGENT_RECORD_FILES=1\n",
+            "__SP_ATTR_FILE__2026-08-20\n",
+            "{\"kind\":\"diskAttribution\",\"serverId\":\"s1\",\"scannedAt\":\"2026-08-20T03:12:45Z\",\"mount\":\"/data\",\"status\":\"ok\",\"durationSeconds\":10,\"skippedEntries\":0,\"users\":[{\"uid\":\"1000\",\"name\":\"alice\",\"usedMib\":12}]}\n",
+            "broken-line\n",
+            "__SP_DONE__\n",
+        );
+        let (rows, corrupt) = parse_agent_attribution_output(output);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(corrupt, 1);
+        assert_eq!(rows[0].0, "2026-08-20");
+        assert!(rows[0].1.contains("diskAttribution"));
     }
 }

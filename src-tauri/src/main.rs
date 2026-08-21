@@ -159,6 +159,7 @@ struct ApplyServerResult {
 struct HistoryResponse {
     entries: Vec<serverpulse_core::HistoryEntry>,
     corrupt_lines: usize,
+    disk_attribution: Vec<serverpulse_core::DiskAttributionRecord>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1265,7 +1266,7 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
     let mut total_corrupt = 0;
     let mut seen_keys = std::collections::HashSet::new();
 
-    for candidate in candidate_days {
+    for candidate in &candidate_days {
         let path = store.history_root.join(format!("{candidate}.v2.jsonl"));
         if path.exists() {
             let text = fs::read_to_string(&path).unwrap_or_default();
@@ -1285,6 +1286,23 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
             }
         }
     }
+
+    let mut disk_attribution = Vec::new();
+    for candidate in candidate_days.iter() {
+        let path = store
+            .history_root
+            .join("attribution")
+            .join(format!("{candidate}.jsonl"));
+        if path.exists() {
+            let text = fs::read_to_string(&path).unwrap_or_default();
+            for line in text.lines() {
+                if let Ok(record) = serverpulse_core::parse_disk_attribution_line(line) {
+                    disk_attribution.push(record);
+                }
+            }
+        }
+    }
+    disk_attribution.sort_by(|a, b| a.scanned_at.cmp(&b.scanned_at));
 
     let mut filtered_entries = Vec::new();
     for mut entry in all_entries {
@@ -1351,6 +1369,7 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
     Ok(HistoryResponse {
         entries,
         corrupt_lines: total_corrupt,
+        disk_attribution,
     })
 }
 
@@ -1435,6 +1454,7 @@ pub struct AgentMergeResult {
     pub skipped_servers: usize,
     pub corrupt_lines: usize,
     pub record_files: usize,
+    pub attribution_lines: usize,
     pub cursor_utc: Option<String>,
     pub error: Option<String>,
 }
@@ -1897,6 +1917,23 @@ async fn pull_and_merge_records_impl(
         let _ = serverpulse_platform::atomic_write(&day_path, content.as_bytes());
     }
 
+    let (attr_rows, _attr_corrupt) =
+        serverpulse_core::parse_agent_attribution_output(&output.stdout);
+    let attr_rows_total = attr_rows.len();
+    let attribution_dir = history_dir.join("attribution");
+    let _ = fs::create_dir_all(&attribution_dir);
+    let mut attr_days: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for (day, line) in attr_rows {
+        attr_days.entry(day).or_default().push(line);
+    }
+    for (day, lines) in &attr_days {
+        let path = attribution_dir.join(format!("{day}.jsonl"));
+        let existing = fs::read_to_string(&path).unwrap_or_default();
+        let incoming = lines.join("\n") + "\n";
+        let merged = serverpulse_core::merge_attribution_lines(&existing, &incoming);
+        let _ = serverpulse_platform::atomic_write(&path, merged.as_bytes());
+    }
+
     // Remote clean if requested
     if clean_remote {
         if let Some(max_utc) = &pull_result.max_utc_minute {
@@ -1911,8 +1948,8 @@ async fn pull_and_merge_records_impl(
     }
     entry.last_merge_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
     entry.last_merge_summary = Some(format!(
-        "Pulled {} lines, added {} minutes, updated {} records.",
-        pull_result.pulled_lines, total_added, total_updated
+        "Pulled {} lines, added {} minutes, updated {} records, {} attribution lines.",
+        pull_result.pulled_lines, total_added, total_updated, attr_rows_total
     ));
     let new_cursor = entry.merge_cursor_utc.clone();
     let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
@@ -1926,6 +1963,7 @@ async fn pull_and_merge_records_impl(
         skipped_servers: total_skipped,
         corrupt_lines: pull_result.corrupt_lines,
         record_files: pull_result.record_files,
+        attribution_lines: attr_rows_total,
         cursor_utc: new_cursor,
         error: None,
     })
@@ -1964,6 +2002,7 @@ async fn pull_and_merge_all_records(
                         skipped_servers: 0,
                         corrupt_lines: 0,
                         record_files: 0,
+                        attribution_lines: 0,
                         cursor_utc: None,
                         error: Some(err),
                     },
