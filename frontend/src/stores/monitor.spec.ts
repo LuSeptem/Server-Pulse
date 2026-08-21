@@ -1,52 +1,70 @@
 import { setActivePinia, createPinia } from 'pinia'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useMonitorStore } from './monitor'
 
+async function defaultInvoke(command: string, args?: any) {
+  if (command === 'list_servers') {
+    return [{ id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true }]
+  }
+  if (command === 'get_data_root') {
+    return '/tmp/ServerPulse'
+  }
+  if (command === 'inspect_ssh_config') {
+    return {
+      path: '/home/test/.ssh/config',
+      aliases: ['3090', '409'],
+      candidates: [
+        { id: '3090', label: '3090', host: '3090', monitored: false, passwordless: true },
+        { id: '409', label: '409', host: '409', user: 'xzm', port: 22, monitored: false, passwordless: true },
+      ],
+      error: null,
+    }
+  }
+  if (command === 'save_server') {
+    return [
+      { id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true },
+      { id: '409', label: '409', host: '409', user: 'xzm', port: 22, monitored: true, passwordless: true },
+    ]
+  }
+  if (command === 'start_monitoring') {
+    return { serverId: args?.server?.id, status: 'started', detail: null, hostKey: null }
+  }
+  if (command === 'query_history') {
+    return {
+      entries: [],
+      corruptLines: 0,
+      diskAttribution: [
+        {
+          kind: 'diskAttribution', serverId: '3090', scannedAt: '2026-08-20T03:12:45Z',
+          mount: '/data', status: 'ok', skippedEntries: 0,
+          users: [{ uid: '1000', name: 'alice', usedMib: 1234567 }],
+        },
+      ],
+    }
+  }
+  if (command === 'trigger_disk_scan') {
+    return { serverId: args?.serverId, status: 'launched', detail: null }
+  }
+  if (command === 'verify_and_apply_server') {
+    const server = args?.request?.server
+    const servers = server?.id === '409'
+      ? [
+          { id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true },
+          server,
+        ]
+      : server ? [server] : []
+    return {
+      servers,
+      start: { serverId: server?.id, status: server?.monitored ? 'started' : 'verified', detail: null, hostKey: null },
+    }
+  }
+  return undefined
+}
+
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async (command: string, args?: any) => {
-    if (command === 'list_servers') {
-      return [{ id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true }]
-    }
-    if (command === 'get_data_root') {
-      return '/tmp/ServerPulse'
-    }
-    if (command === 'inspect_ssh_config') {
-      return {
-        path: '/home/test/.ssh/config',
-        aliases: ['3090', '409'],
-        candidates: [
-          { id: '3090', label: '3090', host: '3090', monitored: false, passwordless: true },
-          { id: '409', label: '409', host: '409', user: 'xzm', port: 22, monitored: false, passwordless: true },
-        ],
-        error: null,
-      }
-    }
-    if (command === 'save_server') {
-      return [
-        { id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true },
-        { id: '409', label: '409', host: '409', user: 'xzm', port: 22, monitored: true, passwordless: true },
-      ]
-    }
-    if (command === 'start_monitoring') {
-      return { serverId: args?.server?.id, status: 'started', detail: null, hostKey: null }
-    }
-    if (command === 'verify_and_apply_server') {
-      const server = args?.request?.server
-      const servers = server?.id === '409'
-        ? [
-            { id: '3090', label: 'RTX 3090', host: '3090', monitored: true, passwordless: true },
-            server,
-          ]
-        : server ? [server] : []
-      return {
-        servers,
-        start: { serverId: server?.id, status: server?.monitored ? 'started' : 'verified', detail: null, hostKey: null },
-      }
-    }
-    return undefined
-  }),
+  invoke: vi.fn(defaultInvoke),
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -54,6 +72,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 describe('monitor store', () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(defaultInvoke)
+  })
+
   it('loads the seed servers and data root', async () => {
     setActivePinia(createPinia())
     const store = useMonitorStore()
@@ -230,5 +252,23 @@ describe('monitor store', () => {
     await initPromise
 
     expect(store.servers).toEqual([selectedServer])
+  })
+
+  it('loads disk attribution with history', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    await store.init()
+    await store.loadHistory('2026-08-21')
+    expect(store.diskAttribution).toHaveLength(1)
+    expect(store.diskAttribution[0].mount).toBe('/data')
+  })
+
+  it('triggers disk scan and stores status', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    await store.init()
+    const result = await store.triggerDiskScan('3090')
+    expect(result.status).toBe('launched')
+    expect(store.diskScans['3090'].state).toBe('running')
   })
 })

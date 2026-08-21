@@ -5,6 +5,9 @@ import type {
   AgentMergeResult,
   AgentServerState,
   ApplyServerResult,
+  DiskAttributionRecord,
+  DiskScanStatusInfo,
+  DiskScanTriggerResult,
   HistoryEntry,
   HostKeyChallenge,
   MetricSnapshot,
@@ -47,6 +50,8 @@ interface MonitorState {
   errors: Record<string, string>
   history: HistoryEntry[]
   historyCorruptLines: number
+  diskAttribution: DiskAttributionRecord[]
+  diskScans: Record<string, DiskScanStatusInfo>
   dataRoot: string
   sshConfigPath: string
   sshConfigAliases: string[]
@@ -73,6 +78,8 @@ export const useMonitorStore = defineStore('monitor', {
     errors: {},
     history: [],
     historyCorruptLines: 0,
+    diskAttribution: [],
+    diskScans: {},
     dataRoot: '',
     sshConfigPath: '',
     sshConfigAliases: [],
@@ -446,9 +453,10 @@ export const useMonitorStore = defineStore('monitor', {
       await invoke('close_main_window')
     },
     async loadHistory(day: string) {
-      const response = await invoke<{ entries: HistoryEntry[]; corruptLines: number }>('query_history', { day })
+      const response = await invoke<{ entries: HistoryEntry[]; corruptLines: number; diskAttribution?: DiskAttributionRecord[] }>('query_history', { day })
       this.history = response.entries
       this.historyCorruptLines = response.corruptLines
+      this.diskAttribution = response.diskAttribution ?? []
     },
     async fetchAgentStates() {
       try {
@@ -560,6 +568,30 @@ export const useMonitorStore = defineStore('monitor', {
       } finally {
         this.agentGlobalLoading = false
       }
+    },
+    async triggerDiskScan(serverId: string) {
+      const result = await invoke<DiskScanTriggerResult>('trigger_disk_scan', { serverId })
+      if (result.status === 'launched' || result.status === 'already-running') {
+        this.diskScans = {
+          ...this.diskScans,
+          [serverId]: {
+            installed: true,
+            active: true,
+            pid: null,
+            state: 'running',
+            startedAt: null,
+            finishedAt: null,
+            lastMount: null,
+            lastFile: null,
+          },
+        }
+      }
+      return result
+    },
+    async fetchDiskScanStatus(serverId: string) {
+      const status = await invoke<DiskScanStatusInfo>('get_disk_scan_status', { serverId })
+      this.diskScans = { ...this.diskScans, [serverId]: status }
+      return status
     },
   },
 })

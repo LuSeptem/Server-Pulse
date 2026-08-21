@@ -92,6 +92,7 @@ export interface MetricSnapshot {
   memoryUserStatus: UserUsageStatus
   memoryUsers: MemoryUserUsage[]
   gpus: GpuMetric[]
+  disks: DiskMetric[]
 }
 
 export interface HistoryEntry {
@@ -132,5 +133,53 @@ export interface AgentMergeResult {
   recordFiles: number
   cursorUtc?: string | null
   error?: string | null
+}
+
+export interface DiskMetric {
+  device: string
+  mount: string
+  totalMib: number | null
+  usedMib: number | null
+  percent: number | null
+  fsType: string
+}
+
+export interface DiskUserUsage {
+  uid: string
+  name: string
+  usedMib: number
+}
+
+export interface DiskAttributionRecord {
+  kind: string
+  serverId: string
+  scannedAt: string
+  mount: string
+  device?: string | null
+  fsType?: string | null
+  totalMib?: number | null
+  usedMib?: number | null
+  percent?: number | null
+  status: UserUsageStatus
+  durationSeconds?: number | null
+  skippedEntries: number
+  users: DiskUserUsage[]
+}
+
+export interface DiskScanStatusInfo {
+  installed: boolean
+  active: boolean
+  pid?: number | null
+  state: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  lastMount?: string | null
+  lastFile?: string | null
+}
+
+export interface DiskScanTriggerResult {
+  serverId: string
+  status: 'launched' | 'already-running' | 'failed' | string
+  detail?: string | null
 }
 
