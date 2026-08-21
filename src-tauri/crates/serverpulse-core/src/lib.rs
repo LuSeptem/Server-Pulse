@@ -552,6 +552,82 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskUserUsage {
+    pub uid: String,
+    pub name: String,
+    pub used_mib: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskAttributionRecord {
+    pub kind: String,
+    #[serde(default)]
+    pub server_id: String,
+    pub scanned_at: DateTime<Utc>,
+    pub mount: String,
+    #[serde(default)]
+    pub device: Option<String>,
+    #[serde(default)]
+    pub fs_type: Option<String>,
+    #[serde(default)]
+    pub total_mib: Option<f64>,
+    #[serde(default)]
+    pub used_mib: Option<f64>,
+    #[serde(default)]
+    pub percent: Option<f64>,
+    pub status: UserUsageStatus,
+    #[serde(default)]
+    pub duration_seconds: Option<u64>,
+    #[serde(default)]
+    pub skipped_entries: u64,
+    #[serde(default)]
+    pub users: Vec<DiskUserUsage>,
+}
+
+pub fn parse_disk_attribution_line(line: &str) -> Result<DiskAttributionRecord, ServerPulseError> {
+    let clean = line.trim();
+    if clean.is_empty() {
+        return Err(ServerPulseError::InvalidHistory("empty attribution line".to_owned()));
+    }
+    let record: DiskAttributionRecord = serde_json::from_str(clean)
+        .map_err(|error| ServerPulseError::InvalidHistory(format!("bad attribution line: {error}")))?;
+    if record.kind != "diskAttribution" {
+        return Err(ServerPulseError::InvalidHistory("line is not a diskAttribution record".to_owned()));
+    }
+    Ok(record)
+}
+
+pub fn merge_attribution_lines(existing: &str, incoming: &str) -> String {
+    let mut seen = HashSet::new();
+    let mut rows = Vec::new();
+    for line in existing.lines().chain(incoming.lines()) {
+        let Ok(record) = parse_disk_attribution_line(line) else {
+            continue;
+        };
+        let key = (
+            record.server_id.clone(),
+            record.mount.clone(),
+            record.scanned_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        rows.push(record);
+    }
+    rows.sort_by(|a, b| a.scanned_at.cmp(&b.scanned_at).then(a.mount.cmp(&b.mount)));
+    let mut out = String::new();
+    for record in rows {
+        if let Ok(line) = serde_json::to_string(&record) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HistoryEntry {
     #[serde(rename = "Version")]
     pub version: u32,
@@ -834,5 +910,34 @@ __SP_DONE__
         assert_eq!(stats.added_minutes, 1);
         assert_eq!(merged.len(), 1);
         assert!(merged[0].contains("\"Timestamp\":\"2026-08-19T10:00:00Z\""));
+    }
+
+    const ATTR_LINE_A: &str = r#"{"kind":"diskAttribution","serverId":"s1","scannedAt":"2026-08-20T03:12:45Z","mount":"/data","device":"/dev/sdb1","fstype":"xfs","totalMib":3813357,"usedMib":2980276,"percent":78.15,"status":"ok","durationSeconds":5432,"skippedEntries":0,"users":[{"uid":"1000","name":"alice","usedMib":1234567}]}"#;
+
+    #[test]
+    fn parses_disk_attribution_line() {
+        let record = parse_disk_attribution_line(ATTR_LINE_A).expect("record should parse");
+        assert_eq!(record.server_id, "s1");
+        assert_eq!(record.mount, "/data");
+        assert_eq!(record.status, UserUsageStatus::Ok);
+        assert_eq!(record.users.len(), 1);
+        assert_eq!(record.users[0].name, "alice");
+    }
+
+    #[test]
+    fn rejects_non_attribution_line() {
+        let error = parse_disk_attribution_line(r#"{"Version":2,"Record":{}}"#).expect_err("must reject");
+        assert_eq!(error.code(), "invalid_history");
+    }
+
+    #[test]
+    fn merges_attribution_by_server_mount_and_time() {
+        let line_b = ATTR_LINE_A.replace("\"mount\":\"/data\"", "\"mount\":\"/\"");
+        let incoming = format!("{}\n{}\n", ATTR_LINE_A, line_b);
+        let merged = merge_attribution_lines(ATTR_LINE_A, &incoming);
+        let count = merged.lines().count();
+        assert_eq!(count, 2); // 完全重复的 A 只保留一条；不同 mount 的 B 保留
+        let first: serde_json::Value = serde_json::from_str(merged.lines().next().unwrap()).unwrap();
+        assert_eq!(first["mount"], serde_json::Value::String("/".to_owned())); // 按时间排序时同秒记录按 mount 排序
     }
 }
