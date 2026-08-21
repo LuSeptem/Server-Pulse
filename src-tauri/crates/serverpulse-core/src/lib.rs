@@ -275,6 +275,17 @@ pub struct GpuMetric {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct DiskMetric {
+    pub device: String,
+    pub mount: String,
+    pub total_mib: Option<f64>,
+    pub used_mib: Option<f64>,
+    pub percent: Option<f64>,
+    pub fs_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct MetricSnapshot {
     pub hostname: String,
     pub protocol_version: u32,
@@ -291,6 +302,7 @@ pub struct MetricSnapshot {
     pub memory_user_status: UserUsageStatus,
     pub memory_users: Vec<MemoryUserUsage>,
     pub gpus: Vec<GpuMetric>,
+    pub disks: Vec<DiskMetric>,
 }
 
 fn parse_number(value: Option<&String>) -> Option<f64> {
@@ -344,7 +356,9 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
     let mut memory_users = Vec::new();
     let mut gpu_users = HashMap::<String, Vec<GpuUserUsage>>::new();
     let mut gpu_unmapped = HashMap::<String, u32>::new();
+    let mut disks = Vec::new();
     let mut in_gpu_section = false;
+    let mut in_disks_section = false;
 
     for raw_line in output.lines() {
         let line = raw_line.trim();
@@ -359,6 +373,38 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
         if in_gpu_section {
             if !line.is_empty() {
                 gpu_lines.push(line.to_owned());
+            }
+            continue;
+        }
+        if line == "DISKS_END" {
+            in_disks_section = false;
+            continue;
+        }
+        if line == "DISKS_BEGIN" {
+            in_disks_section = true;
+            continue;
+        }
+        if in_disks_section {
+            if !line.is_empty() {
+                let fields: Vec<&str> = line.split('\t').collect();
+                if fields.len() >= 5 {
+                    let total_mib = fields[2].trim().parse::<f64>().ok().map(|value| value / 1024.0);
+                    let used_mib = fields[3].trim().parse::<f64>().ok().map(|value| value / 1024.0);
+                    let percent = match (used_mib, total_mib) {
+                        (Some(used), Some(total)) if total > 0.0 => {
+                            Some((used * 100.0 / total).clamp(0.0, 100.0))
+                        }
+                        _ => None,
+                    };
+                    disks.push(DiskMetric {
+                        device: fields[0].trim().to_owned(),
+                        mount: fields[1].trim().to_owned(),
+                        total_mib,
+                        used_mib,
+                        percent,
+                        fs_type: fields[4].trim().to_owned(),
+                    });
+                }
             }
             continue;
         }
@@ -501,6 +547,7 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
         memory_user_status: parse_status(values.get("MEMORY_USER_STATUS")),
         memory_users,
         gpus,
+        disks,
     })
 }
 
@@ -637,6 +684,31 @@ GPUS_BEGIN
 GPUS_END
 GPU_USER=uuid-0	1000	alice	4000	2
 GPU_USER_STATUS=ok"#;
+
+    #[test]
+    fn parses_disks_section_and_computes_percent() {
+        let mut output = String::from(SAMPLE);
+        output.push_str("\nDISKS_BEGIN\n");
+        output.push_str("/dev/sda1\t/\t419430400\t210034688\text4\n");
+        output.push_str("not-a-disk-line\n");
+        output.push_str("/dev/sdb1\t/data\t2048000\t1024000\txfs\n");
+        output.push_str("DISKS_END\n");
+        let snapshot = parse_metric_output(&output).expect("sample should parse");
+        assert_eq!(snapshot.disks.len(), 2);
+        let root = &snapshot.disks[0];
+        assert_eq!(root.device, "/dev/sda1");
+        assert_eq!(root.mount, "/");
+        assert_eq!(root.fs_type, "ext4");
+        let expected = (210034688.0 / 1024.0) * 100.0 / (419430400.0 / 1024.0);
+        assert!((root.percent.unwrap() - expected).abs() < 0.001);
+        assert!((root.total_mib.unwrap() - 409600.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn missing_disks_section_yields_empty_vec() {
+        let snapshot = parse_metric_output(SAMPLE).expect("sample should parse");
+        assert!(snapshot.disks.is_empty());
+    }
 
     #[test]
     fn parses_protocol_v2_and_user_usage() {
