@@ -35,7 +35,7 @@ const store = useMonitorStore()
 const day = ref(getLocalDateString())
 const selectedServerFilter = ref<string>('all')
 
-type ChartViewMode = 'all' | 'cpu' | 'gpu_vram' | 'gpu_util' | 'gpu_temp' | 'users'
+type ChartViewMode = 'all' | 'cpu' | 'gpu_vram' | 'gpu_util' | 'gpu_temp' | 'disk' | 'users'
 const chartViewModes = ref<Record<string, ChartViewMode>>({})
 
 const closeWindow = () => { void getCurrentWindow().close() }
@@ -91,6 +91,12 @@ interface GpuRecordInfo {
   userMemory: (GpuUserMemoryInfo | null)[]
 }
 
+interface DiskRecordInfo {
+  mount: string
+  percent: (number | null)[]
+  usedGb: (number | null)[]
+}
+
 export interface ServerHistoryRecord {
   id: string
   label: string
@@ -103,6 +109,7 @@ export interface ServerHistoryRecord {
   cpuUsers: (CpuUserUsageInfo | null)[]
   memoryUsers: (MemoryUserUsageInfo | null)[]
   gpus: GpuRecordInfo[]
+  disks: DiskRecordInfo[]
   avgCpu: string
   peakCpu: string
   avgMem: string
@@ -123,6 +130,8 @@ const GPU_COLORS = [
   '#34d399', // Emerald
   '#f87171', // Red
 ]
+
+const DISK_MOUNT_COLORS = ['#38bdf8', '#a3e635', '#fbbf24', '#f472b6', '#c084fc', '#fb923c']
 
 function parseCpuUsers(s: any): CpuUserUsageInfo | null {
   const usage = s.CpuUserUsage || s.cpuUserUsage || s.CpuUser || s.cpuUser
@@ -185,6 +194,16 @@ function parseGpuUserMemory(g: any): GpuUserMemoryInfo | null {
     .filter((u: UserUsageEntry) => (u.usedMib ?? 0) > 1 || (u.percent ?? 0) > 0.01)
     .sort((a: UserUsageEntry, b: UserUsageEntry) => (b.usedMib ?? 0) - (a.usedMib ?? 0))
   return { status, users }
+}
+
+function parseDiskEntries(s: any): { mount: string; percent: number | null; usedMib: number | null }[] {
+  const list = Array.isArray(s?.Disks) ? s.Disks : (Array.isArray(s?.disks) ? s.disks : [])
+  return list.map((d: any) => ({
+    mount: String(d.Mount ?? d.mount ?? ''),
+    percent: typeof d.Percent === 'number' ? d.Percent : (typeof d.percent === 'number' ? d.percent : null),
+    // Live-monitor history lines use UsedMib; agent minute records use UsedMiB.
+    usedMib: typeof d.UsedMiB === 'number' ? d.UsedMiB : (typeof d.UsedMib === 'number' ? d.UsedMib : (typeof d.usedMib === 'number' ? d.usedMib : null)),
+  }))
 }
 
 function parseToLocalDate(timestamp: string): Date | null {
@@ -264,6 +283,7 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
     cpuUsers: (CpuUserUsageInfo | null)[]
     memoryUsers: (MemoryUserUsageInfo | null)[]
     gpusMap: Map<number, GpuRecordInfo>
+    disksMap: Map<string, { percent: (number | null)[]; usedMib: (number | null)[] }>
   }>()
 
   for (const entry of store.history) {
@@ -284,6 +304,7 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
           MemoryPercent: rec.MemoryPercent,
           MemoryUserUsage: rec.MemoryUserUsage,
           Gpus: rec.Gpus,
+          Disks: rec.Disks,
         }]
 
     for (const s of serversList) {
@@ -301,6 +322,7 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
           cpuUsers: [],
           memoryUsers: [],
           gpusMap: new Map(),
+          disksMap: new Map(),
         })
       }
       const item = map.get(serverId)!
@@ -361,6 +383,29 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
           gpuRecord.userMemory.push(null)
         }
       }
+
+      const diskEntries = parseDiskEntries(s)
+      for (const d of diskEntries) {
+        if (!d.mount) continue
+        if (!item.disksMap.has(d.mount)) {
+          item.disksMap.set(d.mount, { percent: [], usedMib: [] })
+        }
+        const bucket = item.disksMap.get(d.mount)!
+        while (bucket.percent.length < item.timestamps.length - 1) {
+          bucket.percent.push(null)
+          bucket.usedMib.push(null)
+        }
+        bucket.percent.push(d.percent)
+        bucket.usedMib.push(d.usedMib)
+      }
+      // Samples missing a mount (no Disks at all, or the mount dropped out of
+      // this sample) keep every known mount aligned with timestamps.
+      for (const bucket of item.disksMap.values()) {
+        while (bucket.percent.length < item.timestamps.length) {
+          bucket.percent.push(null)
+          bucket.usedMib.push(null)
+        }
+      }
     }
   }
 
@@ -374,6 +419,18 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
     const peakMem = validMem.length ? Math.max(...validMem).toFixed(1) + '%' : '—'
 
     const gpus = Array.from(s.gpusMap.values()).sort((a, b) => a.index - b.index)
+
+    const disks = Array.from(s.disksMap.entries()).map(([mount, bucket]) => ({
+      mount,
+      percent: bucket.percent,
+      usedGb: bucket.usedMib.map((v) => (v != null ? v / 1024 : null)),
+    }))
+    for (const d of disks) {
+      while (d.percent.length < s.timestamps.length) {
+        d.percent.push(null)
+        d.usedGb.push(null)
+      }
+    }
 
     // Compute Top CPU Users
     const cpuUserStats = new Map<string, { name: string; uid: string; vals: number[] }>()
@@ -454,6 +511,7 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
       cpuUsers: s.cpuUsers,
       memoryUsers: s.memoryUsers,
       gpus,
+      disks,
       avgCpu,
       peakCpu,
       avgMem,
@@ -474,7 +532,7 @@ const filteredServers = computed(() => {
   return serverHistories.value.filter((s) => s.id === selectedServerFilter.value)
 })
 
-type HistoryChartKind = 'cpu' | 'gpu_vram' | 'gpu_util' | 'gpu_temp' | 'users'
+type HistoryChartKind = 'cpu' | 'gpu_vram' | 'gpu_util' | 'gpu_temp' | 'disk' | 'users'
 
 interface PinnedHistoryPopupData {
   server: ServerHistoryRecord
@@ -491,6 +549,7 @@ interface PinnedHistoryPopupData {
   gpuVrams?: { index: number; name: string; vram: number | null; totalGb: string; users: UserUsageEntry[] }[]
   gpuUtils?: { index: number; name: string; util: number | null }[]
   gpuTemps?: { index: number; name: string; temp: number | null }[]
+  disks?: { mount: string; percent: number | null; usedGb: number | null }[]
   userVrams?: { name: string; vramGb: number }[]
   coords: { x: number; y: number }
 }
@@ -612,6 +671,7 @@ function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: His
   let gpuVrams: { index: number; name: string; vram: number | null; totalGb: string; users: UserUsageEntry[] }[] | undefined
   let gpuUtils: { index: number; name: string; util: number | null }[] | undefined
   let gpuTemps: { index: number; name: string; temp: number | null }[] | undefined
+  let disks: { mount: string; percent: number | null; usedGb: number | null }[] | undefined
   let userVrams: { name: string; vramGb: number }[] | undefined
 
   if (kind === 'cpu') {
@@ -674,6 +734,16 @@ function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: His
     const maxTemp = gpuTemps.length ? Math.max(...gpuTemps.map((g) => g.temp ?? 0), 0) : 0
     statusLabel = `${visibleGpus.length} 张可见 GPU`
     countLabel = `最高 ${maxTemp}°C`
+  } else if (kind === 'disk') {
+    title = `${server.label} · 磁盘使用率`
+    const visibleMounts = server.disks.filter((d) => isSeriesVisible(server.id, 'disk', d.mount))
+    disks = visibleMounts.map((d) => ({
+      mount: d.mount,
+      percent: d.percent[dataIdx],
+      usedGb: d.usedGb[dataIdx],
+    }))
+    statusLabel = `${visibleMounts.length} 个可见挂载点`
+    countLabel = `${disks.filter((d) => (d.percent ?? 0) > 80).length} 个超过 80%`
   } else if (kind === 'users') {
     title = `${server.label} · 各用户显存占用`
     const perUserVramThisTick = new Map<string, number>()
@@ -711,6 +781,7 @@ function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: His
     gpuVrams,
     gpuUtils,
     gpuTemps,
+    disks,
     userVrams,
     coords: { x, y },
   }
@@ -1344,6 +1415,196 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
     series,
   }
 }
+
+// Per-user disk usage (GB) stepped curves built from store.diskAttribution records
+// for the given server. Attribution records are per-mount, so usage from the same
+// scan instant is summed across mounts; points are snapped to the nearest sample
+// slot so the daily-scan steps align with the shared category axis.
+function getDiskUserSeries(server: ServerHistoryRecord): { name: string; points: [string, number][] }[] {
+  const records = store.diskAttribution.filter((r) => r.serverId === server.id)
+  const sampleTimes = server.timestamps.map((t) => parseToLocalDate(t)?.getTime() ?? NaN)
+
+  const snapIndex = (ms: number): number => {
+    let lo = 0
+    let hi = sampleTimes.length - 1
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1
+      const t = sampleTimes[mid]
+      if (isNaN(t) || t < ms) lo = mid
+      else hi = mid
+    }
+    let best = lo
+    let bestDiff = Math.abs(sampleTimes[lo] - ms)
+    for (const i of [hi, lo + 1]) {
+      if (i < sampleTimes.length && !isNaN(sampleTimes[i])) {
+        const diff = Math.abs(sampleTimes[i] - ms)
+        if (diff < bestDiff) {
+          bestDiff = diff
+          best = i
+        }
+      }
+    }
+    return best
+  }
+
+  // Group by scan instant first: one attribution record exists per mount.
+  const scans = new Map<string, { ms: number; label: string; users: Map<string, { uid: string; name: string; usedMib: number }> }>()
+  for (const record of records) {
+    const scannedMs = parseToLocalDate(record.scannedAt)?.getTime()
+    const key = record.scannedAt
+    if (!scans.has(key)) {
+      let label: string
+      if (scannedMs != null && !isNaN(scannedMs) && sampleTimes.length > 0) {
+        label = server.displayTimes[snapIndex(scannedMs)] ?? ''
+      } else {
+        label = formatLocalTimestamp(record.scannedAt).displayTime
+      }
+      scans.set(key, { ms: scannedMs ?? NaN, label, users: new Map() })
+    }
+    const scan = scans.get(key)!
+    for (const u of record.users) {
+      const userKey = u.uid || u.name
+      const existing = scan.users.get(userKey)
+      if (existing) {
+        existing.usedMib += u.usedMib
+      } else {
+        scan.users.set(userKey, { uid: u.uid, name: u.name, usedMib: u.usedMib })
+      }
+    }
+  }
+
+  const byUser = new Map<string, { name: string; points: [string, number][] }>()
+  for (const scan of Array.from(scans.values()).sort((a, b) => a.ms - b.ms)) {
+    for (const u of scan.users.values()) {
+      const key = u.uid || u.name
+      if (!byUser.has(key)) byUser.set(key, { name: u.name, points: [] })
+      byUser.get(key)!.points.push([scan.label, u.usedMib / 1024])
+    }
+  }
+  return Array.from(byUser.values())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 3) // 用户曲线最多 3 条，与现有约定一致
+}
+
+const getDiskOption = (server: ServerHistoryRecord) => {
+  const zoom = getZoomRange(server.timestamps)
+  const legendKey = `${server.id}_disk`
+  const diskUsers = getDiskUserSeries(server)
+  const mountNames = server.disks.map((d) => d.mount)
+  const userNames = diskUsers.map((u) => `${u.name} (GB)`)
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      confine: true,
+      position: tooltipPosition,
+      backgroundColor: 'rgba(14, 21, 16, 0.96)',
+      borderColor: '#2d4334',
+      borderWidth: 1,
+      padding: [10, 14],
+      textStyle: { color: '#e2ede6', fontSize: 12 },
+      extraCssText: 'box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7); border-radius: 10px; backdrop-filter: blur(12px); max-height: 280px; overflow-y: auto; z-index: 9999;',
+      formatter: (params: any[]) => {
+        if (!params || !params.length) return ''
+        const time = server.timestamps[params[0].dataIndex] || params[0].name
+        const visibleParams = params.filter((p) => p.value != null && isSeriesVisible(server.id, 'disk', p.seriesName))
+        let html = `
+          <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · 磁盘使用率 · 用户占用</span>
+              <span style="font-size: 10px; color: #7dd3fc; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 999px; padding: 1px 6px;">预览</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <span style="color: #85e89d; font-weight: 600;">挂载点使用率</span>
+              <span style="color: #7a8c80;">${visibleParams.length} 条可见曲线</span>
+            </div>`
+
+        for (const p of visibleParams) {
+          const isUserCurve = p.seriesName.endsWith(' (GB)')
+          html += `<div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 2px 0;">
+            <span><span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: ${p.color}; margin-right: 5px;"></span>${p.seriesName}</span>
+            <strong style="color: #ffffff;">${Number(p.value).toFixed(isUserCurve ? 2 : 1)}${isUserCurve ? ' GB' : '%'}</strong>
+          </div>`
+        }
+
+        html += `
+            <div style="font-size: 10px; color: #627568; margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
+              <span>${time}</span>
+              <span>每日归因扫描 · 阶梯曲线</span>
+            </div>
+          </div>`
+        return html
+      },
+    },
+    legend: {
+      data: [...mountNames, ...userNames],
+      selected: chartLegendState[legendKey] || undefined,
+      textStyle: { color: '#a2b4a8', fontSize: 11 },
+      top: 4,
+      right: 12,
+      type: 'scroll',
+    },
+    grid: { left: 45, right: 48, top: 38, bottom: 42 },
+    xAxis: {
+      type: 'category',
+      data: server.displayTimes,
+      axisLine: { lineStyle: { color: '#25352a' } },
+      axisLabel: { color: '#7a8c80', fontSize: 11 },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        min: 0,
+        max: 100,
+        axisLine: { show: false },
+        axisLabel: { color: '#7a8c80', formatter: '{value}%' },
+        splitLine: { lineStyle: { color: '#1c2820', type: 'dashed' } },
+      },
+      {
+        type: 'value',
+        min: 0,
+        axisLine: { show: false },
+        axisLabel: { color: '#7a8c80', formatter: '{value} GB' },
+        splitLine: { show: false },
+      },
+    ],
+    dataZoom: [
+      { type: 'inside', start: zoom.start, end: zoom.end },
+      {
+        type: 'slider',
+        start: zoom.start,
+        end: zoom.end,
+        height: 14,
+        bottom: 4,
+        borderColor: '#253329',
+        fillerColor: 'rgba(56, 189, 248, 0.15)',
+        handleStyle: { color: '#38bdf8' },
+        textStyle: { color: '#85968b', fontSize: 10 },
+      },
+    ],
+    series: [
+      ...server.disks.map((d, i) => ({
+        name: d.mount,
+        type: 'line' as const,
+        smooth: 0.2,
+        showSymbol: false,
+        connectNulls: false,
+        itemStyle: { color: DISK_MOUNT_COLORS[i % DISK_MOUNT_COLORS.length] },
+        lineStyle: { width: 2, color: DISK_MOUNT_COLORS[i % DISK_MOUNT_COLORS.length] },
+        data: d.percent,
+        yAxisIndex: 0,
+      })),
+      ...diskUsers.map((u) => ({
+        name: `${u.name} (GB)`,
+        type: 'line' as const,
+        step: 'end' as const, // 日级阶梯：两次扫描之间保持上次值，不线性插值
+        showSymbol: false,
+        data: u.points,
+        yAxisIndex: 1,
+      })),
+    ],
+  }
+}
 </script>
 
 <template>
@@ -1501,6 +1762,26 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               >
                 <span class="user-name">GPU {{ g.index }}: {{ g.name }}</span>
                 <span class="user-value" style="color: #fb923c;">{{ g.temp != null ? g.temp.toFixed(0) : '0' }}°C</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 4.5 Disk Usage Content -->
+          <template v-else-if="pinnedPopup.chartKind === 'disk'">
+            <div v-if="!pinnedPopup.disks?.length" class="user-popup-empty">
+              当前时刻暂无磁盘数据
+            </div>
+            <div v-else class="user-rows-list">
+              <div
+                v-for="d in pinnedPopup.disks"
+                :key="d.mount"
+                class="user-usage-row"
+              >
+                <span class="user-name">{{ d.mount }}</span>
+                <span class="user-value">
+                  {{ d.percent != null ? d.percent.toFixed(1) + '%' : '—' }}
+                  {{ d.usedGb != null ? ` · ${d.usedGb.toFixed(1)} GB` : '' }}
+                </span>
               </div>
             </div>
           </template>
@@ -1670,6 +1951,14 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
           <button
             type="button"
             class="tab-btn"
+            :class="{ active: chartViewModes[server.id] === 'disk' }"
+            @click="chartViewModes[server.id] = 'disk'"
+          >
+            磁盘
+          </button>
+          <button
+            type="button"
+            class="tab-btn"
             :class="{ active: chartViewModes[server.id] === 'users' }"
             @click="chartViewModes[server.id] = 'users'"
           >
@@ -1742,6 +2031,35 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
               @click="handleChartClick($event, server, 'gpu_temp')"
               @zr:click="handleChartClick($event, server, 'gpu_temp')"
               @legendselectchanged="handleLegendSelectChange($event, server.id, 'gpu_temp')"
+              autoresize
+            />
+          </div>
+
+          <div
+            v-if="chartViewModes[server.id] === 'disk' && !server.disks.length"
+            class="chart-card"
+          >
+            <div class="chart-header">
+              <span class="chart-title">Disk Usage per Mount (%) · User Attribution (GB)</span>
+            </div>
+            <div class="no-users-hint">
+              暂无磁盘数据
+            </div>
+          </div>
+
+          <div
+            v-else-if="server.disks.length && ((chartViewModes[server.id] || 'all') === 'all' || chartViewModes[server.id] === 'disk')"
+            class="chart-card"
+          >
+            <div class="chart-header">
+              <span class="chart-title">Disk Usage per Mount (%) · User Attribution (GB)</span>
+            </div>
+            <VChart
+              class="history-chart-canvas"
+              :option="getDiskOption(server)"
+              @click="handleChartClick($event, server, 'disk')"
+              @zr:click="handleChartClick($event, server, 'disk')"
+              @legendselectchanged="handleLegendSelectChange($event, server.id, 'disk')"
               autoresize
             />
           </div>
