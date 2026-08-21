@@ -281,6 +281,19 @@ fn history_line(
         })
         .collect();
 
+    let disks_json: Vec<serde_json::Value> = snapshot
+        .disks
+        .iter()
+        .map(|disk| {
+            serde_json::json!({
+                "Mount": disk.mount,
+                "Percent": disk.percent,
+                "TotalMib": disk.total_mib,
+                "UsedMib": disk.used_mib,
+            })
+        })
+        .collect();
+
     serde_json::to_string(&serde_json::json!({
         "Version": 2,
         "Record": {
@@ -334,10 +347,50 @@ fn history_line(
                 "LoadFifteen": snapshot.load_fifteen,
                 "UptimeSeconds": snapshot.uptime_seconds,
                 "Gpus": gpus_json,
+                "Disks": disks_json,
             }]
         }
     }))
     .map_err(to_command_error)
+}
+
+#[cfg(test)]
+mod history_line_tests {
+    use super::*;
+
+    #[test]
+    fn history_line_includes_disks_subset() {
+        let server = ServerConfig {
+            id: "s1".to_owned(),
+            label: "S1".to_owned(),
+            host: "s1".to_owned(),
+            user: None,
+            port: None,
+            monitored: true,
+            passwordless: true,
+        };
+        let snapshot_json = r#"{"hostname":"demo","protocolVersion":2,"cpuPercent":1.0,"memoryTotalMib":10,"memoryUsedMib":5,"memoryPercent":50,"loadOne":null,"loadFive":null,"loadFifteen":null,"uptimeSeconds":null,"cpuUserStatus":"unavailable","cpuUsers":[],"memoryUserStatus":"unavailable","memoryUsers":[],"gpus":[],"disks":[{"device":"/dev/sda1","mount":"/data","totalMib":1000.0,"usedMib":250.0,"percent":25.0,"fsType":"xfs"}]}"#;
+        let snapshot: MetricSnapshot = serde_json::from_str(snapshot_json).unwrap();
+        let line = history_line(&server, "2026-08-21T00:00:00Z", &snapshot).unwrap();
+        assert!(line.contains("\"Disks\":[{\"Mount\":\"/data\",\"Percent\":25.0,\"TotalMib\":1000.0,\"UsedMib\":250.0}]"));
+    }
+
+    #[test]
+    fn history_line_without_disks_omits_entries() {
+        let server = ServerConfig {
+            id: "s1".to_owned(),
+            label: "S1".to_owned(),
+            host: "s1".to_owned(),
+            user: None,
+            port: None,
+            monitored: true,
+            passwordless: true,
+        };
+        let snapshot_json = r#"{"hostname":"demo","protocolVersion":2,"cpuPercent":1.0,"memoryTotalMib":10,"memoryUsedMib":5,"memoryPercent":50,"loadOne":null,"loadFive":null,"loadFifteen":null,"uptimeSeconds":null,"cpuUserStatus":"unavailable","cpuUsers":[],"memoryUserStatus":"unavailable","memoryUsers":[],"gpus":[],"disks":[]}"#;
+        let snapshot: MetricSnapshot = serde_json::from_str(snapshot_json).unwrap();
+        let line = history_line(&server, "2026-08-21T00:00:00Z", &snapshot).unwrap();
+        assert!(line.contains("\"Disks\":[]"));
+    }
 }
 
 fn credential_identity(server: &ServerConfig) -> String {
