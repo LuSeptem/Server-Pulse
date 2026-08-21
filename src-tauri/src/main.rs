@@ -26,6 +26,7 @@ mod session_credentials;
 use session_credentials::SessionCredentialBroker;
 
 const SAMPLE_SCRIPT: &str = include_str!("../../assets/serverpulse-sample.sh");
+const SCAN_SCRIPT: &str = include_str!("../../assets/serverpulse-scan.sh");
 const SEED_SERVERS: &str = include_str!("../../config/servers.json");
 const AGENT_PULL_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -1545,6 +1546,8 @@ async fn deploy_and_start_agent(
     server_id: String,
     interval_seconds: u32,
     retention_days: u32,
+    scan_enabled: bool,
+    scan_hour: u32,
 ) -> Result<serverpulse_platform::AgentServerState, String> {
     let (server, target, data_root) = resolve_server_and_target(&server_id, &state).await?;
     let ssh = SystemOpenSsh::default();
@@ -1554,8 +1557,8 @@ async fn deploy_and_start_agent(
         &server.host,
         interval_seconds,
         retention_days,
-        true,
-        3,
+        scan_enabled,
+        scan_hour,
         SAMPLE_SCRIPT,
     );
     let config_text = serverpulse_core::generate_agent_config(
@@ -1564,11 +1567,11 @@ async fn deploy_and_start_agent(
         &server.host,
         interval_seconds,
         retention_days,
-        true,
-        3,
+        scan_enabled,
+        scan_hour,
     );
-    // TODO(task-8): pass the real SCAN_SCRIPT constant here.
-    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text, "");
+    let inject_sh =
+        serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text, SCAN_SCRIPT);
 
     let output = ssh
         .execute_short_command(&target, &inject_sh)
@@ -1586,6 +1589,8 @@ async fn deploy_and_start_agent(
 
     entry.interval_seconds = interval_seconds;
     entry.retention_days = retention_days;
+    entry.scan_enabled = scan_enabled;
+    entry.scan_hour = scan_hour;
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
 
     if output.stdout.contains("SP_AGENT_RESULT=started")
@@ -1649,6 +1654,8 @@ async fn restart_agent(
     let existing_entry = state_file.servers.get(&server_id);
     let interval = existing_entry.map(|e| e.interval_seconds).unwrap_or(5);
     let retention = existing_entry.map(|e| e.retention_days).unwrap_or(30);
+    let scan_enabled = existing_entry.map(|e| e.scan_enabled).unwrap_or(true);
+    let scan_hour = existing_entry.map(|e| e.scan_hour).unwrap_or(3);
 
     let ssh = SystemOpenSsh::default();
     let stop_sh = serverpulse_core::generate_agent_stop_script();
@@ -1660,8 +1667,8 @@ async fn restart_agent(
         &server.host,
         interval,
         retention,
-        true,
-        3,
+        scan_enabled,
+        scan_hour,
         SAMPLE_SCRIPT,
     );
     let config_text = serverpulse_core::generate_agent_config(
@@ -1670,11 +1677,11 @@ async fn restart_agent(
         &server.host,
         interval,
         retention,
-        true,
-        3,
+        scan_enabled,
+        scan_hour,
     );
-    // TODO(task-8): pass the real SCAN_SCRIPT constant here.
-    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text, "");
+    let inject_sh =
+        serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text, SCAN_SCRIPT);
     let _ = ssh.execute_short_command(&target, &inject_sh).await;
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
@@ -1699,6 +1706,8 @@ async fn update_agent_config(
     server_id: String,
     interval_seconds: u32,
     retention_days: u32,
+    scan_enabled: bool,
+    scan_hour: u32,
 ) -> Result<serverpulse_platform::AgentServerState, String> {
     let (server, target, data_root) = resolve_server_and_target(&server_id, &state).await?;
     let config_text = serverpulse_core::generate_agent_config(
@@ -1707,8 +1716,8 @@ async fn update_agent_config(
         &server.host,
         interval_seconds,
         retention_days,
-        true,
-        3,
+        scan_enabled,
+        scan_hour,
     );
     let config_sh = serverpulse_core::generate_agent_config_script(&config_text);
     let ssh = SystemOpenSsh::default();
@@ -1724,6 +1733,8 @@ async fn update_agent_config(
         });
     entry.interval_seconds = interval_seconds;
     entry.retention_days = retention_days;
+    entry.scan_enabled = scan_enabled;
+    entry.scan_hour = scan_hour;
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
     let res = entry.clone();
     let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
@@ -1754,6 +1765,66 @@ async fn uninstall_agent(
     let res = entry.clone();
     let _ = serverpulse_platform::save_agent_state(&data_root, &state_file);
     Ok(res)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiskScanTriggerResult {
+    server_id: String,
+    status: String, // launched | already-running | failed
+    detail: Option<String>,
+}
+
+#[tauri::command]
+async fn trigger_disk_scan(
+    state: State<'_, AppState>,
+    server_id: String,
+) -> Result<DiskScanTriggerResult, String> {
+    let (_server, target, _data_root) = resolve_server_and_target(&server_id, &state).await?;
+    let ssh = SystemOpenSsh::default();
+    let script = serverpulse_core::generate_scan_deploy_and_trigger_script(SCAN_SCRIPT, &server_id);
+    let output = ssh
+        .execute_short_command(&target, &script)
+        .await
+        .map_err(to_command_error)?;
+    if output.stdout.contains("SP_SCAN_RESULT=launched") {
+        Ok(DiskScanTriggerResult {
+            server_id,
+            status: "launched".to_owned(),
+            detail: None,
+        })
+    } else if output.stdout.contains("SP_SCAN_RESULT=already_running") {
+        Ok(DiskScanTriggerResult {
+            server_id,
+            status: "already-running".to_owned(),
+            detail: None,
+        })
+    } else {
+        let detail = if output.stderr.is_empty() {
+            "scan trigger did not report a launch".to_owned()
+        } else {
+            output.stderr.lines().take(2).collect::<Vec<_>>().join(" ")
+        };
+        Ok(DiskScanTriggerResult {
+            server_id,
+            status: "failed".to_owned(),
+            detail: Some(detail),
+        })
+    }
+}
+
+#[tauri::command]
+async fn get_disk_scan_status(
+    state: State<'_, AppState>,
+    server_id: String,
+) -> Result<serverpulse_core::DiskScanStatusInfo, String> {
+    let (_server, target, _data_root) = resolve_server_and_target(&server_id, &state).await?;
+    let ssh = SystemOpenSsh::default();
+    let output = ssh
+        .execute_short_command(&target, serverpulse_core::generate_scan_status_script())
+        .await
+        .map_err(to_command_error)?;
+    Ok(serverpulse_core::parse_scan_status_output(&output.stdout))
 }
 
 async fn pull_and_merge_records_impl(
@@ -2651,7 +2722,9 @@ fn main() {
             update_agent_config,
             uninstall_agent,
             pull_and_merge_records,
-            pull_and_merge_all_records
+            pull_and_merge_all_records,
+            trigger_disk_scan,
+            get_disk_scan_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building Server Pulse")

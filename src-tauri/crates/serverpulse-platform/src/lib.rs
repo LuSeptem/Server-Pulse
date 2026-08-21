@@ -451,6 +451,14 @@ fn default_retention() -> u32 {
     30
 }
 
+fn default_scan_enabled() -> bool {
+    true
+}
+
+fn default_scan_hour() -> u32 {
+    3
+}
+
 fn default_status() -> String {
     "unknown".to_string()
 }
@@ -463,6 +471,10 @@ pub struct AgentServerState {
     pub interval_seconds: u32,
     #[serde(default = "default_retention")]
     pub retention_days: u32,
+    #[serde(default = "default_scan_enabled")]
+    pub scan_enabled: bool,
+    #[serde(default = "default_scan_hour")]
+    pub scan_hour: u32,
     #[serde(default)]
     pub auto_restore_on_startup: bool,
     pub merge_cursor_utc: Option<String>,
@@ -481,6 +493,8 @@ impl Default for AgentServerState {
             id: String::new(),
             interval_seconds: 5,
             retention_days: 30,
+            scan_enabled: true,
+            scan_hour: 3,
             auto_restore_on_startup: false,
             merge_cursor_utc: None,
             last_status: "unknown".to_string(),
@@ -617,6 +631,8 @@ mod tests {
                 id: "s1".to_string(),
                 interval_seconds: 10,
                 retention_days: 60,
+                scan_enabled: true,
+                scan_hour: 3,
                 auto_restore_on_startup: true,
                 merge_cursor_utc: Some("2026-08-19T10:00".to_string()),
                 last_status: "running".to_string(),
