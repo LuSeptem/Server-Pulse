@@ -1757,3 +1757,12 @@ input:focus {
 }
 
 
+.disk-section { margin-top: 6px; }
+.disk-toggle { background: none; border: none; color: inherit; opacity: .7; font-size: 11px; cursor: pointer; padding: 2px 0; }
+.disk-row { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; padding: 3px 0; }
+.disk-row .gpu-bar-track { grid-column: 1 / -1; }
+.disk-mount { font-weight: 600; font-size: 12px; }
+.disk-val { font-size: 12px; text-align: right; }
+.disk-scan-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.disk-scan-row button { font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.disk-scan-row button:disabled { opacity: .5; cursor: default; }

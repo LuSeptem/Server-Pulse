@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 
-export type UserUsageKind = 'cpu' | 'memory' | 'vram'
+export type UserUsageKind = 'cpu' | 'memory' | 'vram' | 'disk'
 
 export interface UserUsageTargetInfo {
   serverId: string
@@ -9,6 +9,7 @@ export interface UserUsageTargetInfo {
   gpuIndex?: number
   gpuName?: string
   totalMiB?: number
+  mount?: string
 }
 
 const currentTarget = ref<UserUsageTargetInfo | null>(null)

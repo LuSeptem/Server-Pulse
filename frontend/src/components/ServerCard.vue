@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import type { GpuMetric, MetricSnapshot, ServerConfig } from '../types'
+import { computed, ref } from 'vue'
+import type {
+  DiskAttributionRecord,
+  DiskMetric,
+  DiskScanStatusInfo,
+  GpuMetric,
+  MetricSnapshot,
+  ServerConfig,
+} from '../types'
 import { useUserUsagePopup } from '../composables/useUserUsagePopup'
 
 const props = defineProps<{
@@ -7,12 +15,15 @@ const props = defineProps<{
   snapshot?: MetricSnapshot
   status: string
   error?: string
+  diskAttribution?: DiskAttributionRecord[]
+  diskScanStatus?: DiskScanStatusInfo
 }>()
 
 defineEmits<{
   start: []
   stop: []
   recheck: []
+  scan: []
 }>()
 
 const {
@@ -35,7 +46,7 @@ function getVramPercent(gpu: GpuMetric) {
   return 0
 }
 
-function isTargetActive(kind: 'cpu' | 'memory' | 'vram', gpuIndex?: number) {
+function isTargetActive(kind: 'cpu' | 'memory' | 'vram' | 'disk', gpuIndex?: number) {
   if (!currentTarget.value) return false
   return (
     currentTarget.value.serverId === props.server.id &&
@@ -123,6 +134,39 @@ function handleGpuVramClick(gpu: GpuMetric, event: MouseEvent) {
     event.currentTarget as HTMLElement
   )
 }
+
+const disksExpanded = ref(false)
+
+const worstDisk = computed(() => {
+  const disks = (props.snapshot?.disks ?? []).filter((d) => d.percent != null)
+  if (!disks.length) return null
+  return disks.reduce((a, b) => ((b.percent ?? 0) > (a.percent ?? 0) ? b : a))
+})
+
+function formatCapacity(usedMib: number | null, totalMib: number | null) {
+  const fmt = (v: number | null) => (v != null ? (v / 1048576).toFixed(1) : '—')
+  return `${fmt(usedMib)} / ${fmt(totalMib)} TB`
+}
+
+function attributionFor(mount: string) {
+  return (props.diskAttribution ?? []).find((record) => record.mount === mount) ?? null
+}
+
+function handleDiskEnter(disk: DiskMetric, event: MouseEvent) {
+  if (!props.snapshot) return
+  onTargetMouseEnter(
+    { serverId: props.server.id, serverLabel: props.server.label, kind: 'disk', mount: disk.mount },
+    event.currentTarget as HTMLElement
+  )
+}
+
+function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
+  if (!props.snapshot) return
+  onTargetClick(
+    { serverId: props.server.id, serverLabel: props.server.label, kind: 'disk', mount: disk.mount },
+    event.currentTarget as HTMLElement
+  )
+}
 </script>
 
 <template>
@@ -165,6 +209,21 @@ function handleGpuVramClick(gpu: GpuMetric, event: MouseEvent) {
       >
         <span>MEM</span>
         <strong>{{ snapshot.memoryPercent != null ? snapshot.memoryPercent.toFixed(1) + '%' : '—' }}</strong>
+      </div>
+      <div
+        v-if="worstDisk"
+        class="metric is-interactive"
+        :class="{
+          'is-active': isTargetActive('disk'),
+          'is-pinned': isTargetActive('disk') && isPinned
+        }"
+        title="查看磁盘各用户占用 (点击可固定)"
+        @mouseenter="handleDiskEnter(worstDisk, $event)"
+        @mouseleave="onTargetMouseLeave"
+        @click.stop="handleDiskClick(worstDisk, $event)"
+      >
+        <span>DISK</span>
+        <strong>{{ worstDisk.percent != null ? worstDisk.percent.toFixed(0) + '%' : '—' }} · {{ formatCapacity(worstDisk.usedMib, worstDisk.totalMib) }}</strong>
       </div>
     </div>
 
@@ -217,6 +276,41 @@ function handleGpuVramClick(gpu: GpuMetric, event: MouseEvent) {
           />
         </div>
       </div>
+    </div>
+
+    <div v-if="snapshot && snapshot.disks && snapshot.disks.length" class="disk-section">
+      <button type="button" class="disk-toggle" @click.stop="disksExpanded = !disksExpanded">
+        {{ disksExpanded ? '收起磁盘' : `全部磁盘 (${snapshot.disks.length})` }}
+      </button>
+      <template v-if="disksExpanded">
+        <div
+          v-for="disk in snapshot.disks"
+          :key="disk.mount"
+          class="disk-row is-interactive"
+          @mouseenter="handleDiskEnter(disk, $event)"
+          @mouseleave="onTargetMouseLeave"
+          @click.stop="handleDiskClick(disk, $event)"
+        >
+          <span class="disk-mount" :title="disk.device">{{ disk.mount }}</span>
+          <span class="disk-val">{{ disk.percent != null ? disk.percent.toFixed(0) + '%' : '—' }} · {{ formatCapacity(disk.usedMib, disk.totalMib) }}</span>
+          <div class="gpu-bar-track">
+            <div class="gpu-bar-fill vram-bar" :class="{ 'is-high': (disk.percent ?? 0) >= 80 }" :style="{ width: (disk.percent ?? 0) + '%' }" />
+          </div>
+        </div>
+        <div class="disk-scan-row">
+          <button
+            type="button"
+            :disabled="diskScanStatus?.active"
+            @click.stop="$emit('scan')"
+          >
+            {{ diskScanStatus?.active ? `扫描中…${diskScanStatus.lastMount ? ' (' + diskScanStatus.lastMount + ')' : ''}` : '立即扫描' }}
+          </button>
+          <span v-if="diskAttribution && diskAttribution.length" class="muted">
+            来自 {{ new Date(diskAttribution[0].scannedAt).toLocaleDateString() }} 扫描
+          </span>
+          <span v-else class="muted">需服务端 agent 或手动扫描</span>
+        </div>
+      </template>
     </div>
 
     <p v-if="error && status !== 'online'" class="error-text">{{ error }}</p>

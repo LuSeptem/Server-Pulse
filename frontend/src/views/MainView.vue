@@ -35,6 +35,16 @@ const currentSnapshot = computed(() => {
   return store.snapshots[currentTarget.value.serverId]
 })
 
+const currentDiskAttribution = computed(() => {
+  const target = currentTarget.value
+  if (!target || target.kind !== 'disk') return null
+  return (
+    store.diskAttribution.find(
+      (r) => r.serverId === target.serverId && r.mount === target.mount,
+    ) ?? null
+  )
+})
+
 const startDragging = async (event: MouseEvent) => {
   if (event.button !== 0) return
   const target = event.target as HTMLElement | null
@@ -203,9 +213,12 @@ const selectInterval = async (val: number) => {
         :snapshot="store.snapshots[server.id]"
         :status="store.statuses[server.id] ?? 'stopped'"
         :error="store.errors[server.id]"
+        :disk-attribution="store.diskAttribution.filter((r) => r.serverId === server.id)"
+        :disk-scan-status="store.diskScans[server.id]"
         @start="store.start(server)"
         @stop="store.stop(server.id)"
         @recheck="store.recheck(server)"
+        @scan="store.triggerDiskScan(server.id).then(() => store.fetchDiskScanStatus(server.id)).catch(() => undefined)"
       />
       <div v-if="store.monitoredServers.length === 0" class="empty-state">
         <p v-if="store.servers.length === 0">No configured SSH servers.</p>
@@ -221,6 +234,7 @@ const selectInterval = async (val: number) => {
       :is-pinned="isPinned"
       :expanded="isExpanded"
       :coords="popupCoords"
+      :disk-attribution="currentDiskAttribution"
       @close="closePopup(true)"
       @toggle-expand="togglePopupExpand"
       @mouseenter="onPopupMouseEnter"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MetricSnapshot, UserUsageStatus } from '../types'
+import type { DiskAttributionRecord, MetricSnapshot, UserUsageStatus } from '../types'
 import type { UserUsageTargetInfo } from '../composables/useUserUsagePopup'
 
 const props = defineProps<{
@@ -9,6 +9,7 @@ const props = defineProps<{
   isPinned: boolean
   expanded: boolean
   coords: { x: number; y: number }
+  diskAttribution?: DiskAttributionRecord | null
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +29,9 @@ interface FormattedUserRow {
 
 const title = computed(() => {
   if (!props.target) return ''
+  if (props.target.kind === 'disk') {
+    return `${props.target.serverLabel} · DISK ${props.target.mount} · 用户占用`
+  }
   if (props.target.kind === 'cpu') {
     return `${props.target.serverLabel} · CPU · 用户占用`
   }
@@ -40,6 +44,9 @@ const title = computed(() => {
 
 const status = computed<UserUsageStatus>(() => {
   if (!props.snapshot || !props.target) return 'unavailable'
+  if (props.target.kind === 'disk') {
+    return props.diskAttribution?.status ?? 'unavailable'
+  }
   if (props.target.kind === 'cpu') {
     return props.snapshot.cpuUserStatus ?? 'unavailable'
   }
@@ -63,6 +70,20 @@ const statusLabel = computed(() => {
 
 const userRows = computed<FormattedUserRow[]>(() => {
   if (!props.snapshot || !props.target) return []
+
+  if (props.target.kind === 'disk') {
+    const record = props.diskAttribution
+    if (!record) return []
+    return record.users
+      .map((u) => ({
+        key: `disk-${u.uid || u.name}`,
+        name: u.name || `UID ${u.uid}`,
+        processCount: null,
+        displayValue: `${(u.usedMib / 1024).toFixed(1)} GB`,
+        sortValue: u.usedMib,
+      }))
+      .sort((a, b) => b.sortValue - a.sortValue)
+  }
 
   if (props.target.kind === 'cpu') {
     const users = props.snapshot.cpuUsers || []
@@ -124,6 +145,14 @@ const visibleRows = computed(() => {
 const systemRow = computed(() => {
   if (!props.snapshot || !props.target || status.value === 'unavailable') {
     return null
+  }
+  if (props.target.kind === 'disk') {
+    const record = props.diskAttribution
+    if (!record || record.status === 'unavailable' || record.usedMib == null) return null
+    const usersSum = record.users.reduce((acc, u) => acc + u.usedMib, 0)
+    const sys = Math.max(0, record.usedMib - usersSum)
+    const pct = record.totalMib ? (sys / record.totalMib) * 100 : 0
+    return { name: '系统 / 未归属', displayValue: `${(sys / 1024).toFixed(1)} GB · ${pct.toFixed(1)}%` }
   }
   if (props.target.kind === 'cpu') {
     const totalCpu = props.snapshot.cpuPercent || 0
@@ -202,6 +231,10 @@ const footnote = computed(() => {
           {{ statusLabel }}
         </span>
         <span class="user-popup-count">{{ userRows.length }} 位用户活跃</span>
+        <span v-if="target?.kind === 'disk' && diskAttribution" class="user-popup-count">
+          {{ new Date(diskAttribution.scannedAt).toLocaleDateString() }} 扫描
+        </span>
+        <span v-if="target?.kind === 'disk' && !diskAttribution" class="user-popup-count">需服务端 agent 或手动扫描</span>
       </div>
 
       <div class="user-popup-content">
