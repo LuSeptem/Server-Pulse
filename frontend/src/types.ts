@@ -113,6 +113,8 @@ export interface AgentServerState {
   id: string
   intervalSeconds: number
   retentionDays: number
+  scanEnabled: boolean
+  scanHour: number
   autoRestoreOnStartup?: boolean
   mergeCursorUtc?: string | null
   lastStatus: AgentStatus

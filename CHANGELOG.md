@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added 新增
+
+- 磁盘容量监控：自动发现真实本地文件系统，主卡片新增 DISK 行与全部挂载点展开列表。 Disk capacity monitoring: auto-discovered real filesystems, new DISK card row with expandable per-mount breakdown.
+- 按用户磁盘归因：服务端每日低频扫描（默认 3 点时段、可配置），结果按挂载点记录并合并入本地历史；支持卡片「立即扫描」手动触发（无需安装 agent，detached 执行）。 Per-user disk attribution via daily server-side scans (configurable, default 3am hour) merged into local history, plus an on-demand "Scan now" button that runs detached without requiring the agent.
+- History 页新增磁盘视图：每挂载点使用率曲线与按用户已用容量的日级阶梯曲线。 New History disk view: per-mount usage curves and stepped daily per-user curves.
+
+### Changed 变更
+
+- 协议 v2 向后兼容扩展（DISKS 段）；旧 sampler/agent 输出不受影响。 Backward-compatible protocol v2 extension (DISKS section); old samplers/agents keep working.
+- agent 配置新增 scan_enabled/scan_hour；更新后需 Restart/Inject 一次以启用每日调度。 Agent config gains scan_enabled/scan_hour; one Restart/Inject is needed after updating to enable daily scheduling.
+
 ## v2.0.0 — 2026-08-21
 
 ### 中文

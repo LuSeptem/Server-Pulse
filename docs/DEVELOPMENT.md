@@ -23,9 +23,13 @@ ServerPulse-Portable.exe / serverpulse-tauri.exe
       └─ serverpulse-platform   数据根目录、文件锁、迁移、keyring 和原子写入
                                   │
                                   └─ Linux remote POSIX sampler
+                                     assets/serverpulse-sample.sh（实时指标，DISKS 段）
+                                     assets/serverpulse-scan.sh（磁盘归属扫描，第二个 canonical 脚本）
 ```
 
-每台服务器最多维护一个持久 SSH 子进程。远端 sampler 按间隔循环输出协议 v2 帧，本地持续读取并解析 snapshot；帧超时、损坏、远端退出和网络断开会销毁旧进程并按退避策略重连。Agent 注入、状态、控制和历史合并继续使用短命令 SSH API。
+每台服务器最多维护一个持久 SSH 子进程。远端 sampler 按间隔循环输出协议 v2 帧，本地持续读取并解析 snapshot；帧超时、损坏、远端退出和网络断开会销毁旧进程并按退避策略重连。Agent 注入、状态、控制、磁盘扫描触发和历史合并继续使用短命令 SSH API。
+
+归因数据流：`scan.sh` 在服务器上 detached 执行（agent 每日调度或手动触发），按挂载点写入 `~/.serverpulse/attribution/yyyy-MM-dd.jsonl`；`pull_and_merge_records` 拉取该目录并按 `(serverId, mount, scannedAt)` 去重后镜像到本地 `<data-root>/history/attribution/`。
 
 ## 3. 仓库布局
 
@@ -43,8 +47,9 @@ src-tauri/
 ├─ crates/serverpulse-platform/# 路径、凭据、迁移和存储
 └─ src/                        # Tauri commands、events、windows、tray
 
-assets/serverpulse-sample.sh   # 唯一 canonical、LF-only 的远端 sampler
-tests/fixtures/                # 协议与历史黄金样例
+assets/serverpulse-sample.sh    # canonical、LF-only 的远端 sampler
+assets/serverpulse-scan.sh      # 第二个 canonical 脚本：磁盘归属扫描（POSIX sh、LF-only）
+tests/fixtures/                # 协议与历史黄金样例（metrics-v2.sample.txt 含 DISKS 段）
 docs/                          # 开发、迁移和发布说明
 CHANGELOG.md                   # 中英双语版本记录
 README.md / README.zh-CN.md    # 用户说明
@@ -72,6 +77,22 @@ SERVERPULSE_FRAME_END
 
 本地使用 `open_stream`、`next_snapshot` 和 `shutdown` 管理每台服务器的单一长期会话。停止服务器、删除服务器、修改采样间隔和应用退出时必须显式关闭并等待 SSH 子进程退出。不可重试的主机密钥、密码缺失和认证错误暂停该服务器，结构化结果区分 `started`、`host-key-required`、`host-key-changed`、`password-required` 和 `authentication-failed`。
 
+### 磁盘段（协议 v2 加法扩展）
+
+sampler 帧内在 `GPU_USER_STATUS` 之后输出 `DISKS_BEGIN`/`DISKS_END` 边界段，每行 tab 分隔五列：设备、挂载点、总 KiB、已用 KiB、文件系统类型（来源 `df -kTP`，sampler 内完成虚拟/伪文件系统过滤）：
+
+```text
+DISKS_BEGIN
+/dev/sda1	/	419430400	210034688	ext4
+DISKS_END
+```
+
+解析容错：段缺失或单行字段不足 5 列时跳过，`MetricSnapshot.disks` 为空数组或缺失该行，不影响快照其余字段；旧 sampler / 旧 agent 不输出该段时解析结果为空，监控行为不变。`percent` 由 Rust 侧在 `total > 0` 时按 `used * 100 / total` 计算并钳制到 0–100，协议不传输百分比列。
+
+### 磁盘归属扫描
+
+`assets/serverpulse-scan.sh` 由 agent 每日调度（服务器本地小时 ≥ 配置 `scan_hour` 且当日未扫，默认 3）或手动触发（`trigger_disk_scan`），以 detached 方式执行：`find <mount> -xdev -printf '%U\t%s\n'` 按 uid 汇总后写入 `~/.serverpulse/attribution/yyyy-MM-dd.jsonl`。锁文件 `state/scan.lock` 记录 PID 并做存活检测防重入；进度写入 `state/scan.status`，输出追加到 `scan.log`。记录只含 uid、用户名、字节数和挂载点信息。
+
 ### UTC 历史
 
 新记录使用带 `Z` 的 RFC3339 UTC 时间戳，并按 UTC 日期写入 `yyyy-MM-dd.v2.jsonl`。`query_history(day)` 接收用户本地日期，将本地日界转换为 UTC 范围，读取可能跨越的 UTC 文件，再由前端按本地时间显示。旧版 JSON/JSONL 和无时区时间戳继续按兼容规则读取。分钟聚合按有效样本数加权，不可用样本不进入分母。
@@ -85,14 +106,17 @@ SERVERPULSE_FRAME_END
 - `verify_and_apply_server(request)` → `ApplyServerResult`
 - `start_monitoring(server, interval)` → `StartResult`
 - `clear_session_credential(server_id)`
+- `trigger_disk_scan(server)` → `DiskScanTriggerResult`（`launched` / `already-running` / `failed(原因)`；未装 agent 时现场部署 scan.sh 后 detached 拉起）
+- `get_disk_scan_status(server)` → `DiskScanStatusInfo`（installed/active/pid/state/startedAt/finishedAt/lastMount/lastFile）
+- `deploy_and_start_agent` / `update_agent_config(server, interval_seconds, retention_days, scan_enabled, scan_hour)` → `AgentServerState`（含 camelCase 序列化的 `scanEnabled`/`scanHour`）
 
 前端处理 `server.host_key_required` 及结构化 start/recheck 结果。确认指纹后自动重试原操作；提交、取消、停止后立即清空密码输入，不写入 `localStorage`。跨窗口服务器选择、采样间隔和 monitoring 状态通过 Tauri events 与 Pinia 状态同步。
 
 ## 6. 数据与安全约束
 
-默认数据根目录为 Windows `%LOCALAPPDATA%\ServerPulse` 或 macOS `~/Library/Application Support/ServerPulse`，包含 `settings.json`、`servers.json`、`error.log`、`known_hosts` 和 `history/`。仓库中的 `config/servers.json` 只是首次运行种子，不含密码。
+默认数据根目录为 Windows `%LOCALAPPDATA%\ServerPulse` 或 macOS `~/Library/Application Support/ServerPulse`，包含 `settings.json`、`servers.json`、`error.log`、`known_hosts`、`history/` 和 `history/attribution/`（磁盘归属镜像，按 UTC 日期存 `yyyy-MM-dd.jsonl`，每行一个挂载点记录）。仓库中的 `config/servers.json` 只是首次运行种子，不含密码。
 
-提交前必须确认源码、测试、样例、日志和发布包不含真实用户名、邮箱、IP、密码、私钥、本地路径或用户列表。测试只使用合成主机名、用户名和指纹。错误事件和卡片显示必须脱敏；密码不得进入普通日志。
+提交前必须确认源码、测试、样例、日志和发布包不含真实用户名、邮箱、IP、密码、私钥、本地路径或用户列表。测试只使用合成主机名、用户名和指纹。错误事件和卡片显示必须脱敏；密码不得进入普通日志。磁盘归属记录只含 uid、用户名、字节数和挂载点路径——挂载点路径属运维信息，敏感级别与现有用户名展示同级；绝不包含 PID、进程名或命令行。
 
 ## 7. 本地构建与测试
 

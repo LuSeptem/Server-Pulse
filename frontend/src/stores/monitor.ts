@@ -486,13 +486,15 @@ export const useMonitorStore = defineStore('monitor', {
         this.agentGlobalLoading = false
       }
     },
-    async deployAndStartAgent(serverId: string, intervalSeconds = 5, retentionDays = 30) {
+    async deployAndStartAgent(serverId: string, intervalSeconds = 5, retentionDays = 30, scanEnabled = true, scanHour = 3) {
       this.agentLoading[serverId] = true
       try {
         const state = await invoke<AgentServerState>('deploy_and_start_agent', {
           serverId,
           intervalSeconds,
           retentionDays,
+          scanEnabled,
+          scanHour,
         })
         this.agentStates = { ...this.agentStates, [serverId]: state }
         return state
@@ -520,13 +522,15 @@ export const useMonitorStore = defineStore('monitor', {
         this.agentLoading[serverId] = false
       }
     },
-    async updateAgentConfig(serverId: string, intervalSeconds: number, retentionDays: number) {
+    async updateAgentConfig(serverId: string, intervalSeconds: number, retentionDays: number, scanEnabled = true, scanHour = 3) {
       this.agentLoading[serverId] = true
       try {
         const state = await invoke<AgentServerState>('update_agent_config', {
           serverId,
           intervalSeconds,
           retentionDays,
+          scanEnabled,
+          scanHour,
         })
         this.agentStates = { ...this.agentStates, [serverId]: state }
         return state

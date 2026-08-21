@@ -35,6 +35,8 @@ const form = reactive({
 const configModalServer = ref<ServerConfig | null>(null)
 const configInterval = ref(5)
 const configRetention = ref(30)
+const configScanEnabled = ref(true)
+const configScanHour = ref(3)
 const configLoading = ref(false)
 const configError = ref('')
 
@@ -281,8 +283,10 @@ async function handleDeployAndStart(server: ServerConfig) {
   const existing = store.agentStates[server.id]
   const interval = existing?.intervalSeconds ?? 5
   const retention = existing?.retentionDays ?? 30
+  const scanEnabled = existing?.scanEnabled ?? true
+  const scanHour = existing?.scanHour ?? 3
   try {
-    await store.deployAndStartAgent(server.id, interval, retention)
+    await store.deployAndStartAgent(server.id, interval, retention, scanEnabled, scanHour)
   } catch (err) {
     window.alert(`部署/启动失败: ${String(err)}`)
   }
@@ -310,6 +314,8 @@ function openConfigModal(server: ServerConfig) {
   const existing = store.agentStates[server.id]
   configInterval.value = existing?.intervalSeconds ?? 5
   configRetention.value = existing?.retentionDays ?? 30
+  configScanEnabled.value = existing?.scanEnabled ?? true
+  configScanHour.value = existing?.scanHour ?? 3
   configError.value = ''
 }
 
@@ -328,12 +334,18 @@ async function handleSaveConfig() {
     configError.value = '保留天数必须在 1 到 3650 天之间'
     return
   }
+  if (configScanHour.value < 0 || configScanHour.value > 23) {
+    configError.value = '扫描时刻必须在 0 到 23 之间'
+    return
+  }
   configLoading.value = true
   try {
     await store.updateAgentConfig(
       configModalServer.value.id,
       configInterval.value,
       configRetention.value,
+      configScanEnabled.value,
+      configScanHour.value,
     )
     closeConfigModal()
   } catch (err) {
@@ -715,6 +727,14 @@ async function handleExecuteUninstall() {
           <label class="field">
             <span>历史记录保留天数（天）(默认 30 天，范围 1 - 3650)</span>
             <input v-model.number="configRetention" type="number" min="1" max="3650" />
+          </label>
+          <label class="check-row">
+            <input v-model="configScanEnabled" type="checkbox" />
+            <span>每日磁盘归因扫描</span>
+          </label>
+          <label class="field">
+            <span>扫描时刻（服务器本地小时，0 - 23）</span>
+            <input v-model.number="configScanHour" type="number" min="0" max="23" />
           </label>
           <p class="modal-hint">
             💡 保存后将更新远端 <code>~/.serverpulse/config</code> 文件，并在下一次采样周期自动生效。
