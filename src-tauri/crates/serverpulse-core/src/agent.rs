@@ -700,7 +700,7 @@ fi
 echo 'SP_AGENT_RESULT=stopped'"#
 }
 
-pub fn generate_agent_inject_script(agent_script: &str, config_text: &str) -> String {
+pub fn generate_agent_inject_script(agent_script: &str, config_text: &str, scan_script: &str) -> String {
     format!(
         r#"sp="$HOME/.serverpulse"
 umask 077
@@ -711,6 +711,10 @@ SERVERPULSE_AGENT_EOF
 cat > "$sp/config" <<'SERVERPULSE_CONFIG_EOF'
 {config}
 SERVERPULSE_CONFIG_EOF
+cat > "$sp/scan.sh" <<'SERVERPULSE_SCAN_EOF'
+{scan}
+SERVERPULSE_SCAN_EOF
+chmod +x "$sp/scan.sh" 2>/dev/null
 chmod +x "$sp/agent.sh" 2>/dev/null
 if [ -f "$sp/state/pid" ] && kill -0 "$(cat "$sp/state/pid" 2>/dev/null)" 2>/dev/null; then
   echo 'SP_AGENT_RESULT=already_running'
@@ -719,7 +723,8 @@ else
   echo 'SP_AGENT_RESULT=started'
 fi"#,
         agent = agent_script,
-        config = config_text
+        config = config_text,
+        scan = scan_script.trim_end()
     )
 }
 
@@ -754,6 +759,93 @@ if [ -f "$sp/state/pid" ]; then
 fi
 rm -rf "$sp"
 echo 'SP_AGENT_RESULT=uninstalled'"#
+}
+
+pub fn generate_scan_deploy_and_trigger_script(scan_script: &str, server_id: &str) -> String {
+    format!(
+        r#"sp="$HOME/.serverpulse"
+umask 077
+mkdir -p "$sp/state" "$sp/attribution" 2>/dev/null || {{ echo 'SP_SCAN_RESULT=error'; echo 'SP_SCAN_ERROR=mkdir failed'; exit 0; }}
+cat > "$sp/scan.sh" <<'SERVERPULSE_SCAN_EOF'
+{scan}
+SERVERPULSE_SCAN_EOF
+chmod +x "$sp/scan.sh" 2>/dev/null
+if [ -f "$sp/state/scan.lock" ]; then
+  sp_old=$(cat "$sp/state/scan.lock" 2>/dev/null)
+  case "$sp_old" in
+    ''|*[!0-9]*) rm -f "$sp/state/scan.lock" ;;
+    *) if kill -0 "$sp_old" 2>/dev/null; then echo 'SP_SCAN_RESULT=already_running'; exit 0; else rm -f "$sp/state/scan.lock"; fi ;;
+  esac
+fi
+export SERVERPULSE_SERVER_ID="{server_id}"
+( cd "$HOME" && if command -v setsid >/dev/null 2>&1; then nohup setsid sh "$sp/scan.sh" >>"$sp/scan.log" 2>&1 </dev/null & else nohup sh "$sp/scan.sh" >>"$sp/scan.log" 2>&1 </dev/null & fi )
+echo 'SP_SCAN_RESULT=launched'"#,
+        scan = scan_script.trim_end(),
+        server_id = sanitize_agent_value(server_id)
+    )
+}
+
+pub fn generate_scan_status_script() -> &'static str {
+    r#"sp="$HOME/.serverpulse"
+if [ -f "$sp/scan.sh" ]; then echo 'SP_SCAN_INSTALLED=1'; else echo 'SP_SCAN_INSTALLED=0'; fi
+if [ -f "$sp/state/scan.lock" ]; then
+  sp_pid=$(cat "$sp/state/scan.lock" 2>/dev/null)
+  if [ -n "$sp_pid" ] && kill -0 "$sp_pid" 2>/dev/null; then
+    echo 'SP_SCAN_ACTIVE=1'
+    echo "SP_SCAN_PID=$sp_pid"
+  else
+    echo 'SP_SCAN_ACTIVE=0'
+    rm -f "$sp/state/scan.lock"
+  fi
+else
+  echo 'SP_SCAN_ACTIVE=0'
+fi
+[ -f "$sp/state/scan.status" ] && cat "$sp/state/scan.status"
+if [ -d "$sp/attribution" ]; then
+  sp_last=""
+  for sp_file in "$sp/attribution"/*.jsonl; do
+    [ -e "$sp_file" ] && sp_last="$sp_file"
+  done
+  if [ -n "$sp_last" ]; then
+    echo "SP_SCAN_LAST_FILE=$(basename "$sp_last")"
+    echo "SP_SCAN_LAST_LINES=$(wc -l < "$sp_last" | tr -d ' ')"
+  fi
+fi"#
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskScanStatusInfo {
+    pub installed: bool,
+    pub active: bool,
+    pub pid: Option<u32>,
+    pub state: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub last_mount: Option<String>,
+    pub last_file: Option<String>,
+}
+
+pub fn parse_scan_status_output(output: &str) -> DiskScanStatusInfo {
+    let mut fields = HashMap::new();
+    for line in output.lines() {
+        let clean = line.trim();
+        if let Some((k, v)) = clean.split_once('=') {
+            if let Some(key_tail) = k.strip_prefix("SP_SCAN_") {
+                fields.insert(key_tail.to_owned(), v.to_owned());
+            }
+        }
+    }
+    DiskScanStatusInfo {
+        installed: fields.get("INSTALLED").map(|v| v == "1").unwrap_or(false),
+        active: fields.get("ACTIVE").map(|v| v == "1").unwrap_or(false),
+        pid: fields.get("PID").and_then(|v| v.parse::<u32>().ok()),
+        state: fields.get("STATUS").cloned().unwrap_or_else(|| "unknown".to_owned()),
+        started_at: fields.get("STARTED_AT").cloned(),
+        finished_at: fields.get("FINISHED_AT").cloned(),
+        last_mount: fields.get("LAST_MOUNT").filter(|v| !v.is_empty()).cloned(),
+        last_file: fields.get("LAST_FILE").cloned(),
+    }
 }
 
 pub fn generate_agent_pull_script(cursor_utc: Option<&str>) -> String {
@@ -1134,4 +1226,37 @@ pub fn merge_agent_day_entries(
     }
 
     (result_lines, stats)
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn trigger_script_deploys_scan_and_reports_launch() {
+        let script = generate_scan_deploy_and_trigger_script("echo hi # scan", "srv-1");
+        assert!(script.contains("SERVERPULSE_SCAN_EOF"));
+        assert!(script.contains("echo hi # scan"));
+        assert!(script.contains("SERVERPULSE_SERVER_ID=\"srv-1\""));
+        assert!(script.contains("SP_SCAN_RESULT=launched"));
+        assert!(script.contains("SP_SCAN_RESULT=already_running"));
+    }
+
+    #[test]
+    fn parses_scan_status_output() {
+        let output = "SP_SCAN_INSTALLED=1\nSP_SCAN_ACTIVE=1\nSP_SCAN_PID=777\nSP_SCAN_STATUS=running\nSP_SCAN_STARTED_AT=2026-08-20T03:00:00Z\nSP_SCAN_LAST_MOUNT=/data\n";
+        let info = parse_scan_status_output(output);
+        assert!(info.installed);
+        assert!(info.active);
+        assert_eq!(info.pid, Some(777));
+        assert_eq!(info.state, "running");
+        assert_eq!(info.last_mount.as_deref(), Some("/data"));
+    }
+
+    #[test]
+    fn inject_script_writes_scan_sh() {
+        let inject = generate_agent_inject_script("#!/bin/sh\nagent", "interval=5\n", "#!/bin/sh\nscan");
+        assert!(inject.contains("SERVERPULSE_SCAN_EOF"));
+        assert!(inject.contains("#!/bin/sh\nscan"));
+    }
 }

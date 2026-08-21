@@ -1567,7 +1567,8 @@ async fn deploy_and_start_agent(
         true,
         3,
     );
-    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text);
+    // TODO(task-8): pass the real SCAN_SCRIPT constant here.
+    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text, "");
 
     let output = ssh
         .execute_short_command(&target, &inject_sh)
@@ -1672,7 +1673,8 @@ async fn restart_agent(
         true,
         3,
     );
-    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text);
+    // TODO(task-8): pass the real SCAN_SCRIPT constant here.
+    let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text, "");
     let _ = ssh.execute_short_command(&target, &inject_sh).await;
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
