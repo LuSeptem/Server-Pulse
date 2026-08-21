@@ -84,6 +84,7 @@ function reset_sample() {
   s_g_list = ""
   s_gpu_count = 0
   in_gpus = 0
+  in_disks = 0
   delete s_cpu_usr
   delete s_cpu_usr_name
   delete s_cpu_usr_pcount
@@ -121,6 +122,11 @@ function reset_sample() {
   delete s_gu_uid_list
   delete s_gu_attr
   delete s_gu_unmap
+  s_d_list = ""
+  delete s_d_dev
+  delete s_d_total
+  delete s_d_used
+  delete s_d_seen
 }
 function finalize_sample() {
   m_total++
@@ -170,6 +176,15 @@ function finalize_sample() {
           if (s_gu_usr_pct_has[key]) { m_gu_usr_pct_sum[key] += s_gu_usr_pct[key]; m_gu_usr_pct_has[key] = 1 }
         }
       }
+    }
+    nd = split(s_d_list, di, " ")
+    for (i = 1; i <= nd; i++) {
+      mnt = di[i]
+      if (!(mnt in m_d_seen)) { m_d_seen[mnt] = 1; m_d_keys = m_d_keys " " mnt }
+      m_d_cnt[mnt]++
+      m_d_total_sum[mnt] += s_d_total[mnt]
+      m_d_used_sum[mnt] += s_d_used[mnt]
+      m_d_dev[mnt] = s_d_dev[mnt]
     }
   }
   if (s_cpu_status == "ok" || s_cpu_status == "partial") {
@@ -272,6 +287,23 @@ function emit_gpu_users(uuid,   i, j, n, ku, t, k1, k2, k, first, pc) {
     printf "{\"Uid\":\"%s\",\"Name\":\"%s\",\"UsedMiB\":%s,\"Percent\":%s,\"ProcessCount\":%d}", jstr(ku[i]), jstr(m_gu_usr_name[k]), jnum(avg(m_gu_usr_sum[k], m_gu_valid[uuid]), 1), jnum(avg(m_gu_usr_pct_sum[k], m_gu_valid[uuid]), m_gu_usr_pct_has[k]), pc
   }
 }
+function emit_disks(   i, j, n, kd, t, first, mnt, avg_total, avg_used, pct) {
+  n = split(m_d_keys, kd, " ")
+  for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) {
+    if (m_d_used_sum[kd[j]] > m_d_used_sum[kd[i]]) { t = kd[i]; kd[i] = kd[j]; kd[j] = t }
+  }
+  first = 1
+  for (i = 1; i <= n; i++) {
+    mnt = kd[i]
+    if (!(m_d_cnt[mnt] > 0)) continue
+    if (first) { printf ",\"Disks\":["; first = 0 } else printf ","
+    avg_total = m_d_total_sum[mnt] / m_d_cnt[mnt]
+    avg_used = m_d_used_sum[mnt] / m_d_cnt[mnt]
+    pct = (avg_total > 0) ? avg_used * 100.0 / avg_total : 0
+    printf "{\"Mount\":\"%s\",\"Percent\":%s,\"TotalMiB\":%s,\"UsedMiB\":%s}", jstr(mnt), jnum(pct, 1), jnum(avg_total, 1), jnum(avg_used, 1)
+  }
+  if (!first) printf "]"
+}
 function emit_record(   i, n, first, uuid) {
   printf "{\"Version\":2,\"Record\":{\"Timestamp\":\"%s:00\",\"SampleCount\":%d,\"Servers\":[{", sp_minute, m_total
   printf "\"Id\":\"%s\",\"Label\":\"%s\",\"Host\":\"%s\",", jstr(sp_id), jstr(sp_label), jstr(sp_host)
@@ -302,7 +334,9 @@ function emit_record(   i, n, first, uuid) {
     }
     printf "}"
   }
-  printf "]}]}}"
+  printf "]"
+  emit_disks()
+  printf "}]}}"
   printf "\n"
 }
 BEGIN {
@@ -317,6 +351,12 @@ BEGIN {
   delete m_cpu_usr_max_pcount
   delete m_mem_usr_max_pcount
   delete m_gu_usr_max_pcount
+  m_d_keys = ""
+  delete m_d_seen
+  delete m_d_cnt
+  delete m_d_total_sum
+  delete m_d_used_sum
+  delete m_d_dev
   reset_sample()
 }
 /^__SP_SAMPLE__$/ {
@@ -358,6 +398,19 @@ BEGIN {
     next
   }
   if ($0 == "GPUS_BEGIN") { in_gpus = 1; next }
+  if ($0 == "DISKS_END") { in_disks = 0; next }
+  if (in_disks) {
+    nf2 = split($0, df2, "\t")
+    if (nf2 >= 5 && isnum(df2[3]) && isnum(df2[4])) {
+      dmount = df2[2]
+      s_d_dev[dmount] = df2[1]
+      s_d_total[dmount] = df2[3] + 0
+      s_d_used[dmount] = df2[4] + 0
+      if (!(dmount in s_d_seen)) { s_d_seen[dmount] = 1; s_d_list = s_d_list " " dmount }
+    }
+    next
+  }
+  if ($0 == "DISKS_BEGIN") { in_disks = 1; next }
   eq = index($0, "=")
   if (eq <= 0) next
   key = substr($0, 1, eq - 1)
@@ -439,16 +492,21 @@ pub fn generate_agent_config(
     server_host: &str,
     interval_seconds: u32,
     retention_days: u32,
+    scan_enabled: bool,
+    scan_hour: u32,
 ) -> String {
     let interval = interval_seconds.clamp(1, 3600);
     let retention = retention_days.clamp(1, 3650);
+    let scan_hour = scan_hour.clamp(0, 23);
     format!(
-        "interval={}\nretention_days={}\nserver_id={}\nserver_label={}\nserver_host={}\n",
+        "interval={}\nretention_days={}\nserver_id={}\nserver_label={}\nserver_host={}\nscan_enabled={}\nscan_hour={}\n",
         interval,
         retention,
         sanitize_agent_value(server_id),
         sanitize_agent_value(label),
-        sanitize_agent_value(server_host)
+        sanitize_agent_value(server_host),
+        if scan_enabled { 1 } else { 0 },
+        scan_hour
     )
 }
 
@@ -458,6 +516,8 @@ pub fn generate_agent_script(
     server_host: &str,
     interval_seconds: u32,
     retention_days: u32,
+    scan_enabled: bool,
+    scan_hour: u32,
     sample_script: &str,
 ) -> String {
     let interval = interval_seconds.clamp(1, 3600);
@@ -481,6 +541,8 @@ sp_retention_days={retention}
 sp_server_id="{safe_id}"
 sp_server_label="{safe_label}"
 sp_server_host="{safe_host}"
+sp_scan_enabled={scan_enabled}
+sp_scan_hour={scan_hour}
 
 sp_current=""
 
@@ -513,11 +575,15 @@ sp_reload_config() {{
         server_id=*) sp_server_id=${{sp_line#*=}} ;;
         server_label=*) sp_server_label=${{sp_line#*=}} ;;
         server_host=*) sp_server_host=${{sp_line#*=}} ;;
+        scan_enabled=*) sp_scan_enabled=${{sp_line#*=}} ;;
+        scan_hour=*) sp_scan_hour=${{sp_line#*=}} ;;
       esac
     done < "$sp_base/config"
   fi
   case "$sp_interval" in *[!0-9]*|''|0*) sp_interval=5 ;; esac
   case "$sp_retention_days" in *[!0-9]*|''|0*) sp_retention_days=30 ;; esac
+  case "$sp_scan_enabled" in 1) ;; *) sp_scan_enabled=0 ;; esac
+  case "$sp_scan_hour" in *[!0-9]*|'') sp_scan_hour=3 ;; esac
 }}
 
 sp_prune() {{
@@ -536,6 +602,19 @@ sp_prune() {{
       rm -f "$sp_file" 2>/dev/null
     fi
   done
+}}
+
+sp_maybe_scan() {{
+  [ "$sp_scan_enabled" = "1" ] || return 0
+  sp_today=$(date +%Y-%m-%d 2>/dev/null) || return 0
+  [ -f "$sp_state/last-scan-day" ] && [ "$(cat "$sp_state/last-scan-day" 2>/dev/null)" = "$sp_today" ] && return 0
+  sp_hour=$(date +%H 2>/dev/null) || return 0
+  case "$sp_hour" in *[!0-9]*|'') return 0 ;; esac
+  [ "$sp_hour" -lt "$sp_scan_hour" ] && return 0
+  echo "$sp_today" > "$sp_state/last-scan-day" 2>/dev/null
+  [ -f "$sp_base/scan.sh" ] || return 0
+  export SERVERPULSE_SERVER_ID="$sp_server_id"
+  ( cd "$HOME" && if command -v setsid >/dev/null 2>&1; then nohup setsid sh "$sp_base/scan.sh" >>"$sp_base/scan.log" 2>&1 </dev/null & else nohup sh "$sp_base/scan.sh" >>"$sp_base/scan.log" 2>&1 </dev/null & fi )
 }}
 
 while :; do
@@ -557,6 +636,7 @@ while :; do
   cat "$sp_state/sample.tmp" >> "$sp_state/samples-$sp_current" 2>/dev/null
   rm -f "$sp_state/sample.tmp" 2>/dev/null
   touch "$sp_state/heartbeat" 2>/dev/null
+  sp_maybe_scan
   sp_prune
   sleep "$sp_interval" 2>/dev/null || break
 done
@@ -566,6 +646,8 @@ done
         safe_id = safe_id,
         safe_label = safe_label,
         safe_host = safe_host,
+        scan_enabled = if scan_enabled { 1 } else { 0 },
+        scan_hour = scan_hour.clamp(0, 23),
         awk = AWK_AGGREGATOR,
         sample = sample_script.trim_end()
     )

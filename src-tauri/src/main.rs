@@ -1554,6 +1554,8 @@ async fn deploy_and_start_agent(
         &server.host,
         interval_seconds,
         retention_days,
+        true,
+        3,
         SAMPLE_SCRIPT,
     );
     let config_text = serverpulse_core::generate_agent_config(
@@ -1562,6 +1564,8 @@ async fn deploy_and_start_agent(
         &server.host,
         interval_seconds,
         retention_days,
+        true,
+        3,
     );
     let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text);
 
@@ -1655,6 +1659,8 @@ async fn restart_agent(
         &server.host,
         interval,
         retention,
+        true,
+        3,
         SAMPLE_SCRIPT,
     );
     let config_text = serverpulse_core::generate_agent_config(
@@ -1663,6 +1669,8 @@ async fn restart_agent(
         &server.host,
         interval,
         retention,
+        true,
+        3,
     );
     let inject_sh = serverpulse_core::generate_agent_inject_script(&agent_sh, &config_text);
     let _ = ssh.execute_short_command(&target, &inject_sh).await;
@@ -1697,6 +1705,8 @@ async fn update_agent_config(
         &server.host,
         interval_seconds,
         retention_days,
+        true,
+        3,
     );
     let config_sh = serverpulse_core::generate_agent_config_script(&config_text);
     let ssh = SystemOpenSsh::default();

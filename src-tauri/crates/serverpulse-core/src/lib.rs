@@ -783,12 +783,16 @@ GPU_USER_STATUS=ok"#;
 
     #[test]
     fn agent_script_generation_and_substitution() {
-        let script = generate_agent_script("srv-1", "My Server", "10.0.0.1", 10, 60, "echo SAMPLE");
+        let script = generate_agent_script("srv-1", "My Server", "10.0.0.1", 10, 60, true, 3, "echo SAMPLE");
         assert!(script.contains("sp_interval=10"));
         assert!(script.contains("sp_retention_days=60"));
         assert!(script.contains("sp_server_id=\"srv-1\""));
         assert!(script.contains("sp_server_label=\"My Server\""));
         assert!(script.contains("echo SAMPLE"));
+        assert!(script.contains("sp_scan_enabled=1"));
+        assert!(script.contains("sp_scan_hour=3"));
+        assert!(script.contains("m_d_keys"));
+        assert!(script.contains("emit_disks"));
     }
 
     #[test]
