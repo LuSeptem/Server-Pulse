@@ -46,12 +46,13 @@ function getVramPercent(gpu: GpuMetric) {
   return 0
 }
 
-function isTargetActive(kind: 'cpu' | 'memory' | 'vram' | 'disk', gpuIndex?: number) {
+function isTargetActive(kind: 'cpu' | 'memory' | 'vram' | 'disk', gpuIndex?: number, mount?: string) {
   if (!currentTarget.value) return false
   return (
     currentTarget.value.serverId === props.server.id &&
     currentTarget.value.kind === kind &&
-    currentTarget.value.gpuIndex === gpuIndex
+    currentTarget.value.gpuIndex === gpuIndex &&
+    currentTarget.value.mount === mount
   )
 }
 
@@ -214,8 +215,8 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
         v-if="worstDisk"
         class="metric is-interactive"
         :class="{
-          'is-active': isTargetActive('disk'),
-          'is-pinned': isTargetActive('disk') && isPinned
+          'is-active': isTargetActive('disk', undefined, worstDisk.mount),
+          'is-pinned': isTargetActive('disk', undefined, worstDisk.mount) && isPinned
         }"
         title="查看磁盘各用户占用 (点击可固定)"
         @mouseenter="handleDiskEnter(worstDisk, $event)"
@@ -287,6 +288,10 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
           v-for="disk in snapshot.disks"
           :key="disk.mount"
           class="disk-row is-interactive"
+          :class="{
+            'is-active': isTargetActive('disk', undefined, disk.mount),
+            'is-pinned': isTargetActive('disk', undefined, disk.mount) && isPinned
+          }"
           @mouseenter="handleDiskEnter(disk, $event)"
           @mouseleave="onTargetMouseLeave"
           @click.stop="handleDiskClick(disk, $event)"

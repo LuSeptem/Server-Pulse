@@ -59,7 +59,8 @@ export function useUserUsagePopup() {
     if (
       currentTarget.value?.serverId !== target.serverId ||
       currentTarget.value?.kind !== target.kind ||
-      currentTarget.value?.gpuIndex !== target.gpuIndex
+      currentTarget.value?.gpuIndex !== target.gpuIndex ||
+      currentTarget.value?.mount !== target.mount
     ) {
       isExpanded.value = false
     }
@@ -107,7 +108,8 @@ export function useUserUsagePopup() {
     const isSame =
       currentTarget.value?.serverId === target.serverId &&
       currentTarget.value?.kind === target.kind &&
-      currentTarget.value?.gpuIndex === target.gpuIndex
+      currentTarget.value?.gpuIndex === target.gpuIndex &&
+      currentTarget.value?.mount === target.mount
 
     if (isSame && isPinned.value) {
       close(true)
