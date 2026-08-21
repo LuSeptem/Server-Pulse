@@ -146,7 +146,7 @@ for sp_mount in $sp_mounts; do
     used = usedk + 0
     pct = total > 0 ? used * 100.0 / total : 0
     serverid = ENVIRON["SERVERPULSE_SERVER_ID"]
-    printf "{\"kind\":\"diskAttribution\",\"serverId\":\"%s\",\"scannedAt\":\"%s\",\"mount\":\"%s\",\"device\":\"%s\",\"fstype\":\"%s\",\"totalMib\":%.0f,\"usedMib\":%.0f,\"percent\":%.2f,\"status\":\"%s\",\"durationSeconds\":%d,\"skippedEntries\":%d,\"users\":[", jstr(serverid), finished, jstr(mnt), jstr(dev), jstr(fstype), total / 1024, used / 1024, pct, status, dur + 0, skipped + 0
+    printf "{\"kind\":\"diskAttribution\",\"serverId\":\"%s\",\"scannedAt\":\"%s\",\"mount\":\"%s\",\"device\":\"%s\",\"fsType\":\"%s\",\"totalMib\":%.0f,\"usedMib\":%.0f,\"percent\":%.2f,\"status\":\"%s\",\"durationSeconds\":%d,\"skippedEntries\":%d,\"users\":[", jstr(serverid), finished, jstr(mnt), jstr(dev), jstr(fstype), total / 1024, used / 1024, pct, status, dur + 0, skipped + 0
     first = 1
   }
   {
