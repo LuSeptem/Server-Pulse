@@ -212,3 +212,16 @@ if [ -n "$metrics_tmp" ] && [ -f "$metrics_tmp/gpus" ]; then
   fi
 fi
 echo "GPU_USER_STATUS=$gpu_query_status"
+
+echo "DISKS_BEGIN"
+df -kTP 2>/dev/null | awk '
+NR > 1 {
+  if (NF >= 7) { dev = $1; fstype = $2; total = $3; used = $4; mount = $7 }
+  else if (NF == 6) { dev = $1; fstype = ""; total = $2; used = $3; mount = $6 }
+  else { next }
+  if (dev ~ /^(tmpfs|devtmpfs|overlay|shm|none|udev|squashfs|cgroup|ramfs|aufs|proc|sysfs|devpts|mqueue|hugetlbfs|binfmt_misc|configfs|securityfs|pstore|debugfs|tracefs|bpf|autofs|efivarfs|nsfs)/) next
+  if (mount ~ /^\/(proc|sys|dev|run|boot\/efi)(\/|$)/) next
+  if (total + 0 <= 0) next
+  printf "%s\t%s\t%s\t%s\t%s\n", dev, mount, total, used, fstype
+}'
+echo "DISKS_END"
