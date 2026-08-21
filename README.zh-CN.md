@@ -6,13 +6,13 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 仓库种子配置默认提供 `3090` 和 `a6000` 两个 SSH 别名。已有的密钥免密登录和 `ssh-agent` 配置可以继续使用，也可以在服务器管理窗口中使用普通账户密码。
 
-当前版本：**v1.1.0** · [中英双语更新说明](CHANGELOG.md)
+当前版本：**v2.0.0** · [中英双语更新说明](CHANGELOG.md)
 
-## Tauri 2.0 Preview
+## Tauri 2.0
 
-`codex/tauri-port` 分支包含跨平台重写版本。现有 PowerShell/WPF 版本通过 `port-baseline-v1.1.0` 标签保留，新版本在同一仓库中独立开发。Preview 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不纳入 v1。
+`main` 分支现在提供 Tauri 2 跨平台应用。旧版 PowerShell/WPF 实现仅通过 `legacy/v1.1.0` 分支和 `port-baseline-v1.1.0` 回滚标签保留。v2.0.0 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不纳入当前版本。
 
-当前垂直闭环已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现与诊断、针对 Windows OpenSSH `ssh-keyscan`/sntrup 兼容性问题的主机密钥探测回退、旧版 Windows 服务器配置兼容、主机指纹确认、系统凭据库与仅本次会话密码、持久化分帧 SSH 采集、重试退避和脱敏错误事件。Preview 未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，但代码保持可编译兼容。
+v2.0.0 已包含 Vue 3 + TypeScript 监控浮窗、Pinia 事件状态、ECharts 历史页、托盘与次级窗口、Tokio 采集任务、canonical POSIX 采样脚本、JSON/JSONL 存储、数据根目录迁移基础能力、系统 OpenSSH、OpenSSH 配置别名发现与诊断、针对 Windows OpenSSH `ssh-keyscan`/sntrup 兼容性问题的主机密钥探测回退、旧版 Windows 服务器配置兼容、主机指纹确认与变更阻断、系统凭据库与仅本次会话密码、持久化分帧 SSH 采集、重试退避、按分钟加权历史聚合和脱敏错误事件。构建产物未签名，仅用于内部测试。macOS 窗口行为尚未在真实 Mac 上验证，但代码保持可编译兼容。
 
 在仓库根目录执行：
 
@@ -25,7 +25,7 @@ cargo test --workspace --manifest-path src-tauri/Cargo.toml
 npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
 ```
 
-完整范围、里程碑、CI 矩阵、迁移规则和验收门槛见 [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md)。该分支不应视为稳定公开发行版。
+完整范围、里程碑、CI 矩阵、迁移规则和验收门槛见 [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md)。旧版 WPF 仅作为回滚/对照基线，不是第二套当前应用。
 
 ## 功能概览
 
@@ -65,7 +65,7 @@ npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --c
 
 ### 启动与运行
 
-- **便携版直接运行**：双击根目录的 `ServerPulse.exe`（已编译的独立便携版）。
+- **便携版直接运行**：双击根目录的 `ServerPulse-Portable.exe`（已编译的独立便携版）。
 - **开发模式**：
   ```powershell
   # 启动 Tauri 桌面开发窗口
@@ -76,7 +76,7 @@ npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --c
 - **生产构建**：
   ```powershell
   npm run build --prefix frontend
-  cargo build --release --manifest-path src-tauri/Cargo.toml
+  npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
   ```
 
 首次运行前可以验证现有免密配置：
@@ -243,14 +243,10 @@ Windows 凭据管理器是 Windows 自带的安全存储，不需要安装。Ser
 
 ```text
 server_monitoring/
-├─ ServerPulse.exe          # 可直接运行的 Windows 宿主
-├─ ServerPulse.ps1          # 主窗口入口
-├─ Start Server Pulse.vbs   # 兼容启动器
+├─ ServerPulse-Portable.exe # 可选的本地 Windows 便携版
 ├─ assets/                  # SVG/ICO 图标
 ├─ config/                  # 首次运行种子配置
-├─ scripts/                 # 构建脚本
-├─ src/                     # 采集、历史、存储、SSH、主题和宿主源码
-├─ frontend/                # Vue 3 + TypeScript Preview 界面
+├─ frontend/                # Vue 3 + TypeScript 界面
 ├─ src-tauri/               # Tauri 宿主与平台无关 Rust crate
 ├─ assets/serverpulse-sample.sh # canonical、仅 LF 的远端采样脚本
 ├─ tests/fixtures/           # 协议与历史黄金样例
@@ -266,9 +262,9 @@ server_monitoring/
 
 **服务器离线怎么办？** 运行 `ssh -o BatchMode=yes <别名> hostname`，检查别名、密钥、VPN、跳板机和主机指纹。一个服务器失败不会阻塞其他服务器。
 
-**Preview 把 SSH 别名解析到了错误地址？** 当当前用户的 `%USERPROFILE%\.ssh\config` 存在时，Preview 会把该文件显式传给 `ssh`、`ssh -G` 和 Windows 主机密钥探测。可运行 `ssh -F "$env:USERPROFILE\.ssh\config" -G -p 22 <用户>@<别名>`，检查输出中的 `hostname`；之后关闭旧的 Preview 实例，再启动重新构建的 portable EXE。
+**应用把 SSH 别名解析到了错误地址？** 当当前用户的 `%USERPROFILE%\.ssh\config` 存在时，应用会把该文件显式传给 `ssh`、`ssh -G` 和 Windows 主机密钥探测。可运行 `ssh -F "$env:USERPROFILE\.ssh\config" -G -p 22 <用户>@<别名>`，检查输出中的 `hostname`；之后关闭旧的应用实例，再启动重新构建的 portable EXE。
 
-**Windows 出现 `choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com`？** 这是部分 Win32-OpenSSH `ssh-keyscan.exe` 的已知兼容性问题。Preview 会自动改用 `ssh.exe` 和临时 `known_hosts` 完成主机密钥探测，不会修改用户的 `~/.ssh/known_hosts`；若仍失败，再检查 `ssh -V`、SSH 别名和网络环境。
+**Windows 出现 `choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com`？** 这是部分 Win32-OpenSSH `ssh-keyscan.exe` 的已知兼容性问题。应用会自动改用 `ssh.exe` 和临时 `known_hosts` 完成主机密钥探测，不会修改用户的 `~/.ssh/known_hosts`；若仍失败，再检查 `ssh -V`、SSH 别名和网络环境。
 
 **GPU 数量为 0？** 在远端执行 `nvidia-smi`；CPU 和内存不依赖 NVIDIA 工具。
 
@@ -278,11 +274,11 @@ server_monitoring/
 
 **窗口找不到了？** 触碰启用的贴边位置或点击托盘图标；若位置不可用，删除 `%LOCALAPPDATA%\\ServerPulse\\settings.json` 恢复默认位置。
 
-**启动 Preview 时为什么有终端窗口？** 请从资源管理器或快捷方式启动生成的 `serverpulse-tauri.exe`；Release 版本使用 GUI 子系统，不会主动创建控制台。如果从 Windows Terminal 中输入命令启动，父终端按设计会继续保持打开。
+**启动应用时为什么有终端窗口？** 请从资源管理器或快捷方式启动生成的 `ServerPulse-Portable.exe` 或 `serverpulse-tauri.exe`；Release 版本使用 GUI 子系统，不会主动创建控制台。如果从 Windows Terminal 中输入命令启动，父终端按设计会继续保持打开。
 
-**主界面显示“没有选择服务器”，但管理页的复选框已勾选？** 主界面和管理页是独立 WebView。Preview 会在加载 SSH 配置前先注册跨窗口 `servers.changed` 事件，并忽略较旧的初始服务器列表，避免启动期间保存的勾选状态被旧响应覆盖。请先关闭旧的 Preview 实例，再启动重新构建的 portable EXE。
+**主界面显示“没有选择服务器”，但管理页的复选框已勾选？** 主界面和管理页是独立 WebView。应用会在加载 SSH 配置前先注册跨窗口 `servers.changed` 事件，并忽略较旧的初始服务器列表，避免启动期间保存的勾选状态被旧响应覆盖。请先关闭旧的应用实例，再启动重新构建的 portable EXE。
 
-**SSH aliases 没有显示怎么办？** 打开“管理”并点击“重新加载”，检查页面显示的配置路径、已发现别名和读取错误。Preview 会读取 `~/.ssh/config` 及简单 `Include` 文件中的具体 `Host`，只含通配符的条目会被跳过。
+**SSH aliases 没有显示怎么办？** 打开“管理”并点击“重新加载”，检查页面显示的配置路径、已发现别名和读取错误。应用会读取 `~/.ssh/config` 及简单 `Include` 文件中的具体 `Host`，只含通配符的条目会被跳过。
 
 **如何报告问题？** 请附版本、Windows 版本、EXE/脚本模式、复现步骤和脱敏后的 `error.log`。不要上传历史目录、密码、私钥、真实主机地址或用户列表。
 

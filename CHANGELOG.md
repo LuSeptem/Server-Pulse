@@ -1,12 +1,12 @@
 # Changelog
 
-## Tauri 2.0 Preview — Unreleased
+## v2.0.0 — 2026-08-21
 
 ### 中文
 
 #### 新增
 
-- 新增 `codex/tauri-port` 同仓库重写分支、`port-baseline-v1.1.0` 基线标签，以及 Vue 3 + TypeScript + Pinia + ECharts 前端骨架。
+- 完成 Tauri 2 + Vue 3 + TypeScript + Pinia + ECharts 跨平台桌面应用，并将 `main` 作为当前实现；`legacy/v1.1.0` 与 `port-baseline-v1.1.0` 保留为回滚基线。
 - 新增 Tauri 2 Rust workspace：协议/历史核心、系统 OpenSSH、跨平台数据根目录、文件锁和 `keyring` 凭据抽象。
 - 新增 canonical LF-only POSIX 采样脚本、协议/历史黄金样例、Rust/Vitest 测试和 Windows/macOS CI 构建矩阵。
 - 新增实时 snapshot/status 事件、Tokio 采集任务、JSONL 历史写入、迁移预览/应用、数据根目录命令和托盘/管理/历史窗口。
@@ -14,11 +14,11 @@
 
 #### 变更
 
-- Preview 目标改为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端和服务器 Agent 控制移至 v1.1。
-- Preview 为未签名内部版本；macOS 透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验证。
-- Windows Release 桌面进程改为 GUI subsystem，SSH/askpass 子进程使用无控制台启动，避免 Preview 启动时额外弹出终端。
+- v2.0.0 目标为 Windows 10/11 x64 与 macOS Intel/Apple Silicon；Linux 桌面端不在当前版本范围内，服务器 Agent 的短命令控制继续保留。
+- v2.0.0 为未签名内部版本；macOS 透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验证。
+- Windows Release 桌面进程改为 GUI subsystem，SSH/askpass 子进程使用无控制台启动，避免应用启动时额外弹出终端。
 - 主浮窗增加可靠的拖拽与关闭按钮；管理页增加 SSH 配置诊断/重新加载和免密 SSH（密钥或 ssh-agent）选项。
-- 移除 `codex/tauri-port` 分支中的旧版 PowerShell/WPF 主机脚本与历史代码（旧版代码由 `main` / `legacy/v1.1.0` 完整保留），并生成独立便携版 `ServerPulse.exe`。
+- 将旧版 PowerShell/WPF 实现从当前运行路径移出，旧版代码由 `legacy/v1.1.0` 与 `port-baseline-v1.1.0` 完整保留，并生成独立便携版 `ServerPulse-Portable.exe`。
 
 #### 修复
 
@@ -27,6 +27,12 @@
 - 强化 SSH 配置与别名解析可靠性：集成 `dirs::home_dir()` Win32 原生主目录定位，优化 Pinia Store 初始化与容灾逻辑，确保 `~/.ssh/config` 别名与候选主机始终稳定加载。
 - 修复保存服务器配置时出现的 `JSON error: expected value at line 1 column 1` 报错：完善 UTF-8 BOM（`\u{feff}`）与 UTF-16 编码识别解码，确保写入和合并旧版 PowerShell 遗留的 `servers.json` 时完全兼容。
 - 修复 SSH 监控采样阻塞并一直卡在 `connecting`/`rechecking` 的问题：为 OpenSSH 补充 `-T`（禁用伪终端分配）与远端指令 `sh -s`，并在发送脚本时严格清理回车符 `\r` 与及时关闭标准输入管道，使指标采样在毫秒级快速完成。
+- 修复 Tauri/Explorer 启动时 SSH 别名解析到错误目标的问题：显式使用当前用户的 SSH 配置文件，并让 `ssh`、`ssh -G` 和 Windows 主机密钥探测保持同一配置。
+- 修复 Windows 主机密钥探测参数错误导致目标地址被截断为 `0.0.0.5` 的问题，并保留受影响 Win32-OpenSSH `sntrup761x25519` 的安全回退路径。
+- 完成主机密钥确认与变更阻断：未知主机必须确认 SHA256 指纹，指纹变化直接阻断，应用专用 `known_hosts` 可忘记后重新验证，用户文件只读兼容。
+- 完成会话密码安全通道：支持保存到 OS credential store 或仅当前运行使用；密码只在主进程 zeroize 内存和一次性 askpass 通道中存在，不写入配置、参数、普通环境变量、日志或历史。
+- 完成每台服务器一个持久流式 SSH 会话：远端按帧输出、多帧连续解析，超时/损坏/断线按退避重连，不可重试认证错误暂停该服务器并保留结构化状态。
+- 完成 UTC 历史存储与本地日期查询：新记录统一写入带 `Z` 的 RFC3339 和 UTC 日期文件，查询按本地日转换 UTC 范围并兼容旧版无时区记录。
 - 在管理界面（Manage）为已有 SSH 服务器列表增加监控复选框（Monitor Checkbox），支持自由勾选/取消勾选任意服务器的监控状态，并即时启停后台采集与同步持久化配置。
 - 强化监控状态与前端画面同步链路：后端增加内存快照/状态注册表与 `get_monitoring_state` 全量查询指令，前端结合实时 Tauri 事件与防抖轮询双重同步，杜绝前端未挂载时事件漏接导致的画面空白。
 - 增强主界面服务器卡片呈现：支持 CPU、内存、GPU 卡数与 Host 概览，并增加独立 GPU 详细信息栏（GPU 索引、型号、核心利用率、显存占用与上限）。
@@ -50,15 +56,16 @@
   - Win32 全局光标追踪（Global Cursor Tracking）与 8px 无圆角深黑发光手柄：引入原生 `GetCursorPos` 每 75ms 周期巡检全局物理光标，隐藏时在屏幕边缘呈现 8px 纯色直角黑边手柄（`#0d100e` 搭配 `4px #4ade80` 亮绿发光外框）；光标靠近屏幕边缘 24px 范围内必定 100% 触发平滑展开并激活置顶；
   - 移出自动收起与动画：鼠标离开窗口区域 600ms（或失焦 300ms）后自动平滑缩进隐藏；下拉菜单处于展开操作状态时暂停自动收起，窗口被拖离边缘（> 35px）时自动解除贴边状态。
 
-#### 未完成
+#### 已知限制
 
-- 主机指纹确认/变更阻断的完整界面、仅本次会话密码通道、按分钟加权聚合、完整服务器编辑、Agent 注入控制和 macOS 实机验收仍需在 Preview 合并前完成。
+- 构建产物当前未签名、未公证，仅用于内部测试。
+- macOS 代码保持编译兼容，但透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验收。
 
 ### English
 
 #### Added
 
-- Added the `codex/tauri-port` same-repository rewrite branch, the `port-baseline-v1.1.0` baseline tag, and the Vue 3 + TypeScript + Pinia + ECharts frontend scaffold.
+- Completed the Tauri 2 + Vue 3 + TypeScript + Pinia + ECharts desktop application and made `main` the current implementation; `legacy/v1.1.0` and `port-baseline-v1.1.0` remain available as rollback baselines.
 - Added a Tauri 2 Rust workspace for protocol/history core logic, system OpenSSH, cross-platform data roots, file locks, and the `keyring` credential abstraction.
 - Added the canonical LF-only POSIX sampler, protocol/history golden fixtures, Rust/Vitest tests, and a Windows/macOS CI build matrix.
 - Added Tokio collectors, typed snapshot/status events, JSONL history writes, migration preview/apply commands, data-root commands, and tray/manage/history windows.
@@ -66,11 +73,11 @@
 
 #### Changed
 
-- The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop and server Agent control move to v1.1.
-- The Preview is unsigned and for internal testing; macOS transparency, tray, edge docking, and sleep/resume remain unverified on physical hardware.
-- The Windows Release desktop process now uses the GUI subsystem, and SSH/askpass children use no-console creation flags so the Preview does not open an extra terminal on startup.
+- v2.0.0 targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop is out of scope for this release, while the server Agent short-command controls remain available.
+- v2.0.0 is unsigned and for internal testing; macOS transparency, tray, edge docking, and sleep/resume remain unverified on physical hardware.
+- The Windows Release desktop process now uses the GUI subsystem, and SSH/askpass children use no-console creation flags so the application does not open an extra terminal on startup.
 - Added reliable main-window dragging and close controls, SSH config diagnostics/reload, and an explicit passwordless SSH (key or ssh-agent) option in Manage.
-- Removed legacy PowerShell/WPF host scripts and files from `codex/tauri-port` (all preserved on `main` / `legacy/v1.1.0`), and built the standalone portable `ServerPulse.exe`.
+- Moved the legacy PowerShell/WPF implementation out of the current runtime path, preserving it on `legacy/v1.1.0` and `port-baseline-v1.1.0`, and built the standalone portable `ServerPulse-Portable.exe`.
 
 #### Fixed
 
@@ -79,6 +86,12 @@
 - Hardened SSH config alias and candidate loading: integrated `dirs::home_dir()` Win32 native home resolution, and made store initialization resilient so `~/.ssh/config` aliases are always discovered and displayed.
 - Fixed `JSON error: expected value at line 1 column 1` when saving server configs: added transparent UTF-8 BOM (`\u{feff}`) and UTF-16 decoding across config and history parsers, ensuring seamless compatibility with legacy PowerShell `servers.json`.
 - Fixed SSH sampling process hanging indefinitely on `connecting`/`rechecking`: added OpenSSH `-T` (no pseudo-terminal) and remote command `sh -s`, stripped carriage returns `\r`, and closed stdin immediately to guarantee fast metric execution.
+- Fixed Tauri/Explorer launches resolving SSH aliases to the wrong target by explicitly using the current user's SSH config for `ssh`, `ssh -G`, and Windows host-key probing.
+- Fixed the Windows host-key probe argument bug that truncated the target to `0.0.0.5`, while retaining the safe fallback for affected Win32-OpenSSH `sntrup761x25519` builds.
+- Completed host-key confirmation and change blocking: unknown hosts require SHA256 fingerprint confirmation, changed fingerprints are blocked, the app-owned `known_hosts` can be forgotten and re-verified, and the user's file remains read-only.
+- Completed the session-password security channel: passwords may be saved in the OS credential store or used for the current run only; they exist only in zeroized main-process memory and a one-time askpass channel, never in config, arguments, ordinary environment variables, logs, or history.
+- Completed one persistent framed SSH session per server: the remote sampler emits frames, the client parses them continuously, and timeouts/corruption/disconnects reconnect with backoff while non-retryable authentication errors pause only that server with a structured status.
+- Completed UTC history storage and local-date querying: new records use `Z` RFC3339 timestamps and UTC date files, local-day queries convert to UTC ranges, and legacy timezone-less records remain readable.
 - Added monitor toggle checkboxes to the Manage view server list, allowing users to easily enable or disable monitoring for any configured SSH server with immediate background start/stop and persistent config saves.
 - Hardened monitoring state synchronization between backend and frontend: added in-memory state caching in Rust and the `get_monitoring_state` IPC command, backed by both Tauri events and reactive polling in Pinia to eliminate missed startup events.
 - Enhanced server cards on the main dashboard with complete metric grids (CPU, Memory, GPU count, Hostname) and per-GPU breakdown rows (GPU model, utilization, VRAM usage/limit).
@@ -95,9 +108,10 @@
 - Added clear IP address and hostname example hints to the Add Server form: updated field label to `SSH alias / Hostname / IP` and placeholder to `123.23.23.23 / gpu-01`.
 - Implemented top, left, and right screen edge docking and auto-hide: integrated locked `savedWorkArea` caching, native `GetCursorPos` global cursor tracking, 8px topmost solid sharp edge handles, 150ms smooth sliding animations, hover-to-reveal with 600ms debounce hide, dropdown interaction protection, and persistent EdgeButton toggle.
 
-#### Remaining
+#### Known limitations
 
-- Full host-key confirmation/change blocking UX, the session-only password channel, minute-weighted aggregation, complete server editing, Agent injection/control, and physical Mac acceptance remain required before Preview merge.
+- Build artifacts are currently unsigned and unnotarized for internal testing only.
+- macOS code remains compile-compatible, but transparency, tray, edge docking, and sleep/resume have not been accepted on physical Mac hardware.
 
 ## v1.1.0 — 2026-08-15
 

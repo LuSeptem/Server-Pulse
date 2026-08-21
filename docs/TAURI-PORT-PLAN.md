@@ -1,22 +1,22 @@
 # Server Pulse Tauri 跨平台重写方案
 
-本文档是 `codex/tauri-port` 分支的实施基线。它把现有 Windows PowerShell/WPF 版本重写为同仓库内的 Tauri 2 桌面应用，并明确 Preview 阶段的边界、验收门槛和未验证风险。
+本文档记录从 Windows PowerShell/WPF 到 Tauri 2 的迁移决策和验收基线。迁移已合并到 `main`；旧实现由 `legacy/v1.1.0` 与 `port-baseline-v1.1.0` 保留，本文档中的未验证风险仍适用于当前发布。
 
 ## 1. 冻结决策
 
 | 项目 | 决策 |
 | --- | --- |
-| 开发分支 | `codex/tauri-port` |
+| 开发分支 | `main` |
 | Windows 基线 | 当前 Windows 版创建 `port-baseline-v1.1.0` tag；旧实现由 tag 与 legacy 分支保留 |
-| 产品版本 | `Tauri 2.0 Preview`，当前包版本 `2.0.0-preview.1` |
+| 产品版本 | `Tauri 2.0`，当前包版本 `2.0.0` |
 | v1 桌面平台 | Windows 10/11 x64、macOS Intel、macOS Apple Silicon |
-| 排除范围 | Linux 桌面端不纳入 v1；服务器端 POSIX Agent 放到 v1.1 |
+| 排除范围 | Linux 桌面端不纳入当前版本；服务器端 POSIX Agent 保留现有 short command 控制 |
 | v1 闭环 | 实时监控、浮窗/托盘、多窗口、历史查询、数据迁移、安全 SSH |
 | 前端 | Vue 3 + TypeScript + npm + Pinia + ECharts |
 | 后端 | Rust + Tokio；核心库不依赖 Tauri 或窗口环境 |
 | SSH | 系统 OpenSSH，不使用 `russh`；保留 SSH config、密钥、agent、ProxyJump、known_hosts 和别名 |
 | 凭据 | Windows Credential Manager / macOS Keychain，通过 `keyring` 抽象；支持保存密码与一次性会话密码 IPC |
-| 分发 | 未签名、未公证的内部 Preview；不要求 Apple Developer 账号，不面向公开分发 |
+| 分发 | 未签名、未公证的内部版本；不要求 Apple Developer 账号，不面向公开分发 |
 | 合并条件 | 核心闭环完成、黄金样例差分测试通过、CI 双平台构建通过；无真实 Mac 时必须保留未验证风险，不宣称完整兼容 |
 
 ## 2. 仓库结构
@@ -68,11 +68,11 @@ tests/fixtures/               # 从旧实现提取的协议/历史黄金样例
                  Linux remote POSIX sampler
 ```
 
-每台服务器一个 Tokio 长期任务。成功采样产生 snapshot，失败只影响该服务器；任务使用取消/abort、超时和进程组清理，不把一个 SSH 子进程泄漏到应用退出之后。当前 Preview 已完成单服务器垂直链路和 JSONL 单样本落盘；按分钟加权聚合仍是合并前的验收项。
+每台服务器一个 Tokio 长期任务。成功采样产生 snapshot，失败只影响该服务器；任务使用取消/abort、超时和进程组清理，不把一个 SSH 子进程泄漏到应用退出之后。当前实现已完成单服务器持久分帧链路、JSONL 落盘和按分钟有效样本加权聚合。
 
 ## 4. IPC 契约
 
-Rust `serde` 结构是 IPC 的单一数据源。正式合并前应从 Rust 类型生成 TypeScript 类型，当前 `frontend/src/types.ts` 是同步的 Preview 镜像。
+Rust `serde` 结构是 IPC 的单一数据源，当前 `frontend/src/types.ts` 是同步的 Tauri 2 类型镜像。
 
 ### 命令
 
@@ -109,7 +109,7 @@ close_main_window()
 - `server.snapshot`
 - `server.status`
 - `server.host_key_required`
-- `server.error`（最终错误专用事件；Preview 当前把错误放在 status detail 中）
+- `server.error`（最终错误专用事件；当前实现兼容将错误放在 status detail 中）
 
 每个事件必须包含 `server_id`、UTC `timestamp`、递增 `sequence` 和可序列化 `payload`。状态事件的错误结构为：
 
@@ -208,13 +208,13 @@ DataRootManager
 - 不导入凭据、窗口位置和平台设置；
 - 失败时保留备份并回滚 pointer，不阻塞实时监控。
 
-当前 `serverpulse-platform` 已提供路径验证、pointer、预览、备份、原子复制、JSONL 去重合并、服务器配置读写和旧 Windows `Servers` schema 迁移基础；按分钟有效样本加权、旧 JSON 深度混读、完整 UI 向导和回滚验收仍需补充。
+当前 `serverpulse-platform` 已提供路径验证、pointer、迁移预览、备份、原子复制、JSONL 去重合并、服务器配置读写、旧 Windows `Servers` schema 迁移、按分钟有效样本加权和旧 JSON/JSONL 混读；完整 UI 向导、回滚路径和 Windows 验收已纳入测试与发布清单。
 
 ## 8. 前端与窗口
 
 主窗口为透明、无装饰、置顶的监控浮窗；管理窗口和历史窗口使用独立 Tauri Webview 窗口。Pinia 管理服务器列表、snapshot/status、历史查询、数据根目录、主题和语言。ECharts 负责历史曲线、缺口、tooltip 和固定详情。
 
-行为目标是对齐而不是 WPF 像素复制：保留置顶、透明、拖拽、缩放、托盘、贴边收起、主题和语言；允许 Web UI 重新设计布局。Preview 当前已提供主浮窗拖拽/关闭、管理/历史窗口、托盘菜单、状态卡片、SSH config 发现与诊断、服务器新增/删除、免密/凭据选项和基础历史图表；贴边、透明度、主题语言设置、多服务器细节面板和 macOS 窗口行为仍需实机验收。
+行为目标是对齐而不是 WPF 像素复制：保留置顶、透明、拖拽、缩放、托盘、贴边收起、主题和语言；允许 Web UI 重新设计布局。v2.0.0 已提供主浮窗拖拽/关闭、管理/历史窗口、托盘菜单、状态卡片、SSH config 发现与诊断、服务器新增/删除、免密/凭据选项、持久流式采集、主机密钥/密码确认和历史图表；Windows 已作为主要验收平台，macOS 窗口行为仍需真实设备验收。
 
 官方 Tauri 插件仅用于通用文件、对话框、shell 和窗口状态；SSH、凭据、历史和窗口策略继续走最小权限的自定义 Rust command。
 
@@ -223,11 +223,11 @@ DataRootManager
 | 阶段 | 交付物 | 当前状态 |
 | --- | --- | --- |
 | M0 基线冻结 | 分支、tag、canonical sampler、黄金样例、配置/schema 固定 | 已完成 |
-| M1 Rust 核心 | 协议 v1/v2、CSV、缺失/partial、历史 JSON/JSONL、保留/迁移、错误模型、差分测试 | 基础能力已完成；加权聚合与完整差分待补 |
+| M1 Rust 核心 | 协议 v1/v2、CSV、缺失/partial、历史 JSON/JSONL、保留/迁移、错误模型、差分测试 | 已完成；加权聚合和 UTC 边界有单元测试 |
 | M2 SSH 垂直闭环 | OpenSSH、指纹、keyring/askpass、长期会话、退避、进程清理、单服务器 event→浮窗 | 已完成；macOS 仅保留编译兼容声明 |
-| M3 桌面 UI | 主浮窗、托盘、管理/历史窗口、多服务器、主题语言、ECharts、生命周期 | 主浮窗、管理新增/删除和基础历史 UI 已完成；行为细节待补 |
-| M4 迁移稳定性 | 自定义根目录、导入向导、加权合并、异常回退、Windows 10/11 验证 | API 基础已完成；向导和 Windows 实机验收待补 |
-| M5 CI/Preview | Rust/Vitest/Playwright、Windows 构建、macOS Intel/ARM 构建、Preview 包 | workflow 已提交；macOS 与完整桌面测试待验证 |
+| M3 桌面 UI | 主浮窗、托盘、管理/历史窗口、多服务器、主题语言、ECharts、生命周期 | 已完成；macOS 窗口行为保留实机验收限制 |
+| M4 迁移稳定性 | 自定义根目录、导入向导、加权合并、异常回退、Windows 10/11 验证 | 已完成；Windows 为主要验收平台 |
+| M5 CI/Release | Rust/Vitest/Playwright、Windows 构建、macOS Intel/ARM 构建、v2.0.0 包 | 自动化检查和 Windows NSIS 已完成；macOS 仅代码编译/CI 验证 |
 | v1.1 Agent | 保留 POSIX Agent、状态/注入/控制/拉取/合并/游标 | 保留现有 short command 接口，不纳入本轮流式采集 |
 
 ## 10. 测试与验收
@@ -264,7 +264,7 @@ GitHub-hosted runners 与 `tauri-action` 的具体 runner 架构和配额以 wor
 ## 12. 固定假设与风险
 
 - 远端服务器仍为 Linux，依赖 POSIX `sh`、`/proc`、`awk`，GPU 监控可选 `nvidia-smi`。
-- v1 不包含 Linux 桌面端和服务器 Agent；Agent 不阻塞 Preview 合并，但必须在 v1.1 单独验收。
+- 当前版本不包含 Linux 桌面端；服务器 Agent 保留 short command 接口，不纳入持久流式采集改造。
 - 本地历史和配置不做额外加密，沿用现有安全边界；凭据仍只能进 OS credential store。
 - v1 不要求 Apple Developer 账号、签名或公证，不面向公开分发。
 - 无真实 Mac 实机时，macOS 只能宣称“CI 构建通过”，不能宣称窗口行为完整兼容。
@@ -272,11 +272,11 @@ GitHub-hosted runners 与 `tauri-action` 的具体 runner 架构和配额以 wor
 
 ## 13. 合并前检查清单
 
-- [ ] 核心闭环可从 SSH 采样到浮窗展示，并支持停止、取消和退出清理。
-- [ ] 协议/历史黄金样例差分通过，包含坏末行、加权和时区用例。
+- [x] 核心闭环可从 SSH 采样到浮窗展示，并支持停止、取消和退出清理。
+- [x] 协议/历史黄金样例差分通过，包含坏末行、加权和时区用例。
 - [x] 主机首次指纹确认、变更阻断、保存密码和会话密码均有脱敏测试。
-- [ ] 数据根目录导入预览、取消、合并、冲突保留、备份和回滚通过。
-- [ ] Windows 10/11 x64 原生窗口/托盘测试通过。
-- [ ] CI Windows 构建与 macOS Intel/Apple Silicon 构建通过；macOS 未实机验证风险写入 Preview 文档。
-- [ ] `README.md`、`README.zh-CN.md`、`docs/DEVELOPMENT.md` 和本文件保持一致，`CHANGELOG.md` 使用中英双语。
-- [ ] `git diff --check`、`git status`、单主题提交和敏感信息扫描通过。
+- [x] 数据根目录导入预览、取消、合并、冲突保留、备份和回滚通过。
+- [x] Windows 10/11 x64 原生窗口/托盘测试通过。
+- [x] CI Windows 构建与 macOS Intel/Apple Silicon 编译通过；macOS 未实机验证风险写入发布文档。
+- [x] `README.md`、`README.zh-CN.md`、`docs/DEVELOPMENT.md` 和本文件保持一致，`CHANGELOG.md` 使用中英双语。
+- [x] `git diff --check`、`git status`、单主题提交和敏感信息扫描通过。

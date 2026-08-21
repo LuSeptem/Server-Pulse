@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use chrono::{NaiveDate, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
 use serverpulse_core::{AppError, MetricSnapshot, RetryState, ServerConfig};
 use serverpulse_platform::{
     read_server_configs, write_server_configs, ConflictMode, CredentialStore, DataRootManager,
@@ -10,7 +11,6 @@ use serverpulse_ssh::{
     HostKeyChallenge, HostKeyState, KnownHostsManager, ScannedHostKey, SshStream, SshTarget,
     SshTransport, SystemOpenSsh,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -220,7 +220,9 @@ fn load_servers() -> Result<Vec<ServerConfig>, String> {
         return Ok(discovered);
     }
 
-    let repository_seed = std::env::current_dir().map_err(to_command_error)?.join("config/servers.json");
+    let repository_seed = std::env::current_dir()
+        .map_err(to_command_error)?
+        .join("config/servers.json");
     if repository_seed.exists() {
         return parse_servers(&fs::read_to_string(repository_seed).map_err(to_command_error)?);
     }
@@ -228,46 +230,56 @@ fn load_servers() -> Result<Vec<ServerConfig>, String> {
 }
 
 fn writable_servers() -> Result<(std::path::PathBuf, Vec<ServerConfig>), String> {
-    let root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let root = DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?;
     let servers = read_server_configs(&root)
         .map_err(to_command_error)?
         .unwrap_or_else(discovered_servers);
     Ok((root, servers))
 }
 
-fn history_line(server: &ServerConfig, timestamp: &str, snapshot: &MetricSnapshot) -> Result<String, String> {
-    let gpus_json: Vec<serde_json::Value> = snapshot.gpus.iter().map(|gpu| {
-        serde_json::json!({
-            "Index": gpu.index,
-            "ValidSamples": 1,
-            "Name": gpu.name,
-            "Uuid": gpu.uuid,
-            "Utilization": gpu.utilization,
-            "MemoryUsedMiB": gpu.memory_used_mib,
-            "MemoryTotalMiB": gpu.memory_total_mib,
-            "TemperatureC": gpu.temperature_c,
-            "PowerDrawW": gpu.power_draw_w,
-            "PowerLimitW": gpu.power_limit_w,
-            "FanPercent": gpu.fan_percent,
-            "UserMemory": {
-                "Status": match gpu.user_memory_status {
-                    serverpulse_core::UserUsageStatus::Ok => "ok",
-                    serverpulse_core::UserUsageStatus::Partial => "partial",
-                    serverpulse_core::UserUsageStatus::Unavailable => "unavailable",
-                },
+fn history_line(
+    server: &ServerConfig,
+    timestamp: &str,
+    snapshot: &MetricSnapshot,
+) -> Result<String, String> {
+    let gpus_json: Vec<serde_json::Value> = snapshot
+        .gpus
+        .iter()
+        .map(|gpu| {
+            serde_json::json!({
+                "Index": gpu.index,
                 "ValidSamples": 1,
-                "Users": gpu.user_memory.iter().map(|u| {
-                    serde_json::json!({
-                        "Uid": u.uid,
-                        "Name": u.name,
-                        "UsedMiB": u.used_mib,
-                        "Percent": u.percent,
-                    })
-                }).collect::<Vec<_>>(),
-                "UnmappedProcesses": gpu.unmapped_processes,
-            },
+                "Name": gpu.name,
+                "Uuid": gpu.uuid,
+                "Utilization": gpu.utilization,
+                "MemoryUsedMiB": gpu.memory_used_mib,
+                "MemoryTotalMiB": gpu.memory_total_mib,
+                "TemperatureC": gpu.temperature_c,
+                "PowerDrawW": gpu.power_draw_w,
+                "PowerLimitW": gpu.power_limit_w,
+                "FanPercent": gpu.fan_percent,
+                "UserMemory": {
+                    "Status": match gpu.user_memory_status {
+                        serverpulse_core::UserUsageStatus::Ok => "ok",
+                        serverpulse_core::UserUsageStatus::Partial => "partial",
+                        serverpulse_core::UserUsageStatus::Unavailable => "unavailable",
+                    },
+                    "ValidSamples": 1,
+                    "Users": gpu.user_memory.iter().map(|u| {
+                        serde_json::json!({
+                            "Uid": u.uid,
+                            "Name": u.name,
+                            "UsedMiB": u.used_mib,
+                            "Percent": u.percent,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "UnmappedProcesses": gpu.unmapped_processes,
+                },
+            })
         })
-    }).collect();
+        .collect();
 
     serde_json::to_string(&serde_json::json!({
         "Version": 2,
@@ -337,12 +349,19 @@ fn credential_identity(server: &ServerConfig) -> String {
     )
 }
 
-fn local_day_utc_range(target_date: NaiveDate) -> Result<(chrono::DateTime<Utc>, chrono::DateTime<Utc>), String> {
+fn local_day_utc_range(
+    target_date: NaiveDate,
+) -> Result<(chrono::DateTime<Utc>, chrono::DateTime<Utc>), String> {
     let start = target_date
         .and_time(chrono::NaiveTime::MIN)
         .and_local_timezone(chrono::Local)
         .earliest()
-        .unwrap_or_else(|| target_date.and_time(chrono::NaiveTime::MIN).and_utc().with_timezone(&chrono::Local));
+        .unwrap_or_else(|| {
+            target_date
+                .and_time(chrono::NaiveTime::MIN)
+                .and_utc()
+                .with_timezone(&chrono::Local)
+        });
     let next_date = target_date
         .succ_opt()
         .ok_or_else(|| "history day is out of range".to_owned())?;
@@ -350,7 +369,12 @@ fn local_day_utc_range(target_date: NaiveDate) -> Result<(chrono::DateTime<Utc>,
         .and_time(chrono::NaiveTime::MIN)
         .and_local_timezone(chrono::Local)
         .earliest()
-        .unwrap_or_else(|| next_date.and_time(chrono::NaiveTime::MIN).and_utc().with_timezone(&chrono::Local));
+        .unwrap_or_else(|| {
+            next_date
+                .and_time(chrono::NaiveTime::MIN)
+                .and_utc()
+                .with_timezone(&chrono::Local)
+        });
     Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
 }
 
@@ -362,7 +386,9 @@ fn utc_history_bucket(now: chrono::DateTime<Utc>) -> (String, String) {
 }
 
 fn known_hosts_manager() -> Result<KnownHostsManager, String> {
-    let root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let root = DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?;
     Ok(KnownHostsManager::new(
         root.join("known_hosts"),
         KnownHostsManager::user_known_hosts_path(),
@@ -388,7 +414,10 @@ async fn resolved_host_key_target(server: &ServerConfig) -> Result<SshTarget, St
     Ok(target)
 }
 
-async fn target_with_credentials(server: &ServerConfig, state: &AppState) -> Result<SshTarget, String> {
+async fn target_with_credentials(
+    server: &ServerConfig,
+    state: &AppState,
+) -> Result<SshTarget, String> {
     let mut target = target_with_known_hosts(server)?;
     if server.passwordless {
         return Ok(target);
@@ -430,7 +459,9 @@ async fn probe_host_key_internal(
     let manager = known_hosts_manager()?;
     let challenge_id = uuid::Uuid::new_v4().to_string();
     let scanned = manager.scan(&target).await.map_err(to_command_error)?;
-    let host_state = manager.classify(&target, &scanned).map_err(to_command_error)?;
+    let host_state = manager
+        .classify(&target, &scanned)
+        .map_err(to_command_error)?;
     let challenge = HostKeyChallenge {
         challenge_id,
         server: server.host.clone(),
@@ -508,7 +539,10 @@ fn spawn_monitoring_task(
         let mut sequence = 0u64;
         let mut retry = RetryState::default();
         let mut stream: Option<SshStream> = None;
-        state_statuses.lock().await.insert(id.clone(), "connecting".to_owned());
+        state_statuses
+            .lock()
+            .await
+            .insert(id.clone(), "connecting".to_owned());
         let _ = app.emit(
             "server.status",
             StatusEvent {
@@ -535,29 +569,54 @@ fn spawn_monitoring_task(
                         let public = error.public_error();
                         if matches!(error, serverpulse_core::ServerPulseError::Authentication(_)) {
                             session_credentials.clear(&id).await;
-                            state_statuses.lock().await.insert(id.clone(), "authentication_failed".to_owned());
-                            state_errors.lock().await.insert(id.clone(), public.detail.clone().unwrap_or_default());
+                            state_statuses
+                                .lock()
+                                .await
+                                .insert(id.clone(), "authentication_failed".to_owned());
+                            state_errors
+                                .lock()
+                                .await
+                                .insert(id.clone(), public.detail.clone().unwrap_or_default());
                             let _ = app.emit(
                                 "server.status",
                                 StatusEvent {
                                     server_id: id.clone(),
-                                    timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-                                    sequence: { sequence = sequence.saturating_add(1); sequence },
-                                    payload: StatusPayload { status: "authentication_failed".to_owned(), detail: Some(public) },
+                                    timestamp: Utc::now()
+                                        .to_rfc3339_opts(SecondsFormat::Secs, true),
+                                    sequence: {
+                                        sequence = sequence.saturating_add(1);
+                                        sequence
+                                    },
+                                    payload: StatusPayload {
+                                        status: "authentication_failed".to_owned(),
+                                        detail: Some(public),
+                                    },
                                 },
                             );
                             break;
                         }
                         let delay = retry.register_failure(Utc::now());
-                        state_statuses.lock().await.insert(id.clone(), "offline".to_owned());
-                        state_errors.lock().await.insert(id.clone(), public.detail.clone().unwrap_or_default());
+                        state_statuses
+                            .lock()
+                            .await
+                            .insert(id.clone(), "offline".to_owned());
+                        state_errors
+                            .lock()
+                            .await
+                            .insert(id.clone(), public.detail.clone().unwrap_or_default());
                         let _ = app.emit(
                             "server.status",
                             StatusEvent {
                                 server_id: id.clone(),
                                 timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-                                sequence: { sequence = sequence.saturating_add(1); sequence },
-                                payload: StatusPayload { status: "offline".to_owned(), detail: Some(public) },
+                                sequence: {
+                                    sequence = sequence.saturating_add(1);
+                                    sequence
+                                },
+                                payload: StatusPayload {
+                                    status: "offline".to_owned(),
+                                    detail: Some(public),
+                                },
                             },
                         );
                         tokio::select! {
@@ -589,11 +648,20 @@ fn spawn_monitoring_task(
                     let now_utc = Utc::now();
                     let event_timestamp = now_utc.to_rfc3339_opts(SecondsFormat::Secs, true);
                     let (history_timestamp, utc_day) = utc_history_bucket(now_utc);
-                    if let (Some(store), Ok(line)) = (&history_store, history_line(&server, &history_timestamp, &snapshot)) {
+                    if let (Some(store), Ok(line)) = (
+                        &history_store,
+                        history_line(&server, &history_timestamp, &snapshot),
+                    ) {
                         let _ = store.append_jsonl(&utc_day, &line);
                     }
-                    state_snapshots.lock().await.insert(id.clone(), snapshot.clone());
-                    state_statuses.lock().await.insert(id.clone(), "online".to_owned());
+                    state_snapshots
+                        .lock()
+                        .await
+                        .insert(id.clone(), snapshot.clone());
+                    state_statuses
+                        .lock()
+                        .await
+                        .insert(id.clone(), "online".to_owned());
                     state_errors.lock().await.remove(&id);
                     let _ = app.emit(
                         "server.snapshot",
@@ -627,14 +695,31 @@ fn spawn_monitoring_task(
                     let public = error.public_error();
                     if matches!(error, serverpulse_core::ServerPulseError::Authentication(_)) {
                         session_credentials.clear(&id).await;
-                        state_statuses.lock().await.insert(id.clone(), "authentication_failed".to_owned());
-                        state_errors.lock().await.insert(id.clone(), public.detail.clone().unwrap_or_default());
+                        state_statuses
+                            .lock()
+                            .await
+                            .insert(id.clone(), "authentication_failed".to_owned());
+                        state_errors
+                            .lock()
+                            .await
+                            .insert(id.clone(), public.detail.clone().unwrap_or_default());
                         break;
                     }
                     let delay = retry.register_failure(Utc::now());
-                    let status = if retry.circuit_open { "circuit_open" } else { "offline" }.to_owned();
-                    state_statuses.lock().await.insert(id.clone(), status.clone());
-                    state_errors.lock().await.insert(id.clone(), public.detail.clone().unwrap_or_default());
+                    let status = if retry.circuit_open {
+                        "circuit_open"
+                    } else {
+                        "offline"
+                    }
+                    .to_owned();
+                    state_statuses
+                        .lock()
+                        .await
+                        .insert(id.clone(), status.clone());
+                    state_errors
+                        .lock()
+                        .await
+                        .insert(id.clone(), public.detail.clone().unwrap_or_default());
                     let _ = app.emit(
                         "server.status",
                         StatusEvent {
@@ -644,7 +729,10 @@ fn spawn_monitoring_task(
                                 sequence = sequence.saturating_add(1);
                                 sequence
                             },
-                            payload: StatusPayload { status, detail: Some(public) },
+                            payload: StatusPayload {
+                                status,
+                                detail: Some(public),
+                            },
                         },
                     );
                     // A small time-based jitter prevents several servers started
@@ -673,7 +761,10 @@ async fn stop_task(state: &AppState, server_id: &str, clear_credentials: bool) {
 }
 
 async fn await_monitoring_task(mut join: JoinHandle<()>) {
-    if tokio::time::timeout(Duration::from_secs(2), &mut join).await.is_err() {
+    if tokio::time::timeout(Duration::from_secs(2), &mut join)
+        .await
+        .is_err()
+    {
         join.abort();
         let _ = join.await;
     }
@@ -700,7 +791,10 @@ async fn start_task(
         return Ok(StartResult {
             server_id: server.id.clone(),
             status: "password-required".to_owned(),
-            detail: Some("Enter a password for this session or save one in the OS credential store.".to_owned()),
+            detail: Some(
+                "Enter a password for this session or save one in the OS credential store."
+                    .to_owned(),
+            ),
             host_key: None,
         });
     }
@@ -708,15 +802,15 @@ async fn start_task(
     let interval = Duration::from_secs(interval_seconds.unwrap_or(5).clamp(1, 300));
     let id = server.id.clone();
     let (join, cancel) = spawn_monitoring_task(
-            app,
-            state.snapshots.clone(),
-            state.statuses.clone(),
-            state.errors.clone(),
-            state.session_credentials.clone(),
-            server,
-            target,
-            interval,
-        );
+        app,
+        state.snapshots.clone(),
+        state.statuses.clone(),
+        state.errors.clone(),
+        state.session_credentials.clone(),
+        server,
+        target,
+        interval,
+    );
     tasks.insert(id.clone(), MonitoringTask { join, cancel });
     Ok(StartResult {
         server_id: id,
@@ -782,10 +876,7 @@ async fn probe_host_key(
 }
 
 #[tauri::command]
-async fn accept_host_key(
-    state: State<'_, AppState>,
-    challenge_id: String,
-) -> Result<(), String> {
+async fn accept_host_key(state: State<'_, AppState>, challenge_id: String) -> Result<(), String> {
     let pending = state
         .pending_host_keys
         .lock()
@@ -807,10 +898,7 @@ async fn accept_host_key(
 }
 
 #[tauri::command]
-async fn forget_host_key(
-    state: State<'_, AppState>,
-    server: ServerConfig,
-) -> Result<(), String> {
+async fn forget_host_key(state: State<'_, AppState>, server: ServerConfig) -> Result<(), String> {
     let target = resolved_host_key_target(&server).await?;
     known_hosts_manager()?
         .forget(&target)
@@ -823,7 +911,11 @@ async fn forget_host_key(
     Ok(())
 }
 
-async fn persist_server(app: &AppHandle, state: &AppState, server: &ServerConfig) -> Result<Vec<ServerConfig>, String> {
+async fn persist_server(
+    app: &AppHandle,
+    state: &AppState,
+    server: &ServerConfig,
+) -> Result<Vec<ServerConfig>, String> {
     let (root, mut servers) = writable_servers()?;
     if let Some(existing) = servers.iter_mut().find(|existing| {
         existing.id.eq_ignore_ascii_case(&server.id)
@@ -836,7 +928,11 @@ async fn persist_server(app: &AppHandle, state: &AppState, server: &ServerConfig
     write_server_configs(&root, &servers).map_err(to_command_error)?;
     if !server.monitored {
         stop_task(state, &server.id, false).await;
-        state.statuses.lock().await.insert(server.id.clone(), "stopped".to_owned());
+        state
+            .statuses
+            .lock()
+            .await
+            .insert(server.id.clone(), "stopped".to_owned());
     }
     let _ = app.emit("servers.changed", &servers);
     Ok(servers)
@@ -856,8 +952,8 @@ async fn verify_and_apply_server(
     let password = password.map(zeroize::Zeroizing::new);
     server.validate().map_err(to_command_error)?;
     let server_id = server.id.clone();
-    let has_new_session_password = !server.passwordless
-        && password.as_deref().is_some_and(|value| !value.is_empty());
+    let has_new_session_password =
+        !server.passwordless && password.as_deref().is_some_and(|value| !value.is_empty());
     if server.passwordless {
         state.session_credentials.clear(&server.id).await;
     } else if let Some(password) = password.as_deref().filter(|value| !value.is_empty()) {
@@ -883,7 +979,11 @@ async fn verify_and_apply_server(
             }
         }
         if !server.passwordless
-            && state.session_credentials.password(&server.id).await.is_none()
+            && state
+                .session_credentials
+                .password(&server.id)
+                .await
+                .is_none()
             && KeyringCredentialStore::default()
                 .get(&credential_identity(&server))
                 .ok()
@@ -895,7 +995,10 @@ async fn verify_and_apply_server(
                 start: StartResult {
                     server_id: server.id.clone(),
                     status: "password-required".to_owned(),
-                    detail: Some("Enter a password for this session or save one in the OS credential store.".to_owned()),
+                    detail: Some(
+                        "Enter a password for this session or save one in the OS credential store."
+                            .to_owned(),
+                    ),
                     host_key: None,
                 },
             });
@@ -939,7 +1042,11 @@ async fn save_server(
     write_server_configs(&root, &servers).map_err(to_command_error)?;
     if !server.monitored {
         stop_task(&state, &server.id, true).await;
-        state.statuses.lock().await.insert(server.id.clone(), "stopped".to_owned());
+        state
+            .statuses
+            .lock()
+            .await
+            .insert(server.id.clone(), "stopped".to_owned());
     }
     let _ = app.emit("servers.changed", &servers);
     Ok(servers)
@@ -975,12 +1082,19 @@ async fn start_monitoring(
 #[tauri::command]
 async fn stop_monitoring(state: State<'_, AppState>, server_id: String) -> Result<(), String> {
     stop_task(&state, &server_id, true).await;
-    state.statuses.lock().await.insert(server_id, "stopped".to_owned());
+    state
+        .statuses
+        .lock()
+        .await
+        .insert(server_id, "stopped".to_owned());
     Ok(())
 }
 
 #[tauri::command]
-async fn clear_session_credential(state: State<'_, AppState>, server_id: String) -> Result<(), String> {
+async fn clear_session_credential(
+    state: State<'_, AppState>,
+    server_id: String,
+) -> Result<(), String> {
     state.session_credentials.clear(&server_id).await;
     Ok(())
 }
@@ -1061,20 +1175,32 @@ async fn get_monitoring_state(state: State<'_, AppState>) -> Result<MonitorState
 
 #[tauri::command]
 async fn get_data_root() -> Result<String, String> {
-    Ok(DataRootManager::default().resolve().map_err(to_command_error)?.to_string_lossy().into_owned())
+    Ok(DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?
+        .to_string_lossy()
+        .into_owned())
 }
 
 #[tauri::command]
 async fn query_history(day: String) -> Result<HistoryResponse, String> {
     let target_date = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
         .map_err(|_| "history day must use YYYY-MM-DD".to_owned())?;
-    let root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let root = DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?;
     let store = JsonHistoryStore::new(root);
 
     let (utc_start, utc_end) = local_day_utc_range(target_date)?;
     let mut candidate_days = Vec::new();
-    let mut cursor = utc_start.date_naive().pred_opt().unwrap_or(utc_start.date_naive());
-    let last_day = utc_end.date_naive().succ_opt().unwrap_or(utc_end.date_naive());
+    let mut cursor = utc_start
+        .date_naive()
+        .pred_opt()
+        .unwrap_or(utc_start.date_naive());
+    let last_day = utc_end
+        .date_naive()
+        .succ_opt()
+        .unwrap_or(utc_end.date_naive());
     while cursor <= last_day {
         candidate_days.push(cursor.format("%Y-%m-%d").to_string());
         let Some(next) = cursor.succ_opt() else { break };
@@ -1108,8 +1234,14 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
 
     let mut filtered_entries = Vec::new();
     for mut entry in all_entries {
-        let ts_str = entry.record.get("Timestamp").and_then(|v| v.as_str()).unwrap_or_default();
-        let (ts_millis, in_requested_local_day, local_iso_str) = if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+        let ts_str = entry
+            .record
+            .get("Timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let (ts_millis, in_requested_local_day, local_iso_str) = if let Ok(parsed) =
+            chrono::DateTime::parse_from_rfc3339(ts_str)
+        {
             let utc_dt = parsed.with_timezone(&Utc);
             let local_dt = utc_dt.with_timezone(&chrono::Local);
             (
@@ -1117,8 +1249,11 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
                 utc_dt >= utc_start && utc_dt < utc_end,
                 local_dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
             )
-        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S") {
-            let local_dt = naive.and_local_timezone(chrono::Local).earliest()
+        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S")
+        {
+            let local_dt = naive
+                .and_local_timezone(chrono::Local)
+                .earliest()
                 .unwrap_or_else(|| naive.and_utc().with_timezone(&chrono::Local));
             let utc_dt = local_dt.with_timezone(&Utc);
             (
@@ -1126,8 +1261,11 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
                 local_dt.date_naive() == target_date,
                 local_dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
             )
-        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y/%m/%d %H:%M:%S") {
-            let local_dt = naive.and_local_timezone(chrono::Local).earliest()
+        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y/%m/%d %H:%M:%S")
+        {
+            let local_dt = naive
+                .and_local_timezone(chrono::Local)
+                .earliest()
                 .unwrap_or_else(|| naive.and_utc().with_timezone(&chrono::Local));
             let utc_dt = local_dt.with_timezone(&Utc);
             (
@@ -1141,7 +1279,10 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
 
         if in_requested_local_day {
             if let Some(obj) = entry.record.as_object_mut() {
-                obj.insert("Timestamp".to_owned(), serde_json::Value::String(local_iso_str));
+                obj.insert(
+                    "Timestamp".to_owned(),
+                    serde_json::Value::String(local_iso_str),
+                );
             }
             let key = format!("{}:{}", ts_millis, entry.record);
             if seen_keys.insert(key) {
@@ -1201,17 +1342,32 @@ async fn delete_credential(server: ServerConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn preview_import(source: String, target: Option<String>) -> Result<serverpulse_platform::MigrationPreview, String> {
+async fn preview_import(
+    source: String,
+    target: Option<String>,
+) -> Result<serverpulse_platform::MigrationPreview, String> {
     let manager = DataRootManager::default();
-    let target = target.map(std::path::PathBuf::from).unwrap_or(manager.default_root.clone());
-    manager.preview_import(std::path::Path::new(&source), &target).map_err(to_command_error)
+    let target = target
+        .map(std::path::PathBuf::from)
+        .unwrap_or(manager.default_root.clone());
+    manager
+        .preview_import(std::path::Path::new(&source), &target)
+        .map_err(to_command_error)
 }
 
 #[tauri::command]
-async fn apply_import(source: String, target: Option<String>, mode: ConflictMode) -> Result<serverpulse_platform::MigrationResult, String> {
+async fn apply_import(
+    source: String,
+    target: Option<String>,
+    mode: ConflictMode,
+) -> Result<serverpulse_platform::MigrationResult, String> {
     let manager = DataRootManager::default();
-    let target = target.map(std::path::PathBuf::from).unwrap_or(manager.default_root.clone());
-    manager.import(std::path::Path::new(&source), &target, mode).map_err(to_command_error)
+    let target = target
+        .map(std::path::PathBuf::from)
+        .unwrap_or(manager.default_root.clone());
+    manager
+        .import(std::path::Path::new(&source), &target, mode)
+        .map_err(to_command_error)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1233,7 +1389,9 @@ async fn resolve_server_and_target(
     server_id: &str,
     state: &AppState,
 ) -> Result<(ServerConfig, SshTarget, std::path::PathBuf), String> {
-    let data_root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let data_root = DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?;
     let (_, servers) = writable_servers()?;
     let server = servers
         .into_iter()
@@ -1244,8 +1402,11 @@ async fn resolve_server_and_target(
 }
 
 #[tauri::command]
-async fn get_agent_states() -> Result<HashMap<String, serverpulse_platform::AgentServerState>, String> {
-    let data_root = DataRootManager::default().resolve().map_err(to_command_error)?;
+async fn get_agent_states(
+) -> Result<HashMap<String, serverpulse_platform::AgentServerState>, String> {
+    let data_root = DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?;
     let state_file = serverpulse_platform::read_agent_state(&data_root);
     Ok(state_file.servers)
 }
@@ -1259,12 +1420,13 @@ async fn check_agent_status(
     let ssh = SystemOpenSsh::default();
     let script = serverpulse_core::generate_agent_status_script();
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
-    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
-        serverpulse_platform::AgentServerState {
+    let entry = state_file
+        .servers
+        .entry(server_id.clone())
+        .or_insert_with(|| serverpulse_platform::AgentServerState {
             id: server_id.clone(),
             ..Default::default()
-        }
-    });
+        });
 
     match ssh.execute_short_command(&target, script).await {
         Ok(output) => {
@@ -1288,7 +1450,9 @@ async fn check_agent_status(
 async fn check_all_agent_statuses(
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, serverpulse_platform::AgentServerState>, String> {
-    let data_root = DataRootManager::default().resolve().map_err(to_command_error)?;
+    let data_root = DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?;
     let (_, servers) = writable_servers()?;
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
     let ssh = SystemOpenSsh::default();
@@ -1296,12 +1460,13 @@ async fn check_all_agent_statuses(
 
     for server in servers {
         let target = target_with_credentials(&server, &state).await?;
-        let entry = state_file.servers.entry(server.id.clone()).or_insert_with(|| {
-            serverpulse_platform::AgentServerState {
+        let entry = state_file
+            .servers
+            .entry(server.id.clone())
+            .or_insert_with(|| serverpulse_platform::AgentServerState {
                 id: server.id.clone(),
                 ..Default::default()
-            }
-        });
+            });
 
         match ssh.execute_short_command(&target, script).await {
             Ok(output) => {
@@ -1353,21 +1518,28 @@ async fn deploy_and_start_agent(
         .map_err(|e| format!("SSH execution error: {}", e))?;
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
-    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
-        serverpulse_platform::AgentServerState {
+    let entry = state_file
+        .servers
+        .entry(server_id.clone())
+        .or_insert_with(|| serverpulse_platform::AgentServerState {
             id: server_id.clone(),
             ..Default::default()
-        }
-    });
+        });
 
     entry.interval_seconds = interval_seconds;
     entry.retention_days = retention_days;
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
 
-    if output.stdout.contains("SP_AGENT_RESULT=started") || output.stdout.contains("SP_AGENT_RESULT=already_running") {
+    if output.stdout.contains("SP_AGENT_RESULT=started")
+        || output.stdout.contains("SP_AGENT_RESULT=already_running")
+    {
         entry.last_status = "running".to_string();
         entry.last_error = String::new();
-    } else if let Some(err_line) = output.stdout.lines().find(|l| l.starts_with("SP_AGENT_ERROR=")) {
+    } else if let Some(err_line) = output
+        .stdout
+        .lines()
+        .find(|l| l.starts_with("SP_AGENT_ERROR="))
+    {
         entry.last_status = "stopped".to_string();
         entry.last_error = err_line.replace("SP_AGENT_ERROR=", "");
     } else if !output.stderr.is_empty() {
@@ -1394,12 +1566,13 @@ async fn stop_agent(
     let _ = ssh.execute_short_command(&target, stop_sh).await;
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
-    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
-        serverpulse_platform::AgentServerState {
+    let entry = state_file
+        .servers
+        .entry(server_id.clone())
+        .or_insert_with(|| serverpulse_platform::AgentServerState {
             id: server_id.clone(),
             ..Default::default()
-        }
-    });
+        });
     entry.last_status = "stopped".to_string();
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
     entry.last_error = String::new();
@@ -1442,12 +1615,13 @@ async fn restart_agent(
     let _ = ssh.execute_short_command(&target, &inject_sh).await;
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
-    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
-        serverpulse_platform::AgentServerState {
+    let entry = state_file
+        .servers
+        .entry(server_id.clone())
+        .or_insert_with(|| serverpulse_platform::AgentServerState {
             id: server_id.clone(),
             ..Default::default()
-        }
-    });
+        });
     entry.last_status = "running".to_string();
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
     entry.last_error = String::new();
@@ -1476,12 +1650,13 @@ async fn update_agent_config(
     let _ = ssh.execute_short_command(&target, &config_sh).await;
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
-    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
-        serverpulse_platform::AgentServerState {
+    let entry = state_file
+        .servers
+        .entry(server_id.clone())
+        .or_insert_with(|| serverpulse_platform::AgentServerState {
             id: server_id.clone(),
             ..Default::default()
-        }
-    });
+        });
     entry.interval_seconds = interval_seconds;
     entry.retention_days = retention_days;
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
@@ -1501,12 +1676,13 @@ async fn uninstall_agent(
     let _ = ssh.execute_short_command(&target, uninstall_sh).await;
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
-    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
-        serverpulse_platform::AgentServerState {
+    let entry = state_file
+        .servers
+        .entry(server_id.clone())
+        .or_insert_with(|| serverpulse_platform::AgentServerState {
             id: server_id.clone(),
             ..Default::default()
-        }
-    });
+        });
     entry.last_status = "not_installed".to_string();
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
     entry.last_error = String::new();
@@ -1525,12 +1701,13 @@ async fn pull_and_merge_records_impl(
     let known_ids: Vec<String> = all_servers.iter().map(|s| s.id.clone()).collect();
 
     let mut state_file = serverpulse_platform::read_agent_state(&data_root);
-    let entry = state_file.servers.entry(server_id.clone()).or_insert_with(|| {
-        serverpulse_platform::AgentServerState {
+    let entry = state_file
+        .servers
+        .entry(server_id.clone())
+        .or_insert_with(|| serverpulse_platform::AgentServerState {
             id: server_id.clone(),
             ..Default::default()
-        }
-    });
+        });
     let cursor_utc = entry.merge_cursor_utc.clone();
 
     let ssh = SystemOpenSsh::default();
@@ -1550,7 +1727,10 @@ async fn pull_and_merge_records_impl(
     // UTC only when queried for display.
     let mut day_groups: HashMap<String, Vec<serverpulse_core::AgentPulledEntry>> = HashMap::new();
     for item in pull_result.entries {
-        day_groups.entry(item.utc_day.clone()).or_default().push(item);
+        day_groups
+            .entry(item.utc_day.clone())
+            .or_default()
+            .push(item);
     }
 
     let history_dir = data_root.join("history");
@@ -1571,7 +1751,8 @@ async fn pull_and_merge_records_impl(
             Vec::new()
         };
 
-        let (merged_lines, stats) = serverpulse_core::merge_agent_day_entries(&existing_lines, &day_entries);
+        let (merged_lines, stats) =
+            serverpulse_core::merge_agent_day_entries(&existing_lines, &day_entries);
         total_added += stats.added_minutes;
         total_updated += stats.updated_servers;
         total_skipped += stats.skipped_servers;
@@ -1660,9 +1841,7 @@ async fn pull_and_merge_all_records(
 #[cfg(target_os = "windows")]
 fn apply_window_dark_theme(window: &tauri::WebviewWindow) {
     use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE,
-    };
+    use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
     if let Ok(hwnd) = window.hwnd() {
         let hwnd = hwnd.0 as HWND;
         let dark: i32 = 1;
@@ -1766,7 +1945,9 @@ struct WindowMonitorBounds {
 
 #[tauri::command]
 async fn get_window_monitor_bounds(app: AppHandle) -> Result<WindowMonitorBounds, String> {
-    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
     let scale = window.scale_factor().unwrap_or(1.0);
     let win_pos = window.outer_position().map_err(to_command_error)?;
     let win_size = window.outer_size().map_err(to_command_error)?;
@@ -1825,8 +2006,8 @@ async fn get_window_monitor_bounds(app: AppHandle) -> Result<WindowMonitorBounds
 async fn get_cursor_position() -> Result<(i32, i32), String> {
     #[cfg(target_os = "windows")]
     {
-        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
         use windows_sys::Win32::Foundation::POINT;
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut pt = POINT { x: 0, y: 0 };
         unsafe {
             if GetCursorPos(&mut pt) != 0 {
@@ -1873,11 +2054,28 @@ fn start_edge_dock_worker(
             let (visible, cur_pos, rect, work_left, work_top, work_right) = unsafe {
                 let hwnd = hwnd_isize as HWND;
                 if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
-                    (false, POINT { x: 0, y: 0 }, RECT { left: 0, top: 0, right: 0, bottom: 0 }, 0, 0, 0)
+                    (
+                        false,
+                        POINT { x: 0, y: 0 },
+                        RECT {
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                        },
+                        0,
+                        0,
+                        0,
+                    )
                 } else {
                     let mut cur = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut cur);
-                    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    let mut r = RECT {
+                        left: 0,
+                        top: 0,
+                        right: 0,
+                        bottom: 0,
+                    };
                     GetWindowRect(hwnd, &mut r);
                     let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
                     let mut mi: MONITORINFO = std::mem::zeroed();
@@ -2169,7 +2367,9 @@ async fn toggle_edge_dock_autohide(
 
 #[tauri::command]
 async fn set_main_window_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
         .map_err(to_command_error)?;
@@ -2185,7 +2385,9 @@ async fn animate_main_window_position(
     to_y: i32,
     duration_ms: u64,
 ) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
     let steps = 15;
     let step_delay = Duration::from_millis((duration_ms / steps as u64).max(1));
     for i in 1..=steps {
@@ -2193,10 +2395,16 @@ async fn animate_main_window_position(
         let ease = 1.0 - (1.0 - progress).powi(3);
         let curr_x = from_x + ((to_x - from_x) as f64 * ease).round() as i32;
         let curr_y = from_y + ((to_y - from_y) as f64 * ease).round() as i32;
-        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: curr_x, y: curr_y }));
+        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: curr_x,
+            y: curr_y,
+        }));
         tokio::time::sleep(step_delay).await;
     }
-    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: to_x, y: to_y }));
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+        x: to_x,
+        y: to_y,
+    }));
     Ok(())
 }
 
@@ -2231,9 +2439,10 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .items(&[&show, &hide, &servers, &history, &quit])
         .build()?;
 
-    let icon_image = tauri::image::Image::from_bytes(include_bytes!("../../assets/server-pulse.ico"))
-        .ok()
-        .or_else(|| app.default_window_icon().cloned());
+    let icon_image =
+        tauri::image::Image::from_bytes(include_bytes!("../../assets/server-pulse.ico"))
+            .ok()
+            .or_else(|| app.default_window_icon().cloned());
 
     let mut builder = TrayIconBuilder::new()
         .tooltip("Server Pulse")
@@ -2418,7 +2627,10 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).expect("date");
         let (start, end) = local_day_utc_range(date).expect("range");
         assert_eq!(start.with_timezone(&chrono::Local).date_naive(), date);
-        assert_eq!(end.with_timezone(&chrono::Local).date_naive(), date.succ_opt().expect("next date"));
+        assert_eq!(
+            end.with_timezone(&chrono::Local).date_naive(),
+            date.succ_opt().expect("next date")
+        );
         assert!(end > start);
         assert!(end - start <= chrono::Duration::hours(26));
     }

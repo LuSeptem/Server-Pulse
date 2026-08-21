@@ -6,13 +6,13 @@ Server Pulse is a native Windows desktop widget for watching GPU, VRAM, CPU, and
 
 The repository seed configuration contains two SSH aliases, `3090` and `a6000`. Existing key-based SSH and `ssh-agent` setups continue to work, and the server manager can also use an ordinary account password.
 
-Current release: **v1.1.0** · [Bilingual release notes](CHANGELOG.md)
+Current release: **v2.0.0** · [Bilingual release notes](CHANGELOG.md)
 
-## Tauri 2.0 Preview
+## Tauri 2.0
 
-The `codex/tauri-port` branch contains the cross-platform rewrite. It keeps the existing PowerShell/WPF release as the `port-baseline-v1.1.0` tag while the new application is developed in the same repository. The Preview targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop is out of scope for v1.
+The `main` branch now ships the Tauri 2 cross-platform application. The previous PowerShell/WPF implementation remains available only through the `legacy/v1.1.0` branch and `port-baseline-v1.1.0` rollback tag. The v2.0.0 targets Windows 10/11 x64 and macOS Intel/Apple Silicon; Linux desktop is out of scope.
 
-The current vertical slice includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OpenSSH config discovery and diagnostics, SSH-config-aware host-key probing, a Windows fallback for the Win32-OpenSSH `ssh-keyscan`/sntrup incompatibility, legacy Windows server-config migration, host-key confirmation, OS-keyring and session-only password authentication, persistent framed SSH collection, retry backoff, structured start/recheck results, and redacted error events. Windows SSH helper processes are hidden when the Preview is launched from Explorer, and a failed automatic or manual start is shown on its server card without aborting other servers. The Preview is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac; macOS code is kept compile-compatible.
+The v2.0.0 release includes the Vue 3 + TypeScript monitor window, Pinia event state, ECharts history view, tray and secondary windows, Tokio collectors, the canonical POSIX sampler, JSON/JSONL storage, data-root migration primitives, system OpenSSH, OpenSSH config discovery and diagnostics, SSH-config-aware host-key probing, a Windows fallback for the Win32-OpenSSH `ssh-keyscan`/sntrup incompatibility, legacy Windows server-config migration, host-key confirmation and change blocking, OS-keyring and session-only password authentication, persistent framed SSH collection, retry backoff, structured start/recheck results, weighted history aggregation, and redacted error events. Windows SSH helper processes are hidden when the application is launched from Explorer, and a failed automatic or manual start is shown on its server card without aborting other servers. The build is unsigned and intended for internal testing. macOS UI behavior has not been verified on a physical Mac; macOS code is kept compile-compatible.
 
 From the repository root:
 
@@ -25,7 +25,7 @@ cargo test --workspace --manifest-path src-tauri/Cargo.toml
 npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
 ```
 
-The complete scope, milestones, CI matrix, migration rules, and acceptance gates are documented in [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md). Do not treat this branch as a stable public release.
+The complete scope, milestones, CI matrix, migration rules, and acceptance gates are documented in [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md). The previous WPF implementation is a rollback/reference baseline, not a second current application.
 
 ## What you can do
 
@@ -76,7 +76,7 @@ The images in `demo/` are sanitized examples; host addresses and usernames are b
 - **Build Release Bundle**:
   ```powershell
   npm run build --prefix frontend
-  cargo build --release --manifest-path src-tauri/Cargo.toml
+  npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
   ```
 
 Before the first run, check existing passwordless SSH aliases:
@@ -253,14 +253,10 @@ Persistent passwords are stored by Windows Credential Manager or macOS Keychain 
 
 ```text
 server_monitoring/
-├─ ServerPulse.exe          # runnable Windows host
-├─ ServerPulse.ps1          # main window entry point
-├─ Start Server Pulse.vbs   # compatibility launcher
+├─ ServerPulse-Portable.exe # optional local portable build
 ├─ assets/                  # SVG/ICO icons
 ├─ config/                  # first-run seed configuration
-├─ scripts/                 # build scripts
-├─ src/                     # collector, history, storage, SSH, agent, theme, and host code
-├─ frontend/                # Vue 3 + TypeScript Preview UI
+├─ frontend/                # Vue 3 + TypeScript UI
 ├─ src-tauri/               # Tauri shell and platform-independent Rust crates
 ├─ assets/serverpulse-sample.sh # canonical LF-only remote sampler
 ├─ tests/fixtures/          # protocol and history golden fixtures
@@ -276,7 +272,7 @@ server_monitoring/
 
 **A server is offline.** Run `ssh -o BatchMode=yes <alias> hostname` and check the alias, key, VPN, jump host, and host fingerprint. One failed server does not block the others.
 
-**The Preview connects to the wrong address for an SSH alias.** When the current user's `%USERPROFILE%\.ssh\config` exists, the Preview passes that file explicitly to `ssh`, `ssh -G`, and the Windows host-key probe. Verify the resolved target with `ssh -F "$env:USERPROFILE\.ssh\config" -G -p 22 <user>@<alias>` and check its `hostname` line, then close older Preview instances before launching the rebuilt portable executable.
+**The application connects to the wrong address for an SSH alias.** When the current user's `%USERPROFILE%\.ssh\config` exists, the application passes that file explicitly to `ssh`, `ssh -G`, and the Windows host-key probe. Verify the resolved target with `ssh -F "$env:USERPROFILE\.ssh\config" -G -p 22 <user>@<alias>` and check its `hostname` line, then close older instances before launching the rebuilt portable executable.
 
 **GPU count is zero.** Run `nvidia-smi` on the remote host. CPU and memory collection does not require NVIDIA tools.
 
@@ -286,15 +282,15 @@ server_monitoring/
 
 **The window is hidden.** Touch the enabled edge or click the tray icon. If its position is unusable, remove `%LOCALAPPDATA%\\ServerPulse\\settings.json` to restore defaults.
 
-**A terminal window appears when launching the Preview.** Use the generated `ServerPulse-Portable.exe` or `serverpulse-tauri.exe` from Explorer or a shortcut. The release build and its Windows SSH/host-key helper processes use the GUI/no-console configuration; if it was started by typing the command in Windows Terminal, that parent terminal remains open by design.
+**A terminal window appears when launching the application.** Use the generated `ServerPulse-Portable.exe` or `serverpulse-tauri.exe` from Explorer or a shortcut. The release build and its Windows SSH/host-key helper processes use the GUI/no-console configuration; if it was started by typing the command in Windows Terminal, that parent terminal remains open by design.
 
-**A monitored card stays stopped at startup.** The Preview resolves SSH aliases with `ssh -G` before running `ssh-keyscan`, so the probe uses the configured hostname and port. On affected Windows OpenSSH builds, if `ssh-keyscan` reports `choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com`, the Preview retries the host-key probe through `ssh.exe` with a temporary known-hosts file. If probing or IPC still fails, the card changes to `offline` and shows the error instead of silently aborting startup; check the SSH alias, VPN, jump host, and host fingerprint.
+**A monitored card stays stopped at startup.** The application resolves SSH aliases with `ssh -G` before running `ssh-keyscan`, so the probe uses the configured hostname and port. On affected Windows OpenSSH builds, if `ssh-keyscan` reports `choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com`, the application retries the host-key probe through `ssh.exe` with a temporary known-hosts file. If probing or IPC still fails, the card changes to `offline` and shows the error instead of silently aborting startup; check the SSH alias, VPN, jump host, and host fingerprint.
 
 **Recheck stays in progress.** Recheck uses the same structured result as Start. A new or changed host key opens the fingerprint confirmation dialog; a probe or SSH error changes the card to `offline` with the failure detail.
 
-**The main window says no servers are selected while Manage shows checked servers.** Main and Manage are separate webviews. The Preview registers the cross-window `servers.changed` event before loading SSH configuration and ignores an older initial server-list response, so a selection saved during startup is not lost. Close an older running Preview instance and start the rebuilt portable executable once.
+**The main window says no servers are selected while Manage shows checked servers.** Main and Manage are separate webviews. The application registers the cross-window `servers.changed` event before loading SSH configuration and ignores an older initial server-list response, so a selection saved during startup is not lost. Close an older running instance and start the rebuilt portable executable once.
 
-**SSH aliases are not listed.** Open **Manage** and press **Reload**. Check the displayed config path, detected aliases, and read error. The Preview reads concrete `Host` entries from `~/.ssh/config` and simple `Include` files; wildcard-only entries are intentionally skipped.
+**SSH aliases are not listed.** Open **Manage** and press **Reload**. Check the displayed config path, detected aliases, and read error. The application reads concrete `Host` entries from `~/.ssh/config` and simple `Include` files; wildcard-only entries are intentionally skipped.
 
 **How should I report a problem?** Include the app version, Windows version, EXE/script mode, reproduction steps, and a sanitized `error.log`. Never upload history, passwords, private keys, real host addresses, or user lists.
 

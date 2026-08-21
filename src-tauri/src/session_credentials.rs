@@ -237,7 +237,8 @@ fn read_endpoint(endpoint: &str, token: &str) -> Result<String, String> {
         stream
             .read_to_end(&mut bytes)
             .map_err(|error| error.to_string())?;
-        let password = String::from_utf8(bytes).map_err(|_| "askpass response is not UTF-8".to_owned())?;
+        let password =
+            String::from_utf8(bytes).map_err(|_| "askpass response is not UTF-8".to_owned())?;
         return Ok(password.trim_end_matches(['\r', '\n']).to_owned());
     }
     #[cfg(windows)]
@@ -254,7 +255,8 @@ fn read_endpoint(endpoint: &str, token: &str) -> Result<String, String> {
         stream
             .read_to_end(&mut bytes)
             .map_err(|error| error.to_string())?;
-        let password = String::from_utf8(bytes).map_err(|_| "askpass response is not UTF-8".to_owned())?;
+        let password =
+            String::from_utf8(bytes).map_err(|_| "askpass response is not UTF-8".to_owned())?;
         return Ok(password.trim_end_matches(['\r', '\n']).to_owned());
     }
     #[allow(unreachable_code)]
@@ -292,7 +294,10 @@ mod tests {
         let broker = SessionCredentialBroker::default();
         let handle = broker.set("server-1", "secret").await;
         assert!(!handle.token.contains("secret"));
-        assert!(broker.take_token(&format!("wrong-{}", handle.token)).await.is_none());
+        assert!(broker
+            .take_token(&format!("wrong-{}", handle.token))
+            .await
+            .is_none());
         let first = broker.take_token(&handle.token).await.expect("token");
         assert_eq!(&*first, "secret");
         assert!(broker.take_token(&handle.token).await.is_none());
@@ -305,7 +310,10 @@ mod tests {
         let first = broker.set("server-1", "old").await;
         let second = broker.set("server-1", "new").await;
         assert!(broker.take_token(&first.token).await.is_none());
-        assert_eq!(&*broker.take_token(&second.token).await.expect("new"), "new");
+        assert_eq!(
+            &*broker.take_token(&second.token).await.expect("new"),
+            "new"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -316,24 +324,27 @@ mod tests {
             .await
             .expect("listener");
         let wrong_endpoint = handle.endpoint.clone();
-        let wrong = tokio::task::spawn_blocking(move || read_endpoint(&wrong_endpoint, "wrong-token"))
-            .await
-            .expect("wrong client task");
+        let wrong =
+            tokio::task::spawn_blocking(move || read_endpoint(&wrong_endpoint, "wrong-token"))
+                .await
+                .expect("wrong client task");
         assert!(wrong.is_err() || wrong.expect("wrong response").is_empty());
 
         let correct_endpoint = handle.endpoint.clone();
         let correct_token = handle.token.clone();
-        let correct = tokio::task::spawn_blocking(move || read_endpoint(&correct_endpoint, &correct_token))
-            .await
-            .expect("correct client task")
-            .expect("correct response");
+        let correct =
+            tokio::task::spawn_blocking(move || read_endpoint(&correct_endpoint, &correct_token))
+                .await
+                .expect("correct client task")
+                .expect("correct response");
         assert_eq!(correct, "channel-secret");
 
         let second_endpoint = handle.endpoint.clone();
         let second_token = handle.token.clone();
-        let second = tokio::task::spawn_blocking(move || read_endpoint(&second_endpoint, &second_token))
-            .await
-            .expect("second client task");
+        let second =
+            tokio::task::spawn_blocking(move || read_endpoint(&second_endpoint, &second_token))
+                .await
+                .expect("second client task");
         assert!(second.is_err() || second.expect("second response").is_empty());
         broker.clear_all().await;
     }
