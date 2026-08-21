@@ -241,6 +241,22 @@ fn writable_servers() -> Result<(std::path::PathBuf, Vec<ServerConfig>), String>
     Ok((root, servers))
 }
 
+/// Append one sanitized, timestamped line to `<data-root>/error.log`.
+/// Best-effort: logging failures never propagate to callers.
+fn append_error_log(data_root: &Path, message: &str) {
+    let sanitized = message.replace(['\r', '\n', '\t'], " ");
+    let line = format!(
+        "[{}] {}",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        sanitized
+    );
+    let path = data_root.join("error.log");
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        use std::io::Write as _;
+        let _ = writeln!(file, "{line}");
+    }
+}
+
 fn history_line(
     server: &ServerConfig,
     timestamp: &str,
@@ -290,8 +306,8 @@ fn history_line(
             serde_json::json!({
                 "Mount": disk.mount,
                 "Percent": disk.percent,
-                "TotalMib": disk.total_mib,
-                "UsedMib": disk.used_mib,
+                "TotalMiB": disk.total_mib,
+                "UsedMiB": disk.used_mib,
             })
         })
         .collect();
@@ -374,7 +390,7 @@ mod history_line_tests {
         let snapshot_json = r#"{"hostname":"demo","protocolVersion":2,"cpuPercent":1.0,"memoryTotalMib":10,"memoryUsedMib":5,"memoryPercent":50,"loadOne":null,"loadFive":null,"loadFifteen":null,"uptimeSeconds":null,"cpuUserStatus":"unavailable","cpuUsers":[],"memoryUserStatus":"unavailable","memoryUsers":[],"gpus":[],"disks":[{"device":"/dev/sda1","mount":"/data","totalMib":1000.0,"usedMib":250.0,"percent":25.0,"fsType":"xfs"}]}"#;
         let snapshot: MetricSnapshot = serde_json::from_str(snapshot_json).unwrap();
         let line = history_line(&server, "2026-08-21T00:00:00Z", &snapshot).unwrap();
-        assert!(line.contains("\"Disks\":[{\"Mount\":\"/data\",\"Percent\":25.0,\"TotalMib\":1000.0,\"UsedMib\":250.0}]"));
+        assert!(line.contains("\"Disks\":[{\"Mount\":\"/data\",\"Percent\":25.0,\"TotalMiB\":1000.0,\"UsedMiB\":250.0}]"));
     }
 
     #[test]
@@ -1930,7 +1946,15 @@ async fn pull_and_merge_records_impl(
         let path = attribution_dir.join(format!("{day}.jsonl"));
         let existing = fs::read_to_string(&path).unwrap_or_default();
         let incoming = lines.join("\n") + "\n";
-        let merged = serverpulse_core::merge_attribution_lines(&existing, &incoming);
+        let (merged, conflicts) = serverpulse_core::merge_attribution_lines(&existing, &incoming);
+        if conflicts > 0 {
+            append_error_log(
+                &data_root,
+                &format!(
+                    "disk attribution merge ({day}): {conflicts} conflicting duplicate(s) kept first-seen"
+                ),
+            );
+        }
         let _ = serverpulse_platform::atomic_write(&path, merged.as_bytes());
     }
 

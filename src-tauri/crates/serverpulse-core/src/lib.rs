@@ -599,9 +599,14 @@ pub fn parse_disk_attribution_line(line: &str) -> Result<DiskAttributionRecord, 
     Ok(record)
 }
 
-pub fn merge_attribution_lines(existing: &str, incoming: &str) -> String {
+/// Merge attribution lines, first-seen wins on key conflicts. Returns the
+/// merged file content and the number of conflicting duplicates (same
+/// `(serverId, mount, scannedAt)` key but a different payload) so callers can
+/// surface the data loss instead of dropping it silently.
+pub fn merge_attribution_lines(existing: &str, incoming: &str) -> (String, usize) {
     let mut seen = HashSet::new();
     let mut rows = Vec::new();
+    let mut conflicts = 0usize;
     for line in existing.lines().chain(incoming.lines()) {
         let Ok(record) = parse_disk_attribution_line(line) else {
             continue;
@@ -612,6 +617,11 @@ pub fn merge_attribution_lines(existing: &str, incoming: &str) -> String {
             record.scanned_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         );
         if !seen.insert(key) {
+            // Same key as an already-kept record: only count it as conflicting
+            // when the payload actually differs from the first-seen row.
+            if !rows.iter().any(|kept: &DiskAttributionRecord| kept == &record) {
+                conflicts += 1;
+            }
             continue;
         }
         rows.push(record);
@@ -624,7 +634,7 @@ pub fn merge_attribution_lines(existing: &str, incoming: &str) -> String {
             out.push('\n');
         }
     }
-    out
+    (out, conflicts)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -934,10 +944,21 @@ __SP_DONE__
     fn merges_attribution_by_server_mount_and_time() {
         let line_b = ATTR_LINE_A.replace("\"mount\":\"/data\"", "\"mount\":\"/\"");
         let incoming = format!("{}\n{}\n", ATTR_LINE_A, line_b);
-        let merged = merge_attribution_lines(ATTR_LINE_A, &incoming);
+        let (merged, conflicts) = merge_attribution_lines(ATTR_LINE_A, &incoming);
+        assert_eq!(conflicts, 0); // 完全重复的 A 是相同负载，不算冲突
         let count = merged.lines().count();
         assert_eq!(count, 2); // 完全重复的 A 只保留一条；不同 mount 的 B 保留
         let first: serde_json::Value = serde_json::from_str(merged.lines().next().unwrap()).unwrap();
         assert_eq!(first["mount"], serde_json::Value::String("/".to_owned())); // 按时间排序时同秒记录按 mount 排序
+    }
+
+    #[test]
+    fn counts_conflicting_attribution_duplicates() {
+        let conflicting = ATTR_LINE_A.replace("\"usedMib\":1234567", "\"usedMib\":999");
+        let (merged, conflicts) = merge_attribution_lines(ATTR_LINE_A, &format!("{ATTR_LINE_A}\n{conflicting}\n"));
+        assert_eq!(conflicts, 1); // 同键不同负载：计数并保留首见
+        assert_eq!(merged.lines().count(), 1);
+        let kept: serde_json::Value = serde_json::from_str(merged.trim()).unwrap();
+        assert_eq!(kept["users"][0]["usedMib"], serde_json::json!(1234567.0));
     }
 }

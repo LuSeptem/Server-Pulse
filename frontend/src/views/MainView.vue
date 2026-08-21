@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useMonitorStore } from '../stores/monitor'
@@ -63,6 +63,62 @@ const selectInterval = async (val: number) => {
   showIntervalMenu.value = false
   await store.setIntervalSeconds(val)
 }
+
+// --- Disk scan trigger lifecycle -------------------------------------------
+// One poll timer per server; each polls scan status every 5s until the remote
+// scan reports inactive, then stops itself. Timers are cleared on unmount.
+const scanPollTimers = new Map<string, ReturnType<typeof setInterval>>()
+const scanErrors = ref<Record<string, string>>({})
+
+function stopScanPolling(serverId: string) {
+  const timer = scanPollTimers.get(serverId)
+  if (timer !== undefined) {
+    clearInterval(timer)
+    scanPollTimers.delete(serverId)
+  }
+}
+
+function startScanPolling(serverId: string) {
+  stopScanPolling(serverId)
+  const timer = setInterval(() => {
+    void store
+      .fetchDiskScanStatus(serverId)
+      .then((status) => {
+        if (!status.active) {
+          stopScanPolling(serverId)
+        }
+      })
+      .catch(() => undefined)
+  }, 5000)
+  scanPollTimers.set(serverId, timer)
+}
+
+async function handleScan(serverId: string) {
+  try {
+    const result = await store.triggerDiskScan(serverId)
+    if (result.status === 'failed') {
+      scanErrors.value = { ...scanErrors.value, [serverId]: result.detail || 'scan failed' }
+      return
+    }
+    // Successful trigger clears any previous failure and starts polling.
+    const nextErrors = { ...scanErrors.value }
+    delete nextErrors[serverId]
+    scanErrors.value = nextErrors
+    await store.fetchDiskScanStatus(serverId).catch(() => undefined)
+    startScanPolling(serverId)
+  } catch (error) {
+    scanErrors.value = {
+      ...scanErrors.value,
+      [serverId]: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+onUnmounted(() => {
+  for (const serverId of [...scanPollTimers.keys()]) {
+    stopScanPolling(serverId)
+  }
+})
 </script>
 
 <template>
@@ -215,10 +271,11 @@ const selectInterval = async (val: number) => {
         :error="store.errors[server.id]"
         :disk-attribution="store.diskAttribution.filter((r) => r.serverId === server.id)"
         :disk-scan-status="store.diskScans[server.id]"
+        :scan-error="scanErrors[server.id] ?? null"
         @start="store.start(server)"
         @stop="store.stop(server.id)"
         @recheck="store.recheck(server)"
-        @scan="store.triggerDiskScan(server.id).then(() => store.fetchDiskScanStatus(server.id)).catch(() => undefined)"
+        @scan="handleScan(server.id)"
       />
       <div v-if="store.monitoredServers.length === 0" class="empty-state">
         <p v-if="store.servers.length === 0">No configured SSH servers.</p>

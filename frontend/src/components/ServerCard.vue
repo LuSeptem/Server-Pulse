@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import type {
   DiskAttributionRecord,
   DiskMetric,
@@ -17,6 +17,7 @@ const props = defineProps<{
   error?: string
   diskAttribution?: DiskAttributionRecord[]
   diskScanStatus?: DiskScanStatusInfo
+  scanError?: string | null
 }>()
 
 defineEmits<{
@@ -152,6 +153,58 @@ function formatCapacity(usedMib: number | null, totalMib: number | null) {
 function attributionFor(mount: string) {
   return (props.diskAttribution ?? []).find((record) => record.mount === mount) ?? null
 }
+
+// Records arrive sorted ascending by scannedAt; the freshness label must show
+// the most recent scan, not the first row.
+const latestScan = computed(() =>
+  (props.diskAttribution ?? []).reduce<DiskAttributionRecord | null>(
+    (acc, r) => (!acc || r.scannedAt > acc.scannedAt ? r : acc),
+    null,
+  ),
+)
+
+// Elapsed mm:ss while a scan is active, refreshed by a small interval that
+// only runs while the scan is in progress.
+const nowSeconds = ref(Math.floor(Date.now() / 1000))
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+
+const scanElapsed = computed(() => {
+  const startedAt = props.diskScanStatus?.startedAt
+  if (!startedAt || !props.diskScanStatus?.active) return null
+  const startedMs = new Date(startedAt).getTime()
+  if (Number.isNaN(startedMs)) return null
+  // Depend on nowSeconds so the computed re-evaluates every timer tick.
+  void nowSeconds.value
+  const total = Math.max(0, Math.floor(Date.now() / 1000) - Math.floor(startedMs / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+})
+
+function syncElapsedTimer() {
+  const shouldRun = props.diskScanStatus?.active === true && props.diskScanStatus?.startedAt != null
+  if (shouldRun && elapsedTimer === null) {
+    elapsedTimer = setInterval(() => {
+      nowSeconds.value = Math.floor(Date.now() / 1000)
+    }, 1000)
+  } else if (!shouldRun && elapsedTimer !== null) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+watch(
+  () => [props.diskScanStatus?.active, props.diskScanStatus?.startedAt],
+  () => syncElapsedTimer(),
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  if (elapsedTimer !== null) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+})
 
 function handleDiskEnter(disk: DiskMetric, event: MouseEvent) {
   if (!props.snapshot) return
@@ -308,13 +361,16 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
             :disabled="diskScanStatus?.active"
             @click.stop="$emit('scan')"
           >
-            {{ diskScanStatus?.active ? `扫描中…${diskScanStatus.lastMount ? ' (' + diskScanStatus.lastMount + ')' : ''}` : '立即扫描' }}
+            {{ diskScanStatus?.active
+              ? `扫描中…${scanElapsed ? ' (' + scanElapsed + ')' : diskScanStatus.lastMount ? ' (' + diskScanStatus.lastMount + ')' : ''}`
+              : '立即扫描' }}
           </button>
-          <span v-if="diskAttribution && diskAttribution.length" class="muted">
-            来自 {{ new Date(diskAttribution[0].scannedAt).toLocaleDateString() }} 扫描
+          <span v-if="latestScan" class="muted">
+            来自 {{ new Date(latestScan.scannedAt).toLocaleDateString() }} 扫描
           </span>
           <span v-else class="muted">需服务端 agent 或手动扫描</span>
         </div>
+        <p v-if="scanError" class="error-text">{{ scanError }}</p>
       </template>
     </div>
 

@@ -62,7 +62,7 @@ else
       if (NF >= 7) { dev = $1; fstype = $2; total = $3; mount = $7 }
       else if (NF == 6) { dev = $1; fstype = ""; total = $2; mount = $6 }
       else next
-      if (fstype ~ /^(nfs|nfs4|cifs|smbfs|smb2|ncpfs|9p|autofs|tmpfs|devtmpfs|overlay|squashfs|proc|sysfs|devpts|mqueue|hugetlbfs|securityfs|debugfs|tracefs|configfs|fusectl|efivarfs|bpf|nsfs|ramfs|cgroup)/) next
+      if (fstype ~ /^(nfs|nfs4|cifs|smbfs|smb2|ncpfs|9p|autofs|tmpfs|devtmpfs|overlay|squashfs|proc|sysfs|devpts|mqueue|hugetlbfs|securityfs|debugfs|tracefs|configfs|fusectl|fuse|efivarfs|bpf|nsfs|ramfs|cgroup)/) next
       if (dev ~ /^(tmpfs|devtmpfs|overlay|shm|none|udev|squashfs)/) next
       if (mount ~ /^\/(proc|sys|dev|run|boot\/efi)(\/|$)/) next
       if (total + 0 <= 0) next

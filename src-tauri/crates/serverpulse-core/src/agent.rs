@@ -1063,7 +1063,11 @@ pub fn parse_agent_pull_output(
 
     for line in output.lines() {
         let clean = line.trim();
-        if clean.is_empty() || clean == "__SP_DONE__" || clean.starts_with("__SP_FILE__") {
+        if clean.is_empty()
+            || clean == "__SP_DONE__"
+            || clean.starts_with("__SP_FILE__")
+            || clean.starts_with("__SP_ATTR_FILE__")
+        {
             continue;
         }
         if clean.starts_with("SP_AGENT_") {
@@ -1076,17 +1080,24 @@ pub fn parse_agent_pull_output(
             }
             continue;
         }
-
-        pulled_lines += 1;
+        // Disk-attribution JSON lines (no "Record" key) belong to
+        // parse_agent_attribution_output; they are neither pulled records nor
+        // corruption, so skip them without counting.
         let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(clean) else {
             corrupt_lines += 1;
             continue;
         };
-
+        if json_obj.get("Record").is_none()
+            && json_obj.get("kind").and_then(|v| v.as_str()) == Some("diskAttribution")
+        {
+            continue;
+        }
         let Some(record) = json_obj.get("Record") else {
             corrupt_lines += 1;
             continue;
         };
+        // Only well-formed minute records count as pulled lines.
+        pulled_lines += 1;
 
         let ts_str = record.get("Timestamp").and_then(|v| v.as_str()).unwrap_or_default();
         let sample_count = record.get("SampleCount").and_then(|v| v.as_u64()).unwrap_or(1);
@@ -1340,5 +1351,33 @@ mod attribution_pull_tests {
         assert_eq!(corrupt, 1);
         assert_eq!(rows[0].0, "2026-08-20");
         assert!(rows[0].1.contains("diskAttribution"));
+    }
+
+    #[test]
+    fn pull_parser_skips_attribution_output() {
+        // Mixed pull output: one valid minute record, one attribution file
+        // marker, one attribution JSON line, one genuinely broken line.
+        let output = concat!(
+            "__SP_FILE__2026-08-19\n",
+            "{\"Version\":2,\"Record\":{\"Timestamp\":\"2026-08-19T10:00:00Z\",\"SampleCount\":12,\"Servers\":[{\"Id\":\"s1\",\"OnlineSamples\":12}]}}\n",
+            "__SP_ATTR_FILE__2026-08-20\n",
+            "{\"kind\":\"diskAttribution\",\"serverId\":\"s1\",\"scannedAt\":\"2026-08-20T03:12:45Z\",\"mount\":\"/data\",\"status\":\"ok\",\"skippedEntries\":0,\"users\":[]}\n",
+            "{not json at all\n",
+            "__SP_DONE__\n",
+        );
+        let known = vec!["s1".to_string()];
+        let result = parse_agent_pull_output(output, &known, None);
+        assert_eq!(result.pulled_lines, 1);
+        assert_eq!(result.corrupt_lines, 1);
+        assert_eq!(result.entries.len(), 1);
+    }
+
+    #[test]
+    fn awk_aggregator_emits_disks_contract() {
+        // Cheap contract pin: the AWK aggregator's emit_disks must keep the
+        // canonical TotalMiB/UsedMiB keys that history consumers rely on.
+        assert!(AWK_AGGREGATOR.contains("TotalMiB"));
+        assert!(AWK_AGGREGATOR.contains("UsedMiB"));
+        assert!(AWK_AGGREGATOR.contains("\\\"Disks\\\""));
     }
 }

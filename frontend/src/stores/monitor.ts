@@ -70,6 +70,13 @@ let unlisteners: UnlistenFn[] = []
 let initializationPromise: Promise<void> | null = null
 let serverChangeVersion = 0
 
+function getLocalDateString(date = new Date()) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 export const useMonitorStore = defineStore('monitor', {
   state: (): MonitorState => ({
     servers: [],
@@ -248,6 +255,12 @@ export const useMonitorStore = defineStore('monitor', {
         setInterval(() => {
           void this.refreshMonitoringState()
         }, 2000)
+        // The main window has no HistoryView to load attribution, so poll it
+        // on its own cadence (fire-and-forget; failures stay silent).
+        this.refreshDiskAttribution().catch(() => undefined)
+        setInterval(() => {
+          void this.refreshDiskAttribution().catch(() => undefined)
+        }, 5 * 60 * 1000)
         this.initialized = true
       })()
 
@@ -458,6 +471,14 @@ export const useMonitorStore = defineStore('monitor', {
       this.historyCorruptLines = response.corruptLines
       this.diskAttribution = response.diskAttribution ?? []
     },
+    async refreshDiskAttribution() {
+      // Only refresh attribution so windows that never call loadHistory (e.g.
+      // the main window) still get scan data without touching History state.
+      const response = await invoke<{ diskAttribution?: DiskAttributionRecord[] }>('query_history', {
+        day: getLocalDateString(),
+      })
+      this.diskAttribution = response.diskAttribution ?? []
+    },
     async fetchAgentStates() {
       try {
         const states = await invoke<Record<string, AgentServerState>>('get_agent_states')
@@ -590,6 +611,9 @@ export const useMonitorStore = defineStore('monitor', {
           },
         }
       }
+      // A scan may finish (or fail to start) without any other poller around;
+      // refresh attribution so fresh scan results reach the main window.
+      void this.refreshDiskAttribution().catch(() => undefined)
       return result
     },
     async fetchDiskScanStatus(serverId: string) {
