@@ -27,6 +27,8 @@ npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --c
 
 The complete scope, milestones, CI matrix, migration rules, and acceptance gates are documented in [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md). The previous WPF implementation is a rollback/reference baseline, not a second current application.
 
+The detailed migration notes from v1.1.0 to v2.0.0, including compatibility and rollback behavior, are maintained in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## What you can do
 
 - Watch several SSH servers in one compact, always-on-top floating window.

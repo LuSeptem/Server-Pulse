@@ -4,6 +4,14 @@
 
 ### 中文
 
+#### 从 v1.1.0 到 v2.0.0
+
+- 运行时从 Windows PowerShell/WPF 宿主迁移到 Tauri 2 + Rust + Vue 3；`main` 现在只运行 Tauri 实现，`legacy/v1.1.0` 分支和 `port-baseline-v1.1.0` 标签保留旧版作为回滚基线。
+- 原有 `servers.json`、SSH config 别名、密钥、ssh-agent、ProxyJump 和 OS 凭据继续兼容；旧版历史 JSON/JSONL、无时区时间戳和 Windows 服务器配置可继续读取。
+- v1.1.0 的服务器端 Agent 仍保留注入、状态、控制、拉取和合并能力；v2.0.0 的本地实时采集改用每台服务器一个持久分帧 SSH 会话，二者互不冲突。
+- 历史新写入统一使用 UTC `Z` 时间戳和 UTC 日期文件；用户按本地日期查询，图表按本地时间显示，跨版本记录无需手动迁移。
+- v2.0.0 暂不签名或公证，Windows 10/11 x64 是主要验收平台；macOS 保持编译兼容但仍需真实设备验收窗口和托盘行为。
+
 #### 新增
 
 - 完成 Tauri 2 + Vue 3 + TypeScript + Pinia + ECharts 跨平台桌面应用，并将 `main` 作为当前实现；`legacy/v1.1.0` 与 `port-baseline-v1.1.0` 保留为回滚基线。
@@ -62,6 +70,14 @@
 - macOS 代码保持编译兼容，但透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验收。
 
 ### English
+
+#### Migration from v1.1.0 to v2.0.0
+
+- The runtime moved from the Windows PowerShell/WPF host to Tauri 2 + Rust + Vue 3. `main` now runs only the Tauri implementation, while `legacy/v1.1.0` and `port-baseline-v1.1.0` preserve the previous release as rollback baselines.
+- Existing `servers.json`, SSH config aliases, keys, ssh-agent, ProxyJump, and OS credential behavior remain compatible. Legacy JSON/JSONL history, timezone-less timestamps, and the Windows server configuration shape remain readable.
+- The v1.1.0 server-side Agent keeps its inject, status, control, pull, and merge operations. v2.0.0 local real-time collection uses one persistent framed SSH session per server; the two paths are independent.
+- New history writes use UTC `Z` timestamps and UTC date files. Users query by local date and charts display local time, so existing records do not require a manual migration.
+- v2.0.0 is currently unsigned and unnotarized. Windows 10/11 x64 is the primary acceptance platform; macOS remains compile-compatible but its window and tray behavior still requires physical-device validation.
 
 #### Added
 

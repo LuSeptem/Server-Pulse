@@ -27,6 +27,8 @@ npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --c
 
 完整范围、里程碑、CI 矩阵、迁移规则和验收门槛见 [`docs/TAURI-PORT-PLAN.md`](docs/TAURI-PORT-PLAN.md)。旧版 WPF 仅作为回滚/对照基线，不是第二套当前应用。
 
+从 v1.1.0 到 v2.0.0 的详细迁移说明、兼容性和回滚行为见 [`CHANGELOG.md`](CHANGELOG.md)。
+
 ## 功能概览
 
 - 在一个紧凑、可置顶的浮窗中同时查看多台 SSH 服务器。
