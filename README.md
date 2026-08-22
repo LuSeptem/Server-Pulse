@@ -6,7 +6,7 @@ Server Pulse is a native Windows desktop widget for watching GPU, VRAM, CPU, and
 
 The repository seed configuration contains two SSH aliases, `3090` and `a6000`. Existing key-based SSH and `ssh-agent` setups continue to work, and the server manager can also use an ordinary account password.
 
-Current release: **v2.0.0** · [Bilingual release notes](CHANGELOG.md)
+Current release: **v2.1.0** · [Bilingual release notes](CHANGELOG.md)
 
 ## Tauri 2.0
 
