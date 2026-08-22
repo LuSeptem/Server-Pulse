@@ -12,6 +12,7 @@ import {
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
+import { parseDiskEntries } from '../utils/diskMounts'
 import { useMonitorStore } from '../stores/monitor'
 
 use([
@@ -194,16 +195,6 @@ function parseGpuUserMemory(g: any): GpuUserMemoryInfo | null {
     .filter((u: UserUsageEntry) => (u.usedMib ?? 0) > 1 || (u.percent ?? 0) > 0.01)
     .sort((a: UserUsageEntry, b: UserUsageEntry) => (b.usedMib ?? 0) - (a.usedMib ?? 0))
   return { status, users }
-}
-
-function parseDiskEntries(s: any): { mount: string; percent: number | null; usedMib: number | null }[] {
-  const list = Array.isArray(s?.Disks) ? s.Disks : (Array.isArray(s?.disks) ? s.disks : [])
-  return list.map((d: any) => ({
-    mount: String(d.Mount ?? d.mount ?? ''),
-    percent: typeof d.Percent === 'number' ? d.Percent : (typeof d.percent === 'number' ? d.percent : null),
-    // Live-monitor history lines use UsedMib; agent minute records use UsedMiB.
-    usedMib: typeof d.UsedMiB === 'number' ? d.UsedMiB : (typeof d.UsedMib === 'number' ? d.UsedMib : (typeof d.usedMib === 'number' ? d.usedMib : null)),
-  }))
 }
 
 function parseToLocalDate(timestamp: string): Date | null {
