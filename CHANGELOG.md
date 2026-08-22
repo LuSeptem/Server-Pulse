@@ -2,25 +2,59 @@
 
 ## v2.1.0 — 2026-08-22
 
-### Added 新增
+### 中文
 
-- 磁盘容量监控：自动发现真实本地文件系统，主卡片新增 DISK 行与全部挂载点展开列表。 Disk capacity monitoring: auto-discovered real filesystems, new DISK card row with expandable per-mount breakdown.
-- 按用户磁盘归因：服务端每日低频扫描（默认 3 点时段、可配置），结果按挂载点记录并合并入本地历史；支持卡片「立即扫描」手动触发（无需安装 agent，detached 执行）。 Per-user disk attribution via daily server-side scans (configurable, default 3am hour) merged into local history, plus an on-demand "Scan now" button that runs detached without requiring the agent.
-- History 页新增磁盘视图：每挂载点使用率曲线与按用户已用容量的日级阶梯曲线。 New History disk view: per-mount usage curves and stepped daily per-user curves.
+#### 新增
 
-### Changed 变更
+- 磁盘容量监控：自动发现真实本地文件系统，主卡片新增 DISK 行与全部挂载点展开列表。
+- 按用户磁盘归因：服务端每日低频扫描（默认 3 点时段、可配置），结果按挂载点记录并合并入本地历史；支持卡片「立即扫描」手动触发（无需安装 agent，detached 执行）。
+- History 页新增磁盘视图：每挂载点使用率曲线与按用户已用容量的日级阶梯曲线。
 
-- 协议 v2 向后兼容扩展（DISKS 段）；旧 sampler/agent 输出不受影响。 Backward-compatible protocol v2 extension (DISKS section); old samplers/agents keep working.
-- agent 配置新增 scan_enabled/scan_hour；更新后需 Restart/Inject 一次以启用每日调度。 Agent config gains scan_enabled/scan_hour; one Restart/Inject is needed after updating to enable daily scheduling.
+#### 变更
 
-### Fixed 修复
+- 协议 v2 向后兼容扩展（DISKS 段）；旧 sampler/agent 输出不受影响。
+- agent 配置新增 scan_enabled/scan_hour；更新后需 Restart/Inject 一次以启用每日调度。
 
-- 「立即扫描」完成后现在自动拉取合并结果到本地历史并刷新归属面板；此前结果会留在服务器上，直到手动执行「合并记录」。"Scan now" now automatically pulls and merges results into local history and refreshes the attribution panel when the scan finishes; previously results stayed on the server until a manual merge.
-- 修复扫描完成后轮询 tick 堆叠导致重复并发全量合并，进而占满内存与磁盘写入的问题：状态轮询加在飞保护，每次完成的扫描仅合并一次（新扫描重新武装）。 Fixed memory/disk-write saturation after a completed scan: poll ticks no longer stack, and each completed scan merges exactly once (re-armed by the next scan).
-- 磁盘监控现在按文件系统类型过滤，snap 的 squashfs 回挂载（/snap/…）等虚拟文件系统不再出现在挂载点列表中；历史页解析同样过滤，修复前的存量记录和尚未更新 sampler 的 agent 记录中的 snap 挂载也不再显示。 Disk monitoring now filters by filesystem type as well as device name, so snap squashfs loop mounts (/snap/…) and similar virtual filesystems no longer appear in the mount list; the History view applies the same filter so legacy records and records from agents that still run the old sampler are hidden as well.
-- 磁盘归属弹窗文案改为磁盘语义（用户占用而非活跃进程）。 Disk attribution popup copy now uses disk semantics (per-user occupancy, not active processes).
-- 磁盘用户曲线改为按占用总量降序选取（最多 3 条），不再按用户名字母序——修复 `_apt` 等系统服务账号因字母序霸占图例的问题。 Disk user curves are now ranked by total usage (top 3) instead of alphabetically by name, so tiny system service accounts such as _apt no longer crowd the legend.
-- 修复历史页磁盘用户曲线把稀疏扫描点直接连线、tooltip 多数时间显示 NaN 的问题：曲线现在展开到完整时间轴并保持日级阶梯语义（两次扫描之间维持上次扫描值，首次扫描之前留空）。 Fixed the History disk per-user curves connecting sparse scan points directly and reading NaN in most tooltip slots: curves are now expanded onto the full axis with daily step semantics (the last scan value is carried forward between scans, and the chart stays blank before the first scan).
+#### 修复
+
+- 「立即扫描」完成后现在自动拉取合并结果到本地历史并刷新归属面板；此前结果会留在服务器上，直到手动执行「合并记录」。
+- 修复扫描完成后轮询 tick 堆叠导致重复并发全量合并，进而占满内存与磁盘写入的问题：状态轮询加在飞保护，每次完成的扫描仅合并一次（新扫描重新武装）。
+- 磁盘监控现在按文件系统类型过滤，snap 的 squashfs 回挂载（/snap/…）等虚拟文件系统不再出现在挂载点列表中；历史页解析同样过滤，修复前的存量记录和尚未更新 sampler 的 agent 记录中的 snap 挂载也不再显示。
+- 磁盘归属弹窗文案改为磁盘语义（用户占用而非活跃进程）。
+- 磁盘用户曲线改为按占用总量降序选取（最多 3 条），不再按用户名字母序——修复 `_apt` 等系统服务账号因字母序霸占图例的问题。
+- 修复历史页磁盘用户曲线把稀疏扫描点直接连线、tooltip 多数时间显示 NaN 的问题：曲线现在展开到完整时间轴并保持日级阶梯语义（两次扫描之间维持上次扫描值，首次扫描之前留空）。
+
+#### 已知限制
+
+- 构建产物当前未签名、未公证，仅用于内部测试。
+- macOS 代码保持编译兼容，但透明窗口、托盘、贴边和睡眠恢复尚未在真实 Mac 上验收。
+
+### English
+
+#### Added
+
+- Disk capacity monitoring: auto-discovered real filesystems, new DISK card row with expandable per-mount breakdown.
+- Per-user disk attribution via daily server-side scans (configurable, default 3am hour) merged into local history, plus an on-demand "Scan now" button that runs detached without requiring the agent.
+- New History disk view: per-mount usage curves and stepped daily per-user curves.
+
+#### Changed
+
+- Backward-compatible protocol v2 extension (DISKS section); old samplers/agents keep working.
+- Agent config gains scan_enabled/scan_hour; one Restart/Inject is needed after updating to enable daily scheduling.
+
+#### Fixed
+
+- "Scan now" now automatically pulls and merges results into local history and refreshes the attribution panel when the scan finishes; previously results stayed on the server until a manual merge.
+- Fixed memory/disk-write saturation after a completed scan: poll ticks no longer stack, and each completed scan merges exactly once (re-armed by the next scan).
+- Disk monitoring now filters by filesystem type as well as device name, so snap squashfs loop mounts (/snap/…) and similar virtual filesystems no longer appear in the mount list; the History view applies the same filter so legacy records and records from agents that still run the old sampler are hidden as well.
+- Disk attribution popup copy now uses disk semantics (per-user occupancy, not active processes).
+- Disk user curves are now ranked by total usage (top 3) instead of alphabetically by name, so tiny system service accounts such as _apt no longer crowd the legend.
+- Fixed the History disk per-user curves connecting sparse scan points directly and reading NaN in most tooltip slots: curves are now expanded onto the full axis with daily step semantics (the last scan value is carried forward between scans, and the chart stays blank before the first scan).
+
+#### Known limitations
+
+- Build artifacts are currently unsigned and unnotarized for internal testing only.
+- macOS code remains compile-compatible, but transparency, tray, edge docking, and sleep/resume have not been accepted on physical Mac hardware.
 
 ## v2.0.0 — 2026-08-21
 
