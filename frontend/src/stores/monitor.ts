@@ -52,6 +52,7 @@ interface MonitorState {
   historyCorruptLines: number
   diskAttribution: DiskAttributionRecord[]
   diskAttributionDay: string
+  diskAttributionPinned: boolean
   diskScans: Record<string, DiskScanStatusInfo>
   dataRoot: string
   sshConfigPath: string
@@ -88,6 +89,7 @@ export const useMonitorStore = defineStore('monitor', {
     historyCorruptLines: 0,
     diskAttribution: [],
     diskAttributionDay: '',
+    diskAttributionPinned: false,
     diskScans: {},
     dataRoot: '',
     sshConfigPath: '',
@@ -472,17 +474,20 @@ export const useMonitorStore = defineStore('monitor', {
       this.history = response.entries
       this.historyCorruptLines = response.corruptLines
       this.diskAttributionDay = day
+      // A user-driven load pins the attribution day; auto-refreshes must not
+      // move it to another day while the user is viewing that day.
+      this.diskAttributionPinned = true
       this.diskAttribution = response.diskAttribution ?? []
     },
     async refreshDiskAttribution(day?: string) {
       const requested = day ?? getLocalDateString()
-      // An explicit day load (e.g. the History window viewing a past day)
-      // owns the attribution state; auto-refreshes must not clobber it with
-      // a different day's records.
-      if (this.diskAttributionDay && this.diskAttributionDay !== requested) {
+      // Only a user-pinned day (explicit loadHistory) blocks auto-refreshes;
+      // unpinned (auto-claimed) state always proceeds and rolls over at
+      // local midnight so attribution never goes permanently stale.
+      if (this.diskAttributionPinned && this.diskAttributionDay && this.diskAttributionDay !== requested) {
         return
       }
-      if (!day && !this.diskAttributionDay) {
+      if (!this.diskAttributionPinned) {
         this.diskAttributionDay = requested
       }
       // Only refresh attribution so windows that never call loadHistory (e.g.
