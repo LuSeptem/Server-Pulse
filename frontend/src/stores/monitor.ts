@@ -51,6 +51,7 @@ interface MonitorState {
   history: HistoryEntry[]
   historyCorruptLines: number
   diskAttribution: DiskAttributionRecord[]
+  diskAttributionDay: string
   diskScans: Record<string, DiskScanStatusInfo>
   dataRoot: string
   sshConfigPath: string
@@ -86,6 +87,7 @@ export const useMonitorStore = defineStore('monitor', {
     history: [],
     historyCorruptLines: 0,
     diskAttribution: [],
+    diskAttributionDay: '',
     diskScans: {},
     dataRoot: '',
     sshConfigPath: '',
@@ -469,13 +471,24 @@ export const useMonitorStore = defineStore('monitor', {
       const response = await invoke<{ entries: HistoryEntry[]; corruptLines: number; diskAttribution?: DiskAttributionRecord[] }>('query_history', { day })
       this.history = response.entries
       this.historyCorruptLines = response.corruptLines
+      this.diskAttributionDay = day
       this.diskAttribution = response.diskAttribution ?? []
     },
-    async refreshDiskAttribution() {
+    async refreshDiskAttribution(day?: string) {
+      const requested = day ?? getLocalDateString()
+      // An explicit day load (e.g. the History window viewing a past day)
+      // owns the attribution state; auto-refreshes must not clobber it with
+      // a different day's records.
+      if (this.diskAttributionDay && this.diskAttributionDay !== requested) {
+        return
+      }
+      if (!day && !this.diskAttributionDay) {
+        this.diskAttributionDay = requested
+      }
       // Only refresh attribution so windows that never call loadHistory (e.g.
       // the main window) still get scan data without touching History state.
       const response = await invoke<{ diskAttribution?: DiskAttributionRecord[] }>('query_history', {
-        day: getLocalDateString(),
+        day: requested,
       })
       this.diskAttribution = response.diskAttribution ?? []
     },

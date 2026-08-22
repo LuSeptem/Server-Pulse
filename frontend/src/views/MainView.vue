@@ -86,6 +86,9 @@ function startScanPolling(serverId: string) {
       .then((status) => {
         if (!status.active) {
           stopScanPolling(serverId)
+          // Fresh scan results are now merged on the backend; pick them up
+          // immediately instead of waiting for the 5-minute interval.
+          void store.refreshDiskAttribution().catch(() => undefined)
         }
       })
       .catch(() => undefined)
