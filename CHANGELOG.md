@@ -15,7 +15,8 @@
 
 ### Fixed 修复
 
-- 「立即扫描」完成后现在自动拉取合并结果到本地历史并刷新归属面板；此前结果会留在服务器上，直到手动执行「合并记录」。 "Scan now" now automatically pulls and merges results into local history and refreshes the attribution panel when the scan finishes; previously results stayed on the server until a manual merge.
+- 「立即扫描」完成后现在自动拉取合并结果到本地历史并刷新归属面板；此前结果会留在服务器上，直到手动执行「合并记录」。"Scan now" now automatically pulls and merges results into local history and refreshes the attribution panel when the scan finishes; previously results stayed on the server until a manual merge.
+- 修复扫描完成后轮询 tick 堆叠导致重复并发全量合并，进而占满内存与磁盘写入的问题：状态轮询加在飞保护，每次完成的扫描仅合并一次（新扫描重新武装）。 Fixed memory/disk-write saturation after a completed scan: poll ticks no longer stack, and each completed scan merges exactly once (re-armed by the next scan).
 - 磁盘归属弹窗文案改为磁盘语义（用户占用而非活跃进程）。 Disk attribution popup copy now uses disk semantics (per-user occupancy, not active processes).
 
 ## v2.0.0 — 2026-08-21

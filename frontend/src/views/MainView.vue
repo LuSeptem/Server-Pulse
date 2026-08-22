@@ -80,8 +80,13 @@ function stopScanPolling(serverId: string) {
 
 function startScanPolling(serverId: string) {
   stopScanPolling(serverId)
+  // setInterval fires regardless of slow async work; skip ticks while one is
+  // still draining so status calls never pile up behind a hung SSH command.
+  let pollBusy = false
   const timer = setInterval(() => {
-    void store
+    if (pollBusy) return
+    pollBusy = true
+    store
       .pollDiskScan(serverId)
       .then((status) => {
         if (!status.active) {
@@ -89,6 +94,9 @@ function startScanPolling(serverId: string) {
         }
       })
       .catch(() => undefined)
+      .finally(() => {
+        pollBusy = false
+      })
   }, 5000)
   scanPollTimers.set(serverId, timer)
 }

@@ -54,6 +54,10 @@ interface MonitorState {
   diskAttributionDay: string
   diskAttributionPinned: boolean
   diskScans: Record<string, DiskScanStatusInfo>
+  // Guards against poll-tick pileup: one in-flight status call per server,
+  // and at most one result merge per completed scan (re-armed on new scans).
+  scanPollInFlight: Set<string>
+  scanMergeCompleted: Set<string>
   dataRoot: string
   sshConfigPath: string
   sshConfigAliases: string[]
@@ -91,6 +95,8 @@ export const useMonitorStore = defineStore('monitor', {
     diskAttributionDay: '',
     diskAttributionPinned: false,
     diskScans: {},
+    scanPollInFlight: new Set<string>(),
+    scanMergeCompleted: new Set<string>(),
     dataRoot: '',
     sshConfigPath: '',
     sshConfigAliases: [],
@@ -615,6 +621,8 @@ export const useMonitorStore = defineStore('monitor', {
     async triggerDiskScan(serverId: string) {
       const result = await invoke<DiskScanTriggerResult>('trigger_disk_scan', { serverId })
       if (result.status === 'launched' || result.status === 'already-running') {
+        // A scan is (or may be) running again: its completion must merge once.
+        this.scanMergeCompleted.delete(serverId)
         this.diskScans = {
           ...this.diskScans,
           [serverId]: {
@@ -642,18 +650,44 @@ export const useMonitorStore = defineStore('monitor', {
     // Poll one scan cycle. Scan results live on the server until a merge pulls
     // them into local history; a finished manual scan must merge first, then
     // refresh attribution so the popup and card see the fresh records.
+    //
+    // The merge is heavy (a full agent-history pull on first merge), so it is
+    // strictly once per completed scan: overlapping poll ticks (setInterval
+    // does not wait for slow async work) must not stampede into concurrent
+    // pulls, which saturated memory and disk writes.
     async pollDiskScan(serverId: string) {
-      const status = await this.fetchDiskScanStatus(serverId)
-      if (!status.active) {
-        try {
-          await invoke<AgentMergeResult>('pull_and_merge_records', { serverId, cleanRemote: false })
-        } catch {
-          // Pull failures must not break status polling; attribution just
-          // stays on its previous data until the next completed scan.
-        }
-        await this.refreshDiskAttribution().catch(() => undefined)
+      if (this.scanPollInFlight.has(serverId)) {
+        return (
+          this.diskScans[serverId] ?? {
+            installed: false,
+            active: true,
+            pid: null,
+            state: 'unknown',
+            startedAt: null,
+            finishedAt: null,
+            lastMount: null,
+            lastFile: null,
+          }
+        )
       }
-      return status
+      this.scanPollInFlight.add(serverId)
+      try {
+        const status = await this.fetchDiskScanStatus(serverId)
+        if (!status.active && !this.scanMergeCompleted.has(serverId)) {
+          // Mark before awaiting so a tick racing this one sees the guard.
+          this.scanMergeCompleted.add(serverId)
+          try {
+            await invoke<AgentMergeResult>('pull_and_merge_records', { serverId, cleanRemote: false })
+          } catch {
+            // Pull failures must not break status polling; attribution just
+            // stays on its previous data until the next completed scan.
+          }
+          await this.refreshDiskAttribution().catch(() => undefined)
+        }
+        return status
+      } finally {
+        this.scanPollInFlight.delete(serverId)
+      }
     },
   },
 })

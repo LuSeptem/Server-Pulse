@@ -349,4 +349,91 @@ describe('monitor store', () => {
     expect(status.active).toBe(true)
     expect(invoke).not.toHaveBeenCalledWith('pull_and_merge_records', expect.anything())
   })
+
+  it('merges scan results exactly once across overlapping poll ticks', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    await store.init()
+    let releaseStatus!: () => void
+    const statusGate = new Promise<void>((resolve) => { releaseStatus = resolve })
+    let pullCalls = 0
+    vi.mocked(invoke).mockImplementation(async (command: string, args?: any) => {
+      if (command === 'get_disk_scan_status') {
+        // Hold the first tick inside pollDiskScan so the second tick overlaps.
+        await statusGate
+        return {
+          installed: true,
+          active: false,
+          pid: null,
+          state: 'done',
+          startedAt: null,
+          finishedAt: '2026-08-22T06:00:00Z',
+          lastMount: '/data/data4',
+          lastFile: null,
+        }
+      }
+      if (command === 'pull_and_merge_records') {
+        pullCalls += 1
+        return {
+          serverId: args?.serverId, status: 'ok', pulledLines: 0, addedMinutes: 0,
+          updatedServers: 0, skippedServers: 0, corruptLines: 0, recordFiles: 0,
+          attributionLines: 1, cursorUtc: '2026-08-22T06:00', error: null,
+        }
+      }
+      if (command === 'query_history') {
+        return { entries: [], corruptLines: 0, diskAttribution: [] }
+      }
+      return undefined
+    })
+
+    const first = store.pollDiskScan('3090')
+    const second = store.pollDiskScan('3090')
+    releaseStatus()
+    await Promise.all([first, second])
+
+    expect(pullCalls).toBe(1)
+  })
+
+  it('starts a fresh merge for each newly launched scan', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    await store.init()
+    let pulls = 0
+    const idleStatus = {
+      installed: true,
+      active: false,
+      pid: null,
+      state: 'done',
+      startedAt: null,
+      finishedAt: '2026-08-22T06:00:00Z',
+      lastMount: '/data/data4',
+      lastFile: null,
+    }
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'get_disk_scan_status') return idleStatus
+      if (command === 'trigger_disk_scan') {
+        return { serverId: '3090', status: 'launched', detail: null }
+      }
+      if (command === 'pull_and_merge_records') {
+        pulls += 1
+        return {
+          serverId: '3090', status: 'ok', pulledLines: 0, addedMinutes: 0,
+          updatedServers: 0, skippedServers: 0, corruptLines: 0, recordFiles: 0,
+          attributionLines: 1, cursorUtc: '2026-08-22T06:00', error: null,
+        }
+      }
+      if (command === 'query_history') {
+        return { entries: [], corruptLines: 0, diskAttribution: [] }
+      }
+      return undefined
+    })
+
+    await store.triggerDiskScan('3090')
+    await store.pollDiskScan('3090') // first completed scan merges once
+    expect(pulls).toBe(1)
+
+    await store.triggerDiskScan('3090') // a new scan must re-arm the merge
+    await store.pollDiskScan('3090')
+    expect(pulls).toBe(2)
+  })
 })
