@@ -12,7 +12,7 @@ import {
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
-import { parseDiskEntries, buildTopDiskUserSeries } from '../utils/diskMounts'
+import { parseDiskEntries, buildTopDiskUserSeries, expandCarriedForward } from '../utils/diskMounts'
 import { useMonitorStore } from '../stores/monitor'
 
 use([
@@ -1470,7 +1470,7 @@ const getDiskOption = (server: ServerHistoryRecord) => {
       formatter: (params: any[]) => {
         if (!params || !params.length) return ''
         const time = server.timestamps[params[0].dataIndex] || params[0].name
-        const visibleParams = params.filter((p) => p.value != null && isSeriesVisible(server.id, 'disk', p.seriesName))
+        const visibleParams = params.filter((p) => p.value != null && !Number.isNaN(Number(p.value)) && isSeriesVisible(server.id, 'disk', p.seriesName))
         let html = `
           <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
@@ -1562,7 +1562,10 @@ const getDiskOption = (server: ServerHistoryRecord) => {
         type: 'line' as const,
         step: 'end' as const, // 日级阶梯：两次扫描之间保持上次值，不线性插值
         showSymbol: false,
-        data: u.points,
+        connectNulls: false, // 首次扫描之前留空档，而不是从零画起
+        // Full-length carried-forward array: without it the sparse scan points
+        // get connected directly and every other tooltip slot reads NaN.
+        data: expandCarriedForward(server.displayTimes, u.points),
         yAxisIndex: 1,
       })),
     ],

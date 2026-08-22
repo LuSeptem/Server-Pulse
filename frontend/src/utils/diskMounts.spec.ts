@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseDiskEntries, buildTopDiskUserSeries } from './diskMounts'
+import { parseDiskEntries, buildTopDiskUserSeries, expandCarriedForward } from './diskMounts'
 
 describe('parseDiskEntries', () => {
   it('keeps real filesystems and drops snap loop mounts', () => {
@@ -90,5 +90,25 @@ describe('buildTopDiskUserSeries', () => {
       (t) => `L:${t}`,
     )
     expect(series[0].points.map((p) => p[0])).toEqual(['L:2026-08-22T08:00:00Z', 'L:2026-08-22T09:00:00Z'])
+  })
+})
+
+describe('expandCarriedForward', () => {
+  const axis = ['15:00:00', '15:01:00', '15:02:00', '15:03:00']
+
+  it('carries the last scan value forward across the axis', () => {
+    expect(expandCarriedForward(axis, [['15:01:00', 3], ['15:03:00', 5]])).toEqual([null, 3, 3, 5])
+  })
+
+  it('stays null before the first scan', () => {
+    expect(expandCarriedForward(axis, [['15:02:00', 4]])).toEqual([null, null, 4, 4])
+  })
+
+  it('ignores points whose label is not on the axis', () => {
+    expect(expandCarriedForward(axis, [['23:59:59', 9]])).toEqual([null, null, null, null])
+  })
+
+  it('returns all-null for empty points', () => {
+    expect(expandCarriedForward(axis, [])).toEqual([null, null, null, null])
   })
 })

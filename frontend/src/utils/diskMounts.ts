@@ -105,3 +105,26 @@ export function buildTopDiskUserSeries(
     .slice(0, maxUsers)
     .map(({ name, points }) => ({ name, points }))
 }
+
+/**
+ * Expand sparse scan points onto a dense category axis with step semantics:
+ * every axis slot after a point holds that point's value (the last scan in
+ * effect), slots before the first point stay null (no data yet). Points whose
+ * label is not on the axis are ignored.
+ */
+export function expandCarriedForward(
+  axisLabels: string[],
+  points: Array<[string, number]>,
+): Array<number | null> {
+  const valueByLabel = new Map<string, number>()
+  for (const [label, value] of points) {
+    valueByLabel.set(label, value)
+  }
+  let current: number | null = null
+  return axisLabels.map((label) => {
+    if (valueByLabel.has(label)) {
+      current = valueByLabel.get(label)!
+    }
+    return current
+  })
+}
