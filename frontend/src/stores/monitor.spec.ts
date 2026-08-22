@@ -73,6 +73,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 describe('monitor store', () => {
   beforeEach(() => {
+    // Call history must be cleared per test: assertions like
+    // not.toHaveBeenCalledWith would otherwise see earlier tests' invokes.
+    vi.mocked(listen).mockClear()
+    vi.mocked(invoke).mockClear()
     vi.mocked(invoke).mockImplementation(defaultInvoke)
   })
 
@@ -270,5 +274,79 @@ describe('monitor store', () => {
     const result = await store.triggerDiskScan('3090')
     expect(result.status).toBe('launched')
     expect(store.diskScans['3090'].state).toBe('running')
+  })
+
+  it('pulls scan results into local history when a manual scan finishes', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    await store.init()
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'get_disk_scan_status') {
+        return {
+          installed: true,
+          active: false,
+          pid: null,
+          state: 'done',
+          startedAt: null,
+          finishedAt: '2026-08-22T06:00:00Z',
+          lastMount: '/data/data4',
+          lastFile: null,
+        }
+      }
+      if (command === 'pull_and_merge_records') {
+        return {
+          serverId: '3090', status: 'ok', pulledLines: 0, addedMinutes: 0,
+          updatedServers: 0, skippedServers: 0, corruptLines: 0, recordFiles: 0,
+          attributionLines: 1, cursorUtc: null, error: null,
+        }
+      }
+      if (command === 'query_history') {
+        return {
+          entries: [],
+          corruptLines: 0,
+          diskAttribution: [
+            {
+              kind: 'diskAttribution', serverId: '3090', scannedAt: '2026-08-22T06:00:00Z',
+              mount: '/data/data4', status: 'ok', skippedEntries: 0,
+              users: [{ uid: '1000', name: 'alice', usedMib: 5 }],
+            },
+          ],
+        }
+      }
+      return undefined
+    })
+
+    const status = await store.pollDiskScan('3090')
+
+    expect(status.active).toBe(false)
+    expect(invoke).toHaveBeenCalledWith('pull_and_merge_records', { serverId: '3090', cleanRemote: false })
+    expect(store.diskAttribution).toHaveLength(1)
+    expect(store.diskAttribution[0].mount).toBe('/data/data4')
+  })
+
+  it('does not pull while a manual scan is still running', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    await store.init()
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'get_disk_scan_status') {
+        return {
+          installed: true,
+          active: true,
+          pid: 123,
+          state: 'running',
+          startedAt: '2026-08-22T05:00:00Z',
+          finishedAt: null,
+          lastMount: '/data/data4',
+          lastFile: null,
+        }
+      }
+      return undefined
+    })
+
+    const status = await store.pollDiskScan('3090')
+
+    expect(status.active).toBe(true)
+    expect(invoke).not.toHaveBeenCalledWith('pull_and_merge_records', expect.anything())
   })
 })

@@ -156,7 +156,7 @@ Hover a CPU, MEM, or per-card VRAM value/progress bar to preview user attributio
 
 Hovering or clicking the **DISK** value opens the per-user disk attribution panel from the most recent server-side scan. Below the GPU cards the disk section lists every real filesystem: click **All disks** to expand it (or collapse it again), where each mount row shows its percentage, used/total size, and a progress bar; hovering or clicking a row shows that mount's attribution panel. When no scan data exists yet the panel says so explicitly instead of showing zeros.
 
-The expanded disk section also has a **Scan now** button. It launches a low-priority `find`-based scan on the server in the background (detached from the SSH session); the scan keeps running when the application is closed and results are picked up on the next history merge. While a scan runs, the button is disabled and shows the mount currently being scanned.
+The expanded disk section also has a **Scan now** button. It launches a low-priority `find`-based scan on the server in the background (detached from the SSH session); the scan keeps running when the application is closed. While a scan runs, the button is disabled and shows the elapsed time and the mount currently being scanned. When Server Pulse detects that the scan has finished it automatically pulls and merges the results into local history, so the attribution panel updates without any manual merge step.
 
 Attribution status can be **ok**, **partial**, or **unavailable**. Permission problems are reported explicitly and are never displayed as zero usage.
 

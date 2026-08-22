@@ -13,6 +13,11 @@
 - 协议 v2 向后兼容扩展（DISKS 段）；旧 sampler/agent 输出不受影响。 Backward-compatible protocol v2 extension (DISKS section); old samplers/agents keep working.
 - agent 配置新增 scan_enabled/scan_hour；更新后需 Restart/Inject 一次以启用每日调度。 Agent config gains scan_enabled/scan_hour; one Restart/Inject is needed after updating to enable daily scheduling.
 
+### Fixed 修复
+
+- 「立即扫描」完成后现在自动拉取合并结果到本地历史并刷新归属面板；此前结果会留在服务器上，直到手动执行「合并记录」。 "Scan now" now automatically pulls and merges results into local history and refreshes the attribution panel when the scan finishes; previously results stayed on the server until a manual merge.
+- 磁盘归属弹窗文案改为磁盘语义（用户占用而非活跃进程）。 Disk attribution popup copy now uses disk semantics (per-user occupancy, not active processes).
+
 ## v2.0.0 — 2026-08-21
 
 ### 中文

@@ -230,7 +230,11 @@ const footnote = computed(() => {
         <span class="user-popup-status" :class="'status-' + status">
           {{ statusLabel }}
         </span>
-        <span class="user-popup-count">{{ userRows.length }} 位用户活跃</span>
+        <span class="user-popup-count">
+          {{ target?.kind === 'disk'
+            ? `已扫描 ${userRows.length} 位用户`
+            : `${userRows.length} 位用户活跃` }}
+        </span>
         <span v-if="target?.kind === 'disk' && diskAttribution" class="user-popup-count">
           {{ new Date(diskAttribution.scannedAt).toLocaleDateString() }} 扫描
         </span>
@@ -239,7 +243,7 @@ const footnote = computed(() => {
 
       <div class="user-popup-content">
         <div v-if="userRows.length === 0" class="user-popup-empty">
-          暂无用户活跃进程
+          {{ target?.kind === 'disk' ? '暂无用户占用数据' : '暂无用户活跃进程' }}
         </div>
 
         <div v-else class="user-rows-list">

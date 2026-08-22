@@ -639,5 +639,21 @@ export const useMonitorStore = defineStore('monitor', {
       this.diskScans = { ...this.diskScans, [serverId]: status }
       return status
     },
+    // Poll one scan cycle. Scan results live on the server until a merge pulls
+    // them into local history; a finished manual scan must merge first, then
+    // refresh attribution so the popup and card see the fresh records.
+    async pollDiskScan(serverId: string) {
+      const status = await this.fetchDiskScanStatus(serverId)
+      if (!status.active) {
+        try {
+          await invoke<AgentMergeResult>('pull_and_merge_records', { serverId, cleanRemote: false })
+        } catch {
+          // Pull failures must not break status polling; attribution just
+          // stays on its previous data until the next completed scan.
+        }
+        await this.refreshDiskAttribution().catch(() => undefined)
+      }
+      return status
+    },
   },
 })

@@ -82,13 +82,10 @@ function startScanPolling(serverId: string) {
   stopScanPolling(serverId)
   const timer = setInterval(() => {
     void store
-      .fetchDiskScanStatus(serverId)
+      .pollDiskScan(serverId)
       .then((status) => {
         if (!status.active) {
           stopScanPolling(serverId)
-          // Fresh scan results are now merged on the backend; pick them up
-          // immediately instead of waiting for the 5-minute interval.
-          void store.refreshDiskAttribution().catch(() => undefined)
         }
       })
       .catch(() => undefined)
@@ -107,7 +104,9 @@ async function handleScan(serverId: string) {
     const nextErrors = { ...scanErrors.value }
     delete nextErrors[serverId]
     scanErrors.value = nextErrors
-    await store.fetchDiskScanStatus(serverId).catch(() => undefined)
+    // pollDiskScan (not the plain fetch) so an already-finished scan pulls
+    // its results immediately instead of waiting for the first timer tick.
+    await store.pollDiskScan(serverId).catch(() => undefined)
     startScanPolling(serverId)
   } catch (error) {
     scanErrors.value = {
