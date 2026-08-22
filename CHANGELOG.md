@@ -19,6 +19,7 @@
 - 修复扫描完成后轮询 tick 堆叠导致重复并发全量合并，进而占满内存与磁盘写入的问题：状态轮询加在飞保护，每次完成的扫描仅合并一次（新扫描重新武装）。 Fixed memory/disk-write saturation after a completed scan: poll ticks no longer stack, and each completed scan merges exactly once (re-armed by the next scan).
 - 磁盘监控现在按文件系统类型过滤，snap 的 squashfs 回挂载（/snap/…）等虚拟文件系统不再出现在挂载点列表中；历史页解析同样过滤，修复前的存量记录和尚未更新 sampler 的 agent 记录中的 snap 挂载也不再显示。 Disk monitoring now filters by filesystem type as well as device name, so snap squashfs loop mounts (/snap/…) and similar virtual filesystems no longer appear in the mount list; the History view applies the same filter so legacy records and records from agents that still run the old sampler are hidden as well.
 - 磁盘归属弹窗文案改为磁盘语义（用户占用而非活跃进程）。 Disk attribution popup copy now uses disk semantics (per-user occupancy, not active processes).
+- 磁盘用户曲线改为按占用总量降序选取（最多 3 条），不再按用户名字母序——修复 `_apt` 等系统服务账号因字母序霸占图例的问题。 Disk user curves are now ranked by total usage (top 3) instead of alphabetically by name, so tiny system service accounts such as _apt no longer crowd the legend.
 
 ## v2.0.0 — 2026-08-21
 

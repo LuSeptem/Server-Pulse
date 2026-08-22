@@ -12,7 +12,7 @@ import {
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
-import { parseDiskEntries } from '../utils/diskMounts'
+import { parseDiskEntries, buildTopDiskUserSeries } from '../utils/diskMounts'
 import { useMonitorStore } from '../stores/monitor'
 
 use([
@@ -1438,43 +1438,15 @@ function getDiskUserSeries(server: ServerHistoryRecord): { name: string; points:
     return best
   }
 
-  // Group by scan instant first: one attribution record exists per mount.
-  const scans = new Map<string, { ms: number; label: string; users: Map<string, { uid: string; name: string; usedMib: number }> }>()
-  for (const record of records) {
-    const scannedMs = parseToLocalDate(record.scannedAt)?.getTime()
-    const key = record.scannedAt
-    if (!scans.has(key)) {
-      let label: string
-      if (scannedMs != null && !isNaN(scannedMs) && sampleTimes.length > 0) {
-        label = server.displayTimes[snapIndex(scannedMs)] ?? ''
-      } else {
-        label = formatLocalTimestamp(record.scannedAt).displayTime
-      }
-      scans.set(key, { ms: scannedMs ?? NaN, label, users: new Map() })
+  // Grouping, cross-mount summation, and top-N selection (ranked by total
+  // usage, not name) live in utils/diskMounts; only axis snapping is local.
+  return buildTopDiskUserSeries(records, (scannedAt) => {
+    const scannedMs = parseToLocalDate(scannedAt)?.getTime()
+    if (scannedMs != null && !isNaN(scannedMs) && sampleTimes.length > 0) {
+      return server.displayTimes[snapIndex(scannedMs)] ?? ''
     }
-    const scan = scans.get(key)!
-    for (const u of record.users) {
-      const userKey = u.uid || u.name
-      const existing = scan.users.get(userKey)
-      if (existing) {
-        existing.usedMib += u.usedMib
-      } else {
-        scan.users.set(userKey, { uid: u.uid, name: u.name, usedMib: u.usedMib })
-      }
-    }
-  }
-
-  const byUser = new Map<string, { name: string; points: [string, number][] }>()
-  for (const scan of Array.from(scans.values()).sort((a, b) => a.ms - b.ms)) {
-    for (const u of scan.users.values()) {
-      const key = u.uid || u.name
-      if (!byUser.has(key)) byUser.set(key, { name: u.name, points: [] })
-      byUser.get(key)!.points.push([scan.label, u.usedMib / 1024])
-    }
-  }
-  return Array.from(byUser.values())
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, 3) // 用户曲线最多 3 条，与现有约定一致
+    return formatLocalTimestamp(scannedAt).displayTime
+  })
 }
 
 const getDiskOption = (server: ServerHistoryRecord) => {

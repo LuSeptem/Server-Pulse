@@ -31,3 +31,77 @@ export function parseDiskEntries(s: any): ParsedDiskEntry[] {
     }))
     .filter((entry: ParsedDiskEntry) => isDisplayableDiskMount(entry.mount))
 }
+
+export interface DiskUserAttributionRecord {
+  scannedAt: string
+  users: Array<{ uid: string; name: string; usedMib: number }>
+}
+
+export interface DiskUserSeries {
+  name: string
+  points: Array<[string, number]>
+}
+
+/**
+ * Build the top-N per-user disk-attribution series for the History disk view.
+ *
+ * Records are grouped by scan instant (one attribution record exists per
+ * mount, so a single scan produces several records with close timestamps —
+ * users found on multiple mounts are summed within one instant). Points are
+ * ordered by scan time and labelled through `labelFor`. Users are ranked by
+ * their TOTAL usage (not name) so tiny system service accounts never crowd
+ * out real consumers.
+ */
+export function buildTopDiskUserSeries(
+  records: DiskUserAttributionRecord[],
+  labelFor: (scannedAt: string) => string,
+  maxUsers = 3,
+): DiskUserSeries[] {
+  interface ScanInstant {
+    order: number
+    label: string
+    users: Map<string, { uid: string; name: string; usedMib: number }>
+  }
+
+  const scans = new Map<string, ScanInstant>()
+  for (const record of records) {
+    let instant = scans.get(record.scannedAt)
+    if (!instant) {
+      const parsedMs = Date.parse(record.scannedAt)
+      instant = {
+        order: Number.isNaN(parsedMs) ? Number.MAX_SAFE_INTEGER : parsedMs,
+        label: labelFor(record.scannedAt),
+        users: new Map(),
+      }
+      scans.set(record.scannedAt, instant)
+    }
+    for (const u of record.users) {
+      const userKey = u.uid || u.name
+      const existing = instant.users.get(userKey)
+      if (existing) {
+        existing.usedMib += u.usedMib
+      } else {
+        instant.users.set(userKey, { uid: u.uid, name: u.name, usedMib: u.usedMib })
+      }
+    }
+  }
+
+  const byUser = new Map<string, { name: string; points: Array<[string, number]>; total: number }>()
+  for (const instant of Array.from(scans.values()).sort((a, b) => a.order - b.order)) {
+    for (const u of instant.users.values()) {
+      const userKey = u.uid || u.name
+      let entry = byUser.get(userKey)
+      if (!entry) {
+        entry = { name: u.name, points: [], total: 0 }
+        byUser.set(userKey, entry)
+      }
+      entry.points.push([instant.label, u.usedMib / 1024])
+      entry.total += u.usedMib
+    }
+  }
+
+  return Array.from(byUser.values())
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+    .slice(0, maxUsers)
+    .map(({ name, points }) => ({ name, points }))
+}
