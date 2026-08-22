@@ -611,8 +611,8 @@ sp_maybe_scan() {{
   sp_hour=$(date +%H 2>/dev/null) || return 0
   case "$sp_hour" in *[!0-9]*|'') return 0 ;; esac
   [ "$sp_hour" -lt "$sp_scan_hour" ] && return 0
-  echo "$sp_today" > "$sp_state/last-scan-day" 2>/dev/null
   [ -f "$sp_base/scan.sh" ] || return 0
+  echo "$sp_today" > "$sp_state/last-scan-day" 2>/dev/null
   export SERVERPULSE_SERVER_ID="$sp_server_id"
   ( cd "$HOME" && if command -v setsid >/dev/null 2>&1; then nohup setsid sh "$sp_base/scan.sh" >>"$sp_base/scan.log" 2>&1 </dev/null & else nohup sh "$sp_base/scan.sh" >>"$sp_base/scan.log" 2>&1 </dev/null & fi )
 }}
@@ -1167,6 +1167,19 @@ pub fn parse_agent_pull_output(
     }
 }
 
+/// True when `day` matches the canonical `YYYY-MM-DD` shape (digits with
+/// dashes at fixed positions). Used to keep hostile remote markers from
+/// becoming file-path components.
+pub fn is_valid_day_shape(day: &str) -> bool {
+    let b = day.as_bytes();
+    b.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b.iter().enumerate().all(|(i, c)| {
+            i == 4 || i == 7 || c.is_ascii_digit()
+        })
+}
+
 pub fn parse_agent_attribution_output(output: &str) -> (Vec<(String, String)>, usize) {
     let mut rows = Vec::new();
     let mut corrupt = 0usize;
@@ -1177,7 +1190,13 @@ pub fn parse_agent_attribution_output(output: &str) -> (Vec<(String, String)>, u
             continue;
         }
         if let Some(day) = clean.strip_prefix("__SP_ATTR_FILE__") {
-            current_day = Some(day.to_owned());
+            // Only accept canonical YYYY-MM-DD payloads; anything else is
+            // treated as "no current day" so following lines are skipped.
+            if is_valid_day_shape(day) {
+                current_day = Some(day.to_owned());
+            } else {
+                current_day = None;
+            }
             continue;
         }
         if clean.starts_with("SP_AGENT_") || clean.starts_with("__SP_FILE__") || clean.starts_with("SP_AGENT_CLEANED") {
@@ -1351,6 +1370,22 @@ mod attribution_pull_tests {
         assert_eq!(corrupt, 1);
         assert_eq!(rows[0].0, "2026-08-20");
         assert!(rows[0].1.contains("diskAttribution"));
+    }
+
+    #[test]
+    fn rejects_non_day_attribution_file_marker() {
+        // Hostile/path-like day payloads must not be accepted as a current
+        // day; following lines are skipped entirely (no rows, no corrupt).
+        let output = concat!(
+            "__SP_ATTR_FILE__../evil\n",
+            "{\"kind\":\"diskAttribution\",\"serverId\":\"s1\",\"scannedAt\":\"2026-08-20T03:12:45Z\",\"mount\":\"/data\",\"status\":\"ok\",\"skippedEntries\":0,\"users\":[]}\n",
+            "__SP_ATTR_FILE__2026-8-20\n",
+            "{\"kind\":\"diskAttribution\",\"serverId\":\"s1\",\"scannedAt\":\"2026-08-20T03:12:45Z\",\"mount\":\"/data\",\"status\":\"ok\",\"skippedEntries\":0,\"users\":[]}\n",
+            "__SP_DONE__\n",
+        );
+        let (rows, corrupt) = parse_agent_attribution_output(output);
+        assert_eq!(rows.len(), 0);
+        assert_eq!(corrupt, 0);
     }
 
     #[test]

@@ -1943,6 +1943,10 @@ async fn pull_and_merge_records_impl(
         attr_days.entry(day).or_default().push(line);
     }
     for (day, lines) in &attr_days {
+        // Defense in depth: never join a non-canonical day into a file path.
+        if !serverpulse_core::is_valid_day_shape(day) {
+            continue;
+        }
         let path = attribution_dir.join(format!("{day}.jsonl"));
         let existing = fs::read_to_string(&path).unwrap_or_default();
         let incoming = lines.join("\n") + "\n";
