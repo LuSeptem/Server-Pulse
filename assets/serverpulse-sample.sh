@@ -220,6 +220,7 @@ NR > 1 {
   else if (NF == 6) { dev = $1; fstype = ""; total = $2; used = $3; mount = $6 }
   else { next }
   if (dev ~ /^(tmpfs|devtmpfs|overlay|shm|none|udev|squashfs|cgroup|ramfs|aufs|proc|sysfs|devpts|mqueue|hugetlbfs|binfmt_misc|configfs|securityfs|pstore|debugfs|tracefs|bpf|autofs|efivarfs|nsfs)/) next
+  if (fstype ~ /^(tmpfs|devtmpfs|overlay|squashfs|proc|sysfs|devpts|mqueue|hugetlbfs|securityfs|debugfs|tracefs|configfs|fusectl|efivarfs|bpf|nsfs|ramfs|cgroup|autofs|binfmt_misc|pstore|iso9660)/) next
   if (mount ~ /^\/(proc|sys|dev|run|boot\/efi)(\/|$)/) next
   if (total + 0 <= 0) next
   printf "%s\t%s\t%s\t%s\t%s\n", dev, mount, total, used, fstype
