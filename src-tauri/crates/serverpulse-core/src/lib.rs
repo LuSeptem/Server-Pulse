@@ -663,6 +663,63 @@ pub fn read_history_jsonl(text: &str) -> HistoryRead {
     result
 }
 
+/// Streams a v2 history JSONL source and parses only the lines whose raw
+/// `"Timestamp"` stamp falls inside `[window_start, window_end)`, compared
+/// lexically as naive `YYYY-MM-DDTHH:MM:SS` prefixes. Out-of-window lines
+/// never build a serde_json value tree, keeping peak memory proportional to
+/// the in-range data instead of the whole file. Callers must widen the exact
+/// UTC query window by at least one day on each side so that timestamps with
+/// any timezone offset (and local-naive legacy stamps) can never be dropped
+/// by the prefilter. Lines without a recognizable ISO-UTC stamp shape are
+/// always parsed and left to the caller's exact filtering. Skipped lines are
+/// neither parsed nor counted as corrupt.
+pub fn read_history_jsonl_filtered(
+    reader: impl std::io::BufRead,
+    window_start: &str,
+    window_end: &str,
+) -> HistoryRead {
+    const TIMESTAMP_NEEDLE: &str = "\"Timestamp\":\"";
+    let mut result = HistoryRead::default();
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        let clean = line.trim_start_matches('\u{feff}').trim();
+        let mut skip = false;
+        if let Some(pos) = clean.find(TIMESTAMP_NEEDLE) {
+            let rest = &clean[pos + TIMESTAMP_NEEDLE.len()..];
+            if rest.len() > 19 && is_naive_stamp_shape(&rest[..19]) {
+                // Only cheap-reject plain UTC stamps ("...Z"/"...msZ"). A
+                // trailing offset ("+08:00") makes the naive prefix lie about
+                // the instant, so such lines always go through full parsing.
+                let suffix = rest.as_bytes()[19];
+                if matches!(suffix, b'Z' | b'z' | b'.')
+                    && (&rest[..19] < window_start || &rest[..19] >= window_end)
+                {
+                    skip = true;
+                }
+            }
+        }
+        if skip {
+            continue;
+        }
+        match serde_json::from_str::<HistoryEntry>(clean) {
+            Ok(entry) => result.entries.push(entry),
+            Err(_) => result.corrupt_lines += 1,
+        }
+    }
+    result
+}
+
+fn is_naive_stamp_shape(prefix: &str) -> bool {
+    let bytes = prefix.as_bytes();
+    bytes.len() == 19
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            4 | 7 => *b == b'-',
+            10 => *b == b'T',
+            13 | 16 => *b == b':',
+            _ => b.is_ascii_digit(),
+        })
+}
+
 pub fn read_history_json(text: &str) -> HistoryRead {
     let mut result = HistoryRead::default();
     let clean = text.trim_start_matches('\u{feff}').trim();
@@ -960,5 +1017,77 @@ __SP_DONE__
         assert_eq!(merged.lines().count(), 1);
         let kept: serde_json::Value = serde_json::from_str(merged.trim()).unwrap();
         assert_eq!(kept["users"][0]["usedMib"], serde_json::json!(1234567.0));
+    }
+
+    fn history_line_with_stamp(stamp: &str) -> String {
+        format!(
+            r#"{{"Version":2,"Record":{{"Timestamp":"{stamp}","SampleCount":1,"Servers":[]}}}}"#
+        )
+    }
+
+    #[test]
+    fn filtered_reader_keeps_only_in_window_lines() {
+        let text = format!(
+            "{past}\n{inside}\n{future}\n{corrupt}\n",
+            past = history_line_with_stamp("2026-08-20T00:00:00Z"),
+            inside = history_line_with_stamp("2026-08-23T05:00:00Z"),
+            future = history_line_with_stamp("2026-08-30T00:00:00Z"),
+            corrupt = "{\"Version\":2,\"Record\":{\"Timestamp\":\"2026-08-23T06:00:00Z\",broken"
+        );
+        let reader = std::io::BufReader::new(text.as_bytes());
+        let read = read_history_jsonl_filtered(
+            reader,
+            "2026-08-22T00:00:00",
+            "2026-08-24T00:00:00",
+        );
+        assert_eq!(read.entries.len(), 1);
+        assert_eq!(read.corrupt_lines, 1); // 窗口外的坏行不计数：从未解析
+        let stamp = read.entries[0].record["Timestamp"].as_str().unwrap();
+        assert_eq!(stamp, "2026-08-23T05:00:00Z");
+    }
+
+    #[test]
+    fn filtered_reader_window_boundaries_are_half_open() {
+        let text = format!(
+            "{at_start}\n{at_end}\n",
+            at_start = history_line_with_stamp("2026-08-23T05:00:00Z"),
+            at_end = history_line_with_stamp("2026-08-24T00:00:00Z"),
+        );
+        let reader = std::io::BufReader::new(text.as_bytes());
+        let read = read_history_jsonl_filtered(
+            reader,
+            "2026-08-23T05:00:00",
+            "2026-08-24T00:00:00",
+        );
+        assert_eq!(read.entries.len(), 1);
+        assert_eq!(
+            read.entries[0].record["Timestamp"].as_str().unwrap(),
+            "2026-08-23T05:00:00Z"
+        );
+    }
+
+    #[test]
+    fn filtered_reader_never_skips_offset_or_odd_stamps() {
+        // Offset-stamped and non-ISO stamps must reach full parsing even when
+        // their naive prefix is outside the window; the caller's exact
+        // timezone-aware filter decides their fate.
+        let offset_line = history_line_with_stamp("2026-08-30T23:00:00+08:00");
+        let odd_line = r#"{"Version":2,"Record":{"Timestamp":"2026/08/30 23:00:00","SampleCount":1,"Servers":[]}}"#;
+        let no_ts_line = r#"{"Version":2,"Record":{"SampleCount":1}}"#;
+        let text = format!("{offset_line}\n{odd_line}\n{no_ts_line}\n");
+        let reader = std::io::BufReader::new(text.as_bytes());
+        let read =
+            read_history_jsonl_filtered(reader, "2026-08-22T00:00:00", "2026-08-24T00:00:00");
+        assert_eq!(read.entries.len(), 3);
+        assert_eq!(read.corrupt_lines, 0);
+    }
+
+    #[test]
+    fn naive_stamp_shape_requires_iso_layout() {
+        assert!(is_naive_stamp_shape("2026-08-23T05:00:01"));
+        assert!(!is_naive_stamp_shape("2026-8-23T05:00:01"));
+        assert!(!is_naive_stamp_shape("2026/08/23 05:00:01"));
+        assert!(!is_naive_stamp_shape("2026-08-23 05:00:01"));
+        assert!(!is_naive_stamp_shape("2026-08-23T05:00"));
     }
 }

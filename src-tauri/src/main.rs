@@ -162,6 +162,15 @@ struct HistoryResponse {
     disk_attribution: Vec<serverpulse_core::DiskAttributionRecord>,
 }
 
+/// Lightweight response for windows that only poll disk attribution. Reads
+/// the small attribution files instead of the full history day files, so the
+/// periodic auto-refresh never materializes hundreds of MB of metric records.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiskAttributionResponse {
+    disk_attribution: Vec<serverpulse_core::DiskAttributionRecord>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SshConfigInfo {
@@ -449,11 +458,51 @@ fn local_day_utc_range(
     Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
 }
 
+/// Candidate UTC day files plus the exact half-open UTC window for a local
+/// calendar date. Shared by the full history query and the lightweight
+/// disk-attribution query.
+fn history_query_window(
+    target_date: NaiveDate,
+) -> Result<(Vec<String>, chrono::DateTime<Utc>, chrono::DateTime<Utc>), String> {
+    let (utc_start, utc_end) = local_day_utc_range(target_date)?;
+    let mut candidate_days = Vec::new();
+    let mut cursor = utc_start
+        .date_naive()
+        .pred_opt()
+        .unwrap_or(utc_start.date_naive());
+    let last_day = utc_end
+        .date_naive()
+        .succ_opt()
+        .unwrap_or(utc_end.date_naive());
+    while cursor <= last_day {
+        candidate_days.push(cursor.format("%Y-%m-%d").to_string());
+        let Some(next) = cursor.succ_opt() else { break };
+        cursor = next;
+    }
+    Ok((candidate_days, utc_start, utc_end))
+}
+
 fn utc_history_bucket(now: chrono::DateTime<Utc>) -> (String, String) {
     (
         now.to_rfc3339_opts(SecondsFormat::Secs, true),
         now.format("%Y-%m-%d").to_string(),
     )
+}
+
+/// Minute key for history throttling: at most one recorded sample per server
+/// per UTC minute regardless of the live sampling interval. Reconnects reset
+/// the slot, which can rarely emit two lines in one minute; the query-side
+/// dedup absorbs that.
+fn should_record_history_minute(slot: &mut Option<String>, history_timestamp: &str) -> bool {
+    let minute_key = history_timestamp
+        .get(..16)
+        .unwrap_or(history_timestamp)
+        .to_owned();
+    if slot.as_deref() == Some(minute_key.as_str()) {
+        return false;
+    }
+    *slot = Some(minute_key);
+    true
 }
 
 fn known_hosts_manager() -> Result<KnownHostsManager, String> {
@@ -610,6 +659,10 @@ fn spawn_monitoring_task(
         let mut sequence = 0u64;
         let mut retry = RetryState::default();
         let mut stream: Option<SshStream> = None;
+        // Minute-level history throttle slot: live snapshots keep flowing at
+        // the configured interval, but at most one line per server per UTC
+        // minute reaches the history file.
+        let mut last_history_minute: Option<String> = None;
         state_statuses
             .lock()
             .await
@@ -723,7 +776,12 @@ fn spawn_monitoring_task(
                         &history_store,
                         history_line(&server, &history_timestamp, &snapshot),
                     ) {
-                        let _ = store.append_jsonl(&utc_day, &line);
+                        if should_record_history_minute(
+                            &mut last_history_minute,
+                            &history_timestamp,
+                        ) {
+                            let _ = store.append_jsonl(&utc_day, &line);
+                        }
                     }
                     state_snapshots
                         .lock()
@@ -1262,34 +1320,36 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
         .map_err(to_command_error)?;
     let store = JsonHistoryStore::new(root);
 
-    let (utc_start, utc_end) = local_day_utc_range(target_date)?;
-    let mut candidate_days = Vec::new();
-    let mut cursor = utc_start
-        .date_naive()
-        .pred_opt()
-        .unwrap_or(utc_start.date_naive());
-    let last_day = utc_end
-        .date_naive()
-        .succ_opt()
-        .unwrap_or(utc_end.date_naive());
-    while cursor <= last_day {
-        candidate_days.push(cursor.format("%Y-%m-%d").to_string());
-        let Some(next) = cursor.succ_opt() else { break };
-        cursor = next;
-    }
+    let (candidate_days, utc_start, utc_end) = history_query_window(target_date)?;
+    // Widen the raw-stamp prefilter window by 15h on each side: any real
+    // timezone offset is within ±14h, so lines that could possibly pass the
+    // exact per-entry filter are always parsed.
+    let skip_before = (utc_start - chrono::Duration::hours(15))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    let skip_after_excl = (utc_end + chrono::Duration::hours(15))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
 
     let mut all_entries = Vec::new();
     let mut total_corrupt = 0;
-    let mut seen_keys = std::collections::HashSet::new();
+    // Dedup key: exact instant plus a structural hash of the record, instead
+    // of a fully re-serialized record string. Holds O(1) memory per entry
+    // rather than an owned copy of every line.
+    let mut seen_keys: std::collections::HashSet<(i64, u64)> = std::collections::HashSet::new();
 
     for candidate in &candidate_days {
         let path = store.history_root.join(format!("{candidate}.v2.jsonl"));
         if path.exists() {
-            let text = fs::read_to_string(&path).unwrap_or_default();
-            let read = serverpulse_core::read_history_jsonl(&text);
-            total_corrupt += read.corrupt_lines;
-            for entry in read.entries {
-                all_entries.push(entry);
+            if let Ok(file) = fs::File::open(&path) {
+                let reader = std::io::BufReader::with_capacity(1 << 20, file);
+                let read = serverpulse_core::read_history_jsonl_filtered(
+                    reader,
+                    &skip_before,
+                    &skip_after_excl,
+                );
+                total_corrupt += read.corrupt_lines;
+                all_entries.extend(read.entries);
             }
         }
         let legacy_path = store.history_root.join(format!("{candidate}.json"));
@@ -1372,8 +1432,13 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
                     serde_json::Value::String(local_iso_str),
                 );
             }
-            let key = format!("{}:{}", ts_millis, entry.record);
-            if seen_keys.insert(key) {
+            let key_hash = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                entry.record.hash(&mut hasher);
+                hasher.finish()
+            };
+            if seen_keys.insert((ts_millis, key_hash)) {
                 filtered_entries.push((ts_millis, entry));
             }
         }
@@ -1387,6 +1452,39 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
         corrupt_lines: total_corrupt,
         disk_attribution,
     })
+}
+
+/// Reads only the per-day disk attribution records for a local calendar day.
+/// Used by the periodic auto-refresh in every window; unlike query_history it
+/// never parses the metric history files, keeping the 5-minute poll cheap.
+#[tauri::command]
+async fn query_disk_attribution(day: String) -> Result<DiskAttributionResponse, String> {
+    let target_date = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+        .map_err(|_| "history day must use YYYY-MM-DD".to_owned())?;
+    let root = DataRootManager::default()
+        .resolve()
+        .map_err(to_command_error)?;
+    let store = JsonHistoryStore::new(root);
+    let (candidate_days, _utc_start, _utc_end) = history_query_window(target_date)?;
+
+    let mut disk_attribution = Vec::new();
+    for candidate in candidate_days.iter() {
+        let path = store
+            .history_root
+            .join("attribution")
+            .join(format!("{candidate}.jsonl"));
+        if path.exists() {
+            let text = fs::read_to_string(&path).unwrap_or_default();
+            for line in text.lines() {
+                if let Ok(record) = serverpulse_core::parse_disk_attribution_line(line) {
+                    disk_attribution.push(record);
+                }
+            }
+        }
+    }
+    disk_attribution.sort_by(|a, b| a.scanned_at.cmp(&b.scanned_at));
+
+    Ok(DiskAttributionResponse { disk_attribution })
 }
 
 #[tauri::command]
@@ -2767,6 +2865,7 @@ fn main() {
             save_credential,
             delete_credential,
             query_history,
+            query_disk_attribution,
             preview_import,
             apply_import,
             open_window,
@@ -2838,5 +2937,60 @@ mod tests {
         );
         assert!(end > start);
         assert!(end - start <= chrono::Duration::hours(26));
+    }
+
+    #[test]
+    fn history_minute_throttle_records_once_per_utc_minute() {
+        let mut slot: Option<String> = None;
+        assert!(should_record_history_minute(
+            &mut slot,
+            "2026-08-23T05:14:01Z"
+        ));
+        // Same minute (any second) is suppressed regardless of the live
+        // sampling interval.
+        assert!(!should_record_history_minute(
+            &mut slot,
+            "2026-08-23T05:14:59Z"
+        ));
+        // Next minute records again.
+        assert!(should_record_history_minute(
+            &mut slot,
+            "2026-08-23T05:15:00Z"
+        ));
+        // Day rollover changes the key and records.
+        assert!(should_record_history_minute(
+            &mut slot,
+            "2026-08-24T00:00:30Z"
+        ));
+    }
+
+    #[test]
+    fn history_minute_throttle_handles_short_timestamps() {
+        let mut slot: Option<String> = None;
+        assert!(should_record_history_minute(&mut slot, "short"));
+        assert!(!should_record_history_minute(&mut slot, "short"));
+    }
+
+    #[test]
+    fn history_query_window_spreads_candidate_days_and_matches_range() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).expect("date");
+        let (days, start, end) = history_query_window(date).expect("window");
+        // 契约：候选日覆盖 UTC 窗口两侧各多垫一天（±1 日），且升序无重复。
+        let expected_first = start
+            .date_naive()
+            .pred_opt()
+            .expect("previous day")
+            .format("%Y-%m-%d")
+            .to_string();
+        let expected_last = end
+            .date_naive()
+            .succ_opt()
+            .expect("next day")
+            .format("%Y-%m-%d")
+            .to_string();
+        assert_eq!(days.first(), Some(&expected_first));
+        assert_eq!(days.last(), Some(&expected_last));
+        assert!(start < end);
+        assert!(days.windows(2).all(|w| w[0] < w[1]));
     }
 }

@@ -498,7 +498,10 @@ export const useMonitorStore = defineStore('monitor', {
       }
       // Only refresh attribution so windows that never call loadHistory (e.g.
       // the main window) still get scan data without touching History state.
-      const response = await invoke<{ diskAttribution?: DiskAttributionRecord[] }>('query_history', {
+      // The dedicated lightweight command reads only the small attribution
+      // files; pulling full history here every 5 minutes per window used to
+      // materialize hundreds of MB of metric records in both processes.
+      const response = await invoke<{ diskAttribution?: DiskAttributionRecord[] }>('query_disk_attribution', {
         day: requested,
       })
       this.diskAttribution = response.diskAttribution ?? []

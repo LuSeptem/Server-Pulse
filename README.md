@@ -176,6 +176,8 @@ History supports:
 
 The window appears immediately; the initial query runs at background priority after the window is shown. Queries parse only the requested minute window instead of the whole day files, so opening History and switching time ranges stay responsive even with long retention.
 
+Recording granularity differs from the live refresh: server cards update at the configured sampling interval, but local history appends **at most one record per server per UTC minute**, keeping day files small no matter how fast you sample. History queries stream day files with a timestamp prefilter instead of materializing every record, and the periodic disk-attribution refresh in every window reads only the small attribution files rather than full metric history.
+
 ### Local history layout
 
 History stays on the current Windows user's machine. The default data root is `%LOCALAPPDATA%\\ServerPulse\\`. The first visit to History asks you to save a policy, preselecting 7 days. The query range has no separate maximum; an interval earlier than retained data simply reports that no records are available.

@@ -44,6 +44,17 @@ async function defaultInvoke(command: string, args?: any) {
       ],
     }
   }
+  if (command === 'query_disk_attribution') {
+    return {
+      diskAttribution: [
+        {
+          kind: 'diskAttribution', serverId: '3090', scannedAt: '2026-08-20T03:12:45Z',
+          mount: '/data', status: 'ok', skippedEntries: 0,
+          users: [{ uid: '1000', name: 'alice', usedMib: 1234567 }],
+        },
+      ],
+    }
+  }
   if (command === 'trigger_disk_scan') {
     return { serverId: args?.serverId, status: 'launched', detail: null }
   }
@@ -300,10 +311,8 @@ describe('monitor store', () => {
           attributionLines: 1, cursorUtc: null, error: null,
         }
       }
-      if (command === 'query_history') {
+      if (command === 'query_disk_attribution') {
         return {
-          entries: [],
-          corruptLines: 0,
           diskAttribution: [
             {
               kind: 'diskAttribution', serverId: '3090', scannedAt: '2026-08-22T06:00:00Z',
@@ -380,8 +389,8 @@ describe('monitor store', () => {
           attributionLines: 1, cursorUtc: '2026-08-22T06:00', error: null,
         }
       }
-      if (command === 'query_history') {
-        return { entries: [], corruptLines: 0, diskAttribution: [] }
+      if (command === 'query_disk_attribution') {
+        return { diskAttribution: [] }
       }
       return undefined
     })
@@ -422,8 +431,8 @@ describe('monitor store', () => {
           attributionLines: 1, cursorUtc: '2026-08-22T06:00', error: null,
         }
       }
-      if (command === 'query_history') {
-        return { entries: [], corruptLines: 0, diskAttribution: [] }
+      if (command === 'query_disk_attribution') {
+        return { diskAttribution: [] }
       }
       return undefined
     })
@@ -435,5 +444,22 @@ describe('monitor store', () => {
     await store.triggerDiskScan('3090') // a new scan must re-arm the merge
     await store.pollDiskScan('3090')
     expect(pulls).toBe(2)
+  })
+
+  it('refreshes disk attribution through the lightweight command only', async () => {
+    setActivePinia(createPinia())
+    const store = useMonitorStore()
+    await store.init()
+    vi.mocked(invoke).mockClear()
+
+    await store.refreshDiskAttribution('2026-08-21')
+
+    // Regression guard: the 5-minute per-window poll used to invoke
+    // query_history, which parsed and shipped every metric record of the day
+    // just to read disk attribution. It must stay on query_disk_attribution.
+    expect(invoke).toHaveBeenCalledWith('query_disk_attribution', { day: '2026-08-21' })
+    expect(invoke).not.toHaveBeenCalledWith('query_history', expect.anything())
+    expect(store.diskAttribution).toHaveLength(1)
+    expect(store.diskAttribution[0].mount).toBe('/data')
   })
 })
