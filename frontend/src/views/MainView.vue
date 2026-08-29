@@ -7,6 +7,7 @@ import { useEdgeDocking } from '../composables/useEdgeDocking'
 import { useUserUsagePopup } from '../composables/useUserUsagePopup'
 import ServerCard from '../components/ServerCard.vue'
 import UserUsagePopup from '../components/UserUsagePopup.vue'
+import { DISK_ATTRIBUTION_FROZEN } from '../diskAttribution'
 
 const store = useMonitorStore()
 const showIntervalMenu = ref(false)
@@ -38,6 +39,9 @@ const currentSnapshot = computed(() => {
 const currentDiskAttribution = computed(() => {
   const target = currentTarget.value
   if (!target || target.kind !== 'disk') return null
+  // Frozen: attribution records are never fed to the popup while the
+  // per-user disk attribution feature is frozen.
+  if (DISK_ATTRIBUTION_FROZEN) return null
   return (
     store.diskAttribution.find(
       (r) => r.serverId === target.serverId && r.mount === target.mount,
@@ -102,6 +106,9 @@ function startScanPolling(serverId: string) {
 }
 
 async function handleScan(serverId: string) {
+  // Frozen: the "立即扫描" button is hidden while per-user disk attribution
+  // is frozen; this guard keeps any stray emit from launching a scan.
+  if (DISK_ATTRIBUTION_FROZEN) return
   try {
     const result = await store.triggerDiskScan(serverId)
     if (result.status === 'failed') {

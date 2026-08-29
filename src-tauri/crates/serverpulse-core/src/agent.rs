@@ -498,6 +498,9 @@ pub fn generate_agent_config(
     let interval = interval_seconds.clamp(1, 3600);
     let retention = retention_days.clamp(1, 3650);
     let scan_hour = scan_hour.clamp(0, 23);
+    // Frozen: the daily attribution scan must never be scheduled, even if an
+    // older client state or UI still requests it.
+    let scan_on = scan_enabled && !crate::DISK_ATTRIBUTION_FROZEN;
     format!(
         "interval={}\nretention_days={}\nserver_id={}\nserver_label={}\nserver_host={}\nscan_enabled={}\nscan_hour={}\n",
         interval,
@@ -505,7 +508,7 @@ pub fn generate_agent_config(
         sanitize_agent_value(server_id),
         sanitize_agent_value(label),
         sanitize_agent_value(server_host),
-        if scan_enabled { 1 } else { 0 },
+        if scan_on { 1 } else { 0 },
         scan_hour
     )
 }
@@ -646,7 +649,9 @@ done
         safe_id = safe_id,
         safe_label = safe_label,
         safe_host = safe_host,
-        scan_enabled = if scan_enabled { 1 } else { 0 },
+        // Frozen: sp_scan_enabled is forced to 0 so the embedded scheduler
+        // (`sp_maybe_scan`) can never fire, regardless of requested config.
+        scan_enabled = if scan_enabled && !crate::DISK_ATTRIBUTION_FROZEN { 1 } else { 0 },
         scan_hour = scan_hour.clamp(0, 23),
         awk = AWK_AGGREGATOR,
         sample = sample_script.trim_end()
@@ -850,6 +855,26 @@ pub fn parse_scan_status_output(output: &str) -> DiskScanStatusInfo {
 
 pub fn generate_agent_pull_script(cursor_utc: Option<&str>) -> String {
     let cursor = cursor_utc.unwrap_or("");
+    // Frozen: attribution files never cross the wire — merges stay
+    // history-only and the scan data keeps living on the server, untouched.
+    let attribution_section = if crate::DISK_ATTRIBUTION_FROZEN {
+        String::new()
+    } else {
+        r#"
+if [ -d "$sp/attribution" ]; then
+  for sp_file in "$sp/attribution"/*.jsonl; do
+    [ -e "$sp_file" ] || continue
+    sp_base=${sp_file##*/}
+    case "$sp_base" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl) ;;
+      *) continue ;;
+    esac
+    echo "__SP_ATTR_FILE__${sp_base%.jsonl}"
+    cat "$sp_file"
+  done
+fi"#
+            .to_owned()
+    };
     format!(
         r#"sp="$HOME/.serverpulse"
 sp_cursor="{cursor}"
@@ -872,25 +897,38 @@ if [ -d "$sp/records" ]; then
     cat "$sp_file"
   done
 fi
-if [ -d "$sp/attribution" ]; then
-  for sp_file in "$sp/attribution"/*.jsonl; do
-    [ -e "$sp_file" ] || continue
-    sp_base=${{sp_file##*/}}
-    case "$sp_base" in
-      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl) ;;
-      *) continue ;;
-    esac
-    echo "__SP_ATTR_FILE__${{sp_base%.jsonl}}"
-    cat "$sp_file"
-  done
-fi
+{attribution_section}
 echo "SP_AGENT_RECORD_FILES=$sp_record_files"
 echo '__SP_DONE__'"#,
-        cursor = cursor
+        cursor = cursor,
+        attribution_section = attribution_section
     )
 }
 
 pub fn generate_agent_clean_script(cursor_utc: &str) -> String {
+    // Frozen: remote attribution data is preserved, so the clean script only
+    // prunes metric record files and never touches the attribution directory.
+    let attribution_section = if crate::DISK_ATTRIBUTION_FROZEN {
+        String::new()
+    } else {
+        r#"
+if [ -n "$sp_cursor" ] && [ -d "$sp/attribution" ]; then
+  for sp_file in "$sp/attribution"/*.jsonl; do
+    [ -e "$sp_file" ] || continue
+    sp_base=${sp_file##*/}
+    sp_date=${sp_base%.jsonl}
+    case "$sp_date" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+      *) continue ;;
+    esac
+    if awk -v a="$sp_date" -v b="$sp_cursor_date" 'BEGIN { exit !(a < b) }'; then
+      rm -f "$sp_file" 2>/dev/null
+      echo "SP_AGENT_CLEANED_ATTR=$sp_date"
+    fi
+  done
+fi"#
+            .to_owned()
+    };
     format!(
         r#"sp="$HOME/.serverpulse"
 sp_cursor="{cursor}"
@@ -910,23 +948,10 @@ if [ -n "$sp_cursor" ] && [ -d "$sp/records" ]; then
     fi
   done
 fi
-if [ -n "$sp_cursor" ] && [ -d "$sp/attribution" ]; then
-  for sp_file in "$sp/attribution"/*.jsonl; do
-    [ -e "$sp_file" ] || continue
-    sp_base=${{sp_file##*/}}
-    sp_date=${{sp_base%.jsonl}}
-    case "$sp_date" in
-      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
-      *) continue ;;
-    esac
-    if awk -v a="$sp_date" -v b="$sp_cursor_date" 'BEGIN {{ exit !(a < b) }}'; then
-      rm -f "$sp_file" 2>/dev/null
-      echo "SP_AGENT_CLEANED_ATTR=$sp_date"
-    fi
-  done
-fi
+{attribution_section}
 echo '__SP_DONE__'"#,
-        cursor = cursor_utc
+        cursor = cursor_utc,
+        attribution_section = attribution_section
     )
 }
 

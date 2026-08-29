@@ -9,6 +9,7 @@ import type {
   ServerConfig,
 } from '../types'
 import { useUserUsagePopup } from '../composables/useUserUsagePopup'
+import { DISK_ATTRIBUTION_FROZEN } from '../diskAttribution'
 
 const props = defineProps<{
   server: ServerConfig
@@ -206,8 +207,11 @@ onUnmounted(() => {
   }
 })
 
+// While per-user disk attribution is frozen, hovering/clicking a disk no
+// longer opens the per-user attribution popup — the DISK row and mount list
+// remain pure capacity readouts.
 function handleDiskEnter(disk: DiskMetric, event: MouseEvent) {
-  if (!props.snapshot) return
+  if (DISK_ATTRIBUTION_FROZEN || !props.snapshot) return
   onTargetMouseEnter(
     { serverId: props.server.id, serverLabel: props.server.label, kind: 'disk', mount: disk.mount },
     event.currentTarget as HTMLElement
@@ -215,7 +219,7 @@ function handleDiskEnter(disk: DiskMetric, event: MouseEvent) {
 }
 
 function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
-  if (!props.snapshot) return
+  if (DISK_ATTRIBUTION_FROZEN || !props.snapshot) return
   onTargetClick(
     { serverId: props.server.id, serverLabel: props.server.label, kind: 'disk', mount: disk.mount },
     event.currentTarget as HTMLElement
@@ -264,14 +268,17 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
         <span>MEM</span>
         <strong>{{ snapshot.memoryPercent != null ? snapshot.memoryPercent.toFixed(1) + '%' : '—' }}</strong>
       </div>
+      <!-- Frozen: while per-user attribution is frozen the DISK row is a
+           plain capacity readout (no hover/click attribution popup). -->
       <div
         v-if="worstDisk"
-        class="metric is-interactive"
+        class="metric"
         :class="{
+          'is-interactive': !DISK_ATTRIBUTION_FROZEN,
           'is-active': isTargetActive('disk', undefined, worstDisk.mount),
           'is-pinned': isTargetActive('disk', undefined, worstDisk.mount) && isPinned
         }"
-        title="查看磁盘各用户占用 (点击可固定)"
+        :title="DISK_ATTRIBUTION_FROZEN ? '磁盘使用率（最高使用率挂载点）' : '查看磁盘各用户占用 (点击可固定)'"
         @mouseenter="handleDiskEnter(worstDisk, $event)"
         @mouseleave="onTargetMouseLeave"
         @click.stop="handleDiskClick(worstDisk, $event)"
@@ -340,8 +347,9 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
         <div
           v-for="disk in snapshot.disks"
           :key="disk.mount"
-          class="disk-row is-interactive"
+          class="disk-row"
           :class="{
+            'is-interactive': !DISK_ATTRIBUTION_FROZEN,
             'is-active': isTargetActive('disk', undefined, disk.mount),
             'is-pinned': isTargetActive('disk', undefined, disk.mount) && isPinned
           }"
@@ -355,22 +363,27 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
             <div class="gpu-bar-fill vram-bar" :class="{ 'is-high': (disk.percent ?? 0) >= 80 }" :style="{ width: (disk.percent ?? 0) + '%' }" />
           </div>
         </div>
-        <div class="disk-scan-row">
-          <button
-            type="button"
-            :disabled="diskScanStatus?.active"
-            @click.stop="$emit('scan')"
-          >
-            {{ diskScanStatus?.active
-              ? `扫描中…${scanElapsed ? ' (' + scanElapsed + ')' : diskScanStatus.lastMount ? ' (' + diskScanStatus.lastMount + ')' : ''}`
-              : '立即扫描' }}
-          </button>
-          <span v-if="latestScan" class="muted">
-            来自 {{ new Date(latestScan.scannedAt).toLocaleDateString() }} 扫描
-          </span>
-          <span v-else class="muted">需服务端 agent 或手动扫描</span>
-        </div>
-        <p v-if="scanError" class="error-text">{{ scanError }}</p>
+        <!-- Frozen: the on-demand scanner entry ("立即扫描"), its status
+             line, and its error surface are hidden while per-user disk
+             attribution is frozen. -->
+        <template v-if="!DISK_ATTRIBUTION_FROZEN">
+          <div class="disk-scan-row">
+            <button
+              type="button"
+              :disabled="diskScanStatus?.active"
+              @click.stop="$emit('scan')"
+            >
+              {{ diskScanStatus?.active
+                ? `扫描中…${scanElapsed ? ' (' + scanElapsed + ')' : diskScanStatus.lastMount ? ' (' + diskScanStatus.lastMount + ')' : ''}`
+                : '立即扫描' }}
+            </button>
+            <span v-if="latestScan" class="muted">
+              来自 {{ new Date(latestScan.scannedAt).toLocaleDateString() }} 扫描
+            </span>
+            <span v-else class="muted">需服务端 agent 或手动扫描</span>
+          </div>
+          <p v-if="scanError" class="error-text">{{ scanError }}</p>
+        </template>
       </template>
     </div>
 

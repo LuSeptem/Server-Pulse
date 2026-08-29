@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { onMounted, reactive, ref } from 'vue'
 import { useMonitorStore } from '../stores/monitor'
 import type { AgentMergeResult, AgentServerState, ServerConfig } from '../types'
+import { DISK_ATTRIBUTION_FROZEN } from '../diskAttribution'
 
 const store = useMonitorStore()
 
@@ -283,7 +284,9 @@ async function handleDeployAndStart(server: ServerConfig) {
   const existing = store.agentStates[server.id]
   const interval = existing?.intervalSeconds ?? 5
   const retention = existing?.retentionDays ?? 30
-  const scanEnabled = existing?.scanEnabled ?? true
+  // Frozen: the daily attribution scan can never be requested while the
+  // feature is frozen, regardless of any stored state.
+  const scanEnabled = DISK_ATTRIBUTION_FROZEN ? false : (existing?.scanEnabled ?? true)
   const scanHour = existing?.scanHour ?? 3
   try {
     await store.deployAndStartAgent(server.id, interval, retention, scanEnabled, scanHour)
@@ -314,7 +317,9 @@ function openConfigModal(server: ServerConfig) {
   const existing = store.agentStates[server.id]
   configInterval.value = existing?.intervalSeconds ?? 5
   configRetention.value = existing?.retentionDays ?? 30
-  configScanEnabled.value = existing?.scanEnabled ?? true
+  // Frozen: the scan controls are hidden and forced off while per-user disk
+  // attribution is frozen, so no stored "enabled" value can leak through.
+  configScanEnabled.value = DISK_ATTRIBUTION_FROZEN ? false : (existing?.scanEnabled ?? true)
   configScanHour.value = existing?.scanHour ?? 3
   configError.value = ''
 }
@@ -728,14 +733,18 @@ async function handleExecuteUninstall() {
             <span>历史记录保留天数（天）(默认 30 天，范围 1 - 3650)</span>
             <input v-model.number="configRetention" type="number" min="1" max="3650" />
           </label>
-          <label class="check-row">
-            <input v-model="configScanEnabled" type="checkbox" />
-            <span>每日磁盘归因扫描</span>
-          </label>
-          <label class="field">
-            <span>扫描时刻（服务器本地小时，0 - 23）</span>
-            <input v-model.number="configScanHour" type="number" min="0" max="23" />
-          </label>
+          <!-- Frozen: the daily per-user disk attribution scan is frozen, so
+               its switch and hour control are hidden from the config modal. -->
+          <template v-if="!DISK_ATTRIBUTION_FROZEN">
+            <label class="check-row">
+              <input v-model="configScanEnabled" type="checkbox" />
+              <span>每日磁盘归因扫描</span>
+            </label>
+            <label class="field">
+              <span>扫描时刻（服务器本地小时，0 - 23）</span>
+              <input v-model.number="configScanHour" type="number" min="0" max="23" />
+            </label>
+          </template>
           <p class="modal-hint">
             💡 保存后将更新远端 <code>~/.serverpulse/config</code> 文件，并在下一次采样周期自动生效。
           </p>

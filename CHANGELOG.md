@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### 中文
+
+#### 变更
+
+- **冻结「按用户磁盘归因」功能**（基于 `find` 的扫描在远端服务器上非常占用内存和磁盘，计划后续正式下架）：
+  - 远端 agent 不再调度或部署每日 `find` 扫描：所有代理配置恒以 `scan_enabled=0` 写入；以旧配置部署的已有代理在执行一次「重启」「注入」或保存配置后停止调度。
+  - 卡片「立即扫描」入口、按用户磁盘归属弹窗、History 页按用户磁盘曲线全部隐藏；各窗口 5 分钟归属自动刷新关闭。
+  - 记录合并不再拉取/合并归属记录，历史查询不再返回归属数据。
+  - 实时磁盘容量监控（DISK 行、挂载点列表、每挂载点使用率曲线）不受影响。
+  - 本地与远端已有的归属历史原样保留，不清理、不删除。
+  - 实现方式：代码级功能开关——Rust 层 `serverpulse_core::DISK_ATTRIBUTION_FROZEN` + 前端 `DISK_ATTRIBUTION_FROZEN`，代码完整保留、翻转开关即可恢复；正式下架时整体删除相关代码路径。
+
+### English
+
+#### Changed
+
+- **Per-user disk attribution frozen** (the `find`-based scan is heavy on memory and disk on the remote server; decommissioning is planned):
+  - Remote agents no longer schedule or deploy the daily `find` scan: every agent config is written with `scan_enabled=0`; agents deployed with an older config stop scheduling after one Restart/Inject/config save.
+  - The card "Scan now" entry, the per-user disk attribution popup, and the per-user disk curves in History are hidden; the 5-minute attribution auto-refresh in every window is off.
+  - Record merges no longer pull/merge attribution records, and history queries no longer return attribution data.
+  - Real-time disk capacity monitoring (DISK row, mount list, per-mount usage curves) is unaffected.
+  - Existing local and remote attribution history is preserved untouched — not cleaned up, not deleted.
+  - Implementation: code-level feature flags — Rust `serverpulse_core::DISK_ATTRIBUTION_FROZEN` plus frontend `DISK_ATTRIBUTION_FROZEN`; all code is retained and flipping the flags re-enables the feature; decommissioning will remove the code paths entirely.
+
 ## v2.1.0 — 2026-08-22
 
 ### 中文

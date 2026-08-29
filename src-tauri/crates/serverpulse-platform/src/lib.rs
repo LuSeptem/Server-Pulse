@@ -451,8 +451,11 @@ fn default_retention() -> u32 {
     30
 }
 
+/// Per-user disk attribution is frozen (see `serverpulse_core::
+/// DISK_ATTRIBUTION_FROZEN`), so state entries missing the field default to
+/// "scan disabled" instead of the historical "enabled".
 fn default_scan_enabled() -> bool {
-    true
+    false
 }
 
 fn default_scan_hour() -> u32 {
@@ -493,7 +496,8 @@ impl Default for AgentServerState {
             id: String::new(),
             interval_seconds: 5,
             retention_days: 30,
-            scan_enabled: true,
+            // Frozen: default to scan-disabled (matches default_scan_enabled).
+            scan_enabled: false,
             scan_hour: 3,
             auto_restore_on_startup: false,
             merge_cursor_utc: None,

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
+import { DISK_ATTRIBUTION_FROZEN } from '../diskAttribution'
 import type {
   AgentMergeResult,
   AgentServerState,
@@ -267,10 +268,15 @@ export const useMonitorStore = defineStore('monitor', {
         }, 2000)
         // The main window has no HistoryView to load attribution, so poll it
         // on its own cadence (fire-and-forget; failures stay silent).
-        this.refreshDiskAttribution().catch(() => undefined)
-        setInterval(() => {
-          void this.refreshDiskAttribution().catch(() => undefined)
-        }, 5 * 60 * 1000)
+        // Frozen: while per-user disk attribution is frozen, no attribution
+        // auto-refresh runs at all — the lightweight IPC poll is off, not just
+        // empty, so windows stop issuing the call entirely.
+        if (!DISK_ATTRIBUTION_FROZEN) {
+          this.refreshDiskAttribution().catch(() => undefined)
+          setInterval(() => {
+            void this.refreshDiskAttribution().catch(() => undefined)
+          }, 5 * 60 * 1000)
+        }
         this.initialized = true
       })()
 
@@ -486,6 +492,11 @@ export const useMonitorStore = defineStore('monitor', {
       this.diskAttribution = response.diskAttribution ?? []
     },
     async refreshDiskAttribution(day?: string) {
+      // Frozen: no attribution refresh happens while the feature is frozen.
+      // Existing local records stay as-is; only new pulls are suppressed.
+      if (DISK_ATTRIBUTION_FROZEN) {
+        return
+      }
       const requested = day ?? getLocalDateString()
       // Only a user-pinned day (explicit loadHistory) blocks auto-refreshes;
       // unpinned (auto-claimed) state always proceeds and rolls over at

@@ -34,7 +34,7 @@ The detailed migration notes from v1.1.0 to v2.0.0, including compatibility and 
 - Watch several SSH servers in one compact, always-on-top floating window.
 - Focus on each GPU's utilization, VRAM, temperature, and model name.
 - Inspect CPU, system memory, and per-GPU VRAM attribution by user (displaying active process counts such as `(x2)` when >= 2); user details are hidden until you hover or click a metric.
-- Watch per-filesystem disk capacity and per-user disk attribution (daily scan or on demand).
+- Watch per-filesystem disk capacity. Per-user disk attribution (daily/on-demand `find`-based scans) is **frozen** in this version for resource use; it is kept behind a code flag for a planned later removal.
 - Dock the window to the left, right, or top edge, adjust its size, background opacity, and refresh interval.
 - Restore, hide, or exit from the system tray without keeping a duplicate taskbar window.
 - Switch between dark, light, and system themes, and between Chinese, English, and system language.
@@ -154,9 +154,9 @@ Each monitored server uses one long-lived SSH collection session. The remote sam
 
 Hover a CPU, MEM, or per-card VRAM value/progress bar to preview user attribution. Click to pin the panel; click the same metric again, click empty space, or press `Esc` to close it. Clicking another metric replaces the pinned panel. The first eight users by current usage are shown, with **System / unattributed** always listed separately at the end.
 
-Hovering or clicking the **DISK** value opens the per-user disk attribution panel from the most recent server-side scan. Below the GPU cards the disk section lists every real filesystem (snap/squashfs loop mounts and other virtual filesystems such as tmpfs/overlay are excluded automatically): click **All disks** to expand it (or collapse it again), where each mount row shows its percentage, used/total size, and a progress bar; hovering or clicking a row shows that mount's attribution panel. When no scan data exists yet the panel says so explicitly instead of showing zeros.
+Below the GPU cards the disk section lists every real filesystem (snap/squashfs loop mounts and other virtual filesystems such as tmpfs/overlay are excluded automatically): click **All disks** to expand it (or collapse it again), where each mount row shows its percentage, used/total size, and a progress bar.
 
-The expanded disk section also has a **Scan now** button. It launches a low-priority `find`-based scan on the server in the background (detached from the SSH session); the scan keeps running when the application is closed. While a scan runs, the button is disabled and shows the elapsed time and the mount currently being scanned. When Server Pulse detects that the scan has finished it automatically pulls and merges the results into local history, so the attribution panel updates without any manual merge step.
+**Per-user disk attribution is frozen.** The hover/click per-user disk attribution panel, the on-demand **Scan now** button, the daily `find`-based scanner, and the per-user disk curves in History are all switched off behind a code flag (`DISK_ATTRIBUTION_FROZEN`) because the scanner is heavy on memory and disk on the remote server. The feature is kept in the codebase for a planned later removal rather than deleted. Existing attribution history files are preserved untouched; only new scans and new record pulls are suppressed. To re-enable, flip the flag in both the Rust and frontend layers (see `docs/DEVELOPMENT.md`).
 
 Attribution status can be **ok**, **partial**, or **unavailable**. Permission problems are reported explicitly and are never displayed as zero usage.
 
@@ -167,7 +167,7 @@ Click the prominent **History** button. The default query is the most recent hou
 History supports:
 
 - Independent visibility switches for GPU, VRAM, and temperature curves;
-- A disk view with one usage-percent curve per mount plus up to three per-user stepped curves (GB used, summed across mounts per scan) from the daily attribution scans;
+- A disk view with one usage-percent curve per mount (the per-user stepped GB curves are frozen along with the per-user disk attribution feature);
 - Minute-level hover markers with the complete timestamp and all metrics from that minute;
 - Click-to-pin detail panels and double-click-to-unpin behavior;
 - Up to three selected user curves per chart, with stable colors and removable labels;
@@ -176,7 +176,7 @@ History supports:
 
 The window appears immediately; the initial query runs at background priority after the window is shown. Queries parse only the requested minute window instead of the whole day files, so opening History and switching time ranges stay responsive even with long retention.
 
-Recording granularity differs from the live refresh: server cards update at the configured sampling interval, but local history appends **at most one record per server per UTC minute**, keeping day files small no matter how fast you sample. History queries stream day files with a timestamp prefilter instead of materializing every record, and the periodic disk-attribution refresh in every window reads only the small attribution files rather than full metric history.
+Recording granularity differs from the live refresh: server cards update at the configured sampling interval, but local history appends **at most one record per server per UTC minute**, keeping day files small no matter how fast you sample. History queries stream day files with a timestamp prefilter instead of materializing every record. (The periodic disk-attribution refresh in every window is off while per-user disk attribution is frozen.)
 
 ### Local history layout
 
@@ -192,7 +192,7 @@ History stays on the current Windows user's machine. The default data root is `%
    ├─ yyyy-MM-dd.v2.jsonl  # new format: one appended minute record per line
    ├─ yyyy-MM-dd.json      # legacy format; still read
    └─ attribution\\
-      └─ yyyy-MM-dd.jsonl  # one disk-attribution line per mount per scan (UTC date files)
+      └─ yyyy-MM-dd.jsonl  # one disk-attribution line per mount per scan (UTC date files; frozen — preserved, no new writes)
 ```
 
 Storage rules:
@@ -202,7 +202,7 @@ Storage rules:
 - Saving History settings applies retention, Never clean up, and cleanup-paused state together. Invalid input stays in the dialog and does not stop monitoring.
 - Legacy JSON and new JSONL can be queried together; old files are not migrated or deleted.
 - Duplicate records for the same minute are merged using valid-sample counts. A user absent from an available sample contributes zero; unavailable samples are excluded from that resource's denominator. Legacy records without user fields create a curve gap, not a false zero.
-- Disk-attribution records are deduplicated by `(serverId, mount, scannedAt)` when merged, so repeated merges are idempotent. Records contain only uid, username, bytes used, and the mount path — never PIDs, process names, command lines, or passwords.
+- Disk-attribution records are deduplicated by `(serverId, mount, scannedAt)` when merged, so repeated merges are idempotent. Records contain only uid, username, bytes used, and the mount path — never PIDs, process names, command lines, or passwords. (Frozen: no new attribution records are written while the feature is frozen; existing files are preserved.)
 - Cleanup handles both `.json` and `.v2.jsonl`. Removing the `history` folder removes records only, not UI settings or server configuration.
 - Files contain UID, username, and minute aggregates, never PIDs, process names, command lines, or passwords.
 
@@ -227,10 +227,10 @@ For a saved server you can inject a small agent that keeps sampling and recordin
 ```text
 ~/.serverpulse/
 ├─ agent.sh               # self-contained POSIX sh agent (generated)
-├─ scan.sh                # disk-attribution scanner, deployed with the agent or on demand
-├─ config                 # interval, retention days, scan switch and hour, server identity
+├─ scan.sh                # disk-attribution scanner (frozen — no longer deployed or scheduled)
+├─ config                 # interval, retention days, scan switch and hour (frozen — always written off), server identity
 ├─ state/                 # pid/heartbeat files plus scan.lock / scan.status for the scanner
-├─ attribution/yyyy-MM-dd.jsonl  # one disk-attribution line per mount per scan
+├─ attribution/yyyy-MM-dd.jsonl  # one disk-attribution line per mount per scan (frozen — preserved, not pruned or re-pulled)
 ├─ records/yyyy-MM-dd.v2.jsonl  # minute records, same format as local history (UTC timestamps)
 └─ agent.log              # agent output; the scanner appends to scan.log
 ```
@@ -240,17 +240,17 @@ Open **Manage** and use the server-side monitoring row under each server:
 - **Status badge**: Running, Stale (process alive but heartbeat expired), Stopped, Not installed, or Unknown.
 - **Inject** writes the agent and starts it detached from the SSH session; it keeps running when the app exits or the connection drops. Injecting again while it is running is a no-op.
 - **Stop** sends TERM (KILL after a grace period); **Restart** rewrites and restarts the agent; **Uninstall** stops it and removes `~/.serverpulse` (records included — merge them first if you still need them).
-- **Configure** sets the sample interval (1–3600 s), server-side retention in days (1–3650), the daily disk-attribution scan switch with its hour (enabled by default, server-local hour 0–23, default 3 — the agent triggers at most one scan per day once that hour starts), and whether a stopped agent is re-injected automatically when the app starts.
+- **Configure** sets the sample interval (1–3600 s), server-side retention in days (1–3650), and whether a stopped agent is re-injected automatically when the app starts. (The daily disk-attribution scan switch and hour are hidden while the per-user disk attribution feature is frozen; the scan is always written disabled into the agent config.)
 - **Merge records** pulls the server-side records, keeps their UTC `Z` timestamps and UTC file-date partitions, and merges them into local history. Local-date history queries and chart labels convert matching instants to the local timezone. Per-user CPU, memory, and per-GPU VRAM attribution is preserved whenever the server sample contains it; unavailable or partial collection remains explicit. For a minute that exists on both sides, the record with more online samples wins; a tie keeps the local record. An incremental cursor avoids re-pulling merged minutes, and **Merge all** does this for every configured server. Bulk history pulls have a dedicated 120-second operation deadline; Agent status and control commands retain the shorter interactive SSH deadline. The merge dialog can also delete the merged server-side files afterwards (off by default; the agent itself prunes records older than the configured retention).
 - The History settings panel has **Auto-merge server records on startup** (off by default).
 
 Notes and limits:
 
 - The agent writes UTC minute timestamps; local history retains UTC storage and converts instants only for local-date queries and display, so timezone differences between the server and your machine are handled.
-- After updating Server Pulse, use **Restart** or **Inject** once for an existing server-side agent so it receives the current aggregation script and gains the daily disk-scan scheduling; manual **Scan now** is not affected (it deploys the current scanner on demand). Previously generated records cannot be retroactively reconstructed with user details.
+- After updating Server Pulse, use **Restart** or **Inject** once for an existing server-side agent so it receives the current aggregation script. While per-user disk attribution is frozen, every agent config write goes out with the scan disabled — an existing agent deployed with an older scan-enabled config keeps its behavior until you run **Restart**, **Inject**, or save the config once in Manage; afterwards the daily `find`-based scan is never scheduled again. Previously generated records cannot be retroactively reconstructed with user details.
 - A server reboot stops the agent (it is a plain user process). The badge shows Stopped; re-inject manually or enable auto-restore in Configure.
 - Records contain the same data as local history — UIDs, usernames, and minute aggregates — never PIDs, process names, command lines, or passwords. Disk-attribution records additionally contain the mount path (operational information) and per-user bytes used.
-- The server needs POSIX `sh`, `awk`, `/proc`, and optionally `nvidia-smi` — the same requirements as live monitoring. The disk scanner also uses `find`, `df`, and `nice`/`ionice`/`timeout` when available.
+- The server needs POSIX `sh`, `awk`, `/proc`, and optionally `nvidia-smi` — the same requirements as live monitoring. (The frozen disk scanner additionally needed `find`, `df`, and `nice`/`ionice`/`timeout` when available; it no longer runs.)
 
 ## Local configuration
 
@@ -260,7 +260,7 @@ Notes and limits:
 ├─ servers.json        # current server list; no passwords
 ├─ known_hosts         # application-owned host keys; user known_hosts is read-only
 ├─ history\\            # minute history
-│  └─ attribution\\     # mirrored disk-attribution records (UTC date files)
+│  └─ attribution\\     # mirrored disk-attribution records (UTC date files; frozen — preserved, no new writes)
 └─ error.log           # UI/history error summary
 ```
 
@@ -276,7 +276,7 @@ server_monitoring/
 ├─ frontend/                # Vue 3 + TypeScript UI
 ├─ src-tauri/               # Tauri shell and platform-independent Rust crates
 ├─ assets/serverpulse-sample.sh # canonical LF-only remote sampler
-├─ assets/serverpulse-scan.sh   # canonical LF-only disk-attribution scanner
+├─ assets/serverpulse-scan.sh   # canonical LF-only disk-attribution scanner (frozen — retained for later removal)
 ├─ tests/fixtures/          # protocol and history golden fixtures
 ├─ tests/                   # automation and mock SSH
 ├─ docs/DEVELOPMENT.md      # contributor/developer documentation

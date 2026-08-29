@@ -14,6 +14,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import { parseDiskEntries, buildTopDiskUserSeries, expandCarriedForward } from '../utils/diskMounts'
 import { useMonitorStore } from '../stores/monitor'
+import { DISK_ATTRIBUTION_FROZEN } from '../diskAttribution'
 
 use([
   LineChart,
@@ -1412,6 +1413,9 @@ const getUserTimelineOption = (server: ServerHistoryRecord) => {
 // scan instant is summed across mounts; points are snapped to the nearest sample
 // slot so the daily-scan steps align with the shared category axis.
 function getDiskUserSeries(server: ServerHistoryRecord): { name: string; points: [string, number][] }[] {
+  // Frozen: per-user disk attribution curves are not rendered while the
+  // feature is frozen; the disk view keeps its per-mount usage curves.
+  if (DISK_ATTRIBUTION_FROZEN) return []
   const records = store.diskAttribution.filter((r) => r.serverId === server.id)
   const sampleTimes = server.timestamps.map((t) => parseToLocalDate(t)?.getTime() ?? NaN)
 
@@ -1474,7 +1478,7 @@ const getDiskOption = (server: ServerHistoryRecord) => {
         let html = `
           <div style="font-family: inherit; font-size: 12px; color: #e2ede6; min-width: 250px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · 磁盘使用率 · 用户占用</span>
+              <span style="font-weight: 600; color: #ffffff; font-size: 12.5px;">${server.label} · ${DISK_ATTRIBUTION_FROZEN ? '磁盘使用率' : '磁盘使用率 · 用户占用'}</span>
               <span style="font-size: 10px; color: #7dd3fc; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 999px; padding: 1px 6px;">预览</span>
             </div>
             <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);">
@@ -1493,7 +1497,7 @@ const getDiskOption = (server: ServerHistoryRecord) => {
         html += `
             <div style="font-size: 10px; color: #627568; margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
               <span>${time}</span>
-              <span>每日归因扫描 · 阶梯曲线</span>
+              <span>${DISK_ATTRIBUTION_FROZEN ? '挂载点使用率' : '每日归因扫描 · 阶梯曲线'}</span>
             </div>
           </div>`
         return html
@@ -2006,7 +2010,7 @@ const getDiskOption = (server: ServerHistoryRecord) => {
             class="chart-card"
           >
             <div class="chart-header">
-              <span class="chart-title">Disk Usage per Mount (%) · User Attribution (GB)</span>
+              <span class="chart-title">{{ DISK_ATTRIBUTION_FROZEN ? 'Disk Usage per Mount (%)' : 'Disk Usage per Mount (%) · User Attribution (GB)' }}</span>
             </div>
             <div class="no-users-hint">
               暂无磁盘数据
@@ -2018,7 +2022,7 @@ const getDiskOption = (server: ServerHistoryRecord) => {
             class="chart-card"
           >
             <div class="chart-header">
-              <span class="chart-title">Disk Usage per Mount (%) · User Attribution (GB)</span>
+              <span class="chart-title">{{ DISK_ATTRIBUTION_FROZEN ? 'Disk Usage per Mount (%)' : 'Disk Usage per Mount (%) · User Attribution (GB)' }}</span>
             </div>
             <VChart
               class="history-chart-canvas"

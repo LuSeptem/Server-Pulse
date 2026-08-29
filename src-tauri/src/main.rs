@@ -1363,22 +1363,26 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
         }
     }
 
-    let mut disk_attribution = Vec::new();
-    for candidate in candidate_days.iter() {
-        let path = store
-            .history_root
-            .join("attribution")
-            .join(format!("{candidate}.jsonl"));
-        if path.exists() {
-            let text = fs::read_to_string(&path).unwrap_or_default();
-            for line in text.lines() {
-                if let Ok(record) = serverpulse_core::parse_disk_attribution_line(line) {
-                    disk_attribution.push(record);
+    // Frozen: attribution history is no longer served; the files stay on
+    // disk untouched for a possible later re-enable or removal.
+    let mut disk_attribution: Vec<serverpulse_core::DiskAttributionRecord> = Vec::new();
+    if !serverpulse_core::DISK_ATTRIBUTION_FROZEN {
+        for candidate in candidate_days.iter() {
+            let path = store
+                .history_root
+                .join("attribution")
+                .join(format!("{candidate}.jsonl"));
+            if path.exists() {
+                let text = fs::read_to_string(&path).unwrap_or_default();
+                for line in text.lines() {
+                    if let Ok(record) = serverpulse_core::parse_disk_attribution_line(line) {
+                        disk_attribution.push(record);
+                    }
                 }
             }
         }
+        disk_attribution.sort_by(|a, b| a.scanned_at.cmp(&b.scanned_at));
     }
-    disk_attribution.sort_by(|a, b| a.scanned_at.cmp(&b.scanned_at));
 
     let mut filtered_entries = Vec::new();
     for mut entry in all_entries {
@@ -1459,6 +1463,12 @@ async fn query_history(day: String) -> Result<HistoryResponse, String> {
 /// never parses the metric history files, keeping the 5-minute poll cheap.
 #[tauri::command]
 async fn query_disk_attribution(day: String) -> Result<DiskAttributionResponse, String> {
+    // Frozen: attribution is no longer served; existing files stay on disk.
+    if serverpulse_core::DISK_ATTRIBUTION_FROZEN {
+        return Ok(DiskAttributionResponse {
+            disk_attribution: Vec::new(),
+        });
+    }
     let target_date = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
         .map_err(|_| "history day must use YYYY-MM-DD".to_owned())?;
     let root = DataRootManager::default()
@@ -1723,7 +1733,9 @@ async fn deploy_and_start_agent(
 
     entry.interval_seconds = interval_seconds;
     entry.retention_days = retention_days;
-    entry.scan_enabled = scan_enabled;
+    // Record the effective state: while attribution is frozen the remote
+    // scan can never be enabled, no matter what was requested.
+    entry.scan_enabled = scan_enabled && !serverpulse_core::DISK_ATTRIBUTION_FROZEN;
     entry.scan_hour = scan_hour;
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
 
@@ -1788,7 +1800,8 @@ async fn restart_agent(
     let existing_entry = state_file.servers.get(&server_id);
     let interval = existing_entry.map(|e| e.interval_seconds).unwrap_or(5);
     let retention = existing_entry.map(|e| e.retention_days).unwrap_or(30);
-    let scan_enabled = existing_entry.map(|e| e.scan_enabled).unwrap_or(true);
+    let scan_enabled = existing_entry.map(|e| e.scan_enabled).unwrap_or(false)
+        && !serverpulse_core::DISK_ATTRIBUTION_FROZEN;
     let scan_hour = existing_entry.map(|e| e.scan_hour).unwrap_or(3);
 
     let ssh = SystemOpenSsh::default();
@@ -1867,7 +1880,8 @@ async fn update_agent_config(
         });
     entry.interval_seconds = interval_seconds;
     entry.retention_days = retention_days;
-    entry.scan_enabled = scan_enabled;
+    // Effective state: frozen attribution can never be enabled remotely.
+    entry.scan_enabled = scan_enabled && !serverpulse_core::DISK_ATTRIBUTION_FROZEN;
     entry.scan_hour = scan_hour;
     entry.last_status_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
     let res = entry.clone();
@@ -1914,6 +1928,14 @@ async fn trigger_disk_scan(
     state: State<'_, AppState>,
     server_id: String,
 ) -> Result<DiskScanTriggerResult, String> {
+    // Frozen: refuse to deploy or launch the scanner; no SSH work happens.
+    if serverpulse_core::DISK_ATTRIBUTION_FROZEN {
+        return Ok(DiskScanTriggerResult {
+            server_id,
+            status: "failed".to_owned(),
+            detail: Some("per-user disk attribution scanning is frozen in this version".to_owned()),
+        });
+    }
     let (_server, target, _data_root) = resolve_server_and_target(&server_id, &state).await?;
     let ssh = SystemOpenSsh::default();
     let script = serverpulse_core::generate_scan_deploy_and_trigger_script(SCAN_SCRIPT, &server_id);
@@ -1952,6 +1974,19 @@ async fn get_disk_scan_status(
     state: State<'_, AppState>,
     server_id: String,
 ) -> Result<serverpulse_core::DiskScanStatusInfo, String> {
+    // Frozen: report a stable inactive status without touching the server.
+    if serverpulse_core::DISK_ATTRIBUTION_FROZEN {
+        return Ok(serverpulse_core::DiskScanStatusInfo {
+            installed: false,
+            active: false,
+            pid: None,
+            state: "frozen".to_owned(),
+            started_at: None,
+            finished_at: None,
+            last_mount: None,
+            last_file: None,
+        });
+    }
     let (_server, target, _data_root) = resolve_server_and_target(&server_id, &state).await?;
     let ssh = SystemOpenSsh::default();
     let output = ssh
@@ -2031,33 +2066,39 @@ async fn pull_and_merge_records_impl(
         let _ = serverpulse_platform::atomic_write(&day_path, content.as_bytes());
     }
 
-    let (attr_rows, _attr_corrupt) =
-        serverpulse_core::parse_agent_attribution_output(&output.stdout);
-    let attr_rows_total = attr_rows.len();
-    let attribution_dir = history_dir.join("attribution");
-    let _ = fs::create_dir_all(&attribution_dir);
-    let mut attr_days: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    for (day, line) in attr_rows {
-        attr_days.entry(day).or_default().push(line);
-    }
-    for (day, lines) in &attr_days {
-        // Defense in depth: never join a non-canonical day into a file path.
-        if !serverpulse_core::is_valid_day_shape(day) {
-            continue;
+    // Frozen: attribution lines are not pulled or merged; existing local
+    // records are preserved untouched.
+    let mut attr_rows_total = 0usize;
+    if !serverpulse_core::DISK_ATTRIBUTION_FROZEN {
+        let (attr_rows, _attr_corrupt) =
+            serverpulse_core::parse_agent_attribution_output(&output.stdout);
+        attr_rows_total = attr_rows.len();
+        let attribution_dir = history_dir.join("attribution");
+        let _ = fs::create_dir_all(&attribution_dir);
+        let mut attr_days: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (day, line) in attr_rows {
+            attr_days.entry(day).or_default().push(line);
         }
-        let path = attribution_dir.join(format!("{day}.jsonl"));
-        let existing = fs::read_to_string(&path).unwrap_or_default();
-        let incoming = lines.join("\n") + "\n";
-        let (merged, conflicts) = serverpulse_core::merge_attribution_lines(&existing, &incoming);
-        if conflicts > 0 {
-            append_error_log(
-                &data_root,
-                &format!(
-                    "disk attribution merge ({day}): {conflicts} conflicting duplicate(s) kept first-seen"
-                ),
-            );
+        for (day, lines) in &attr_days {
+            // Defense in depth: never join a non-canonical day into a file path.
+            if !serverpulse_core::is_valid_day_shape(day) {
+                continue;
+            }
+            let path = attribution_dir.join(format!("{day}.jsonl"));
+            let existing = fs::read_to_string(&path).unwrap_or_default();
+            let incoming = lines.join("\n") + "\n";
+            let (merged, conflicts) =
+                serverpulse_core::merge_attribution_lines(&existing, &incoming);
+            if conflicts > 0 {
+                append_error_log(
+                    &data_root,
+                    &format!(
+                        "disk attribution merge ({day}): {conflicts} conflicting duplicate(s) kept first-seen"
+                    ),
+                );
+            }
+            let _ = serverpulse_platform::atomic_write(&path, merged.as_bytes());
         }
-        let _ = serverpulse_platform::atomic_write(&path, merged.as_bytes());
     }
 
     // Remote clean if requested

@@ -329,8 +329,10 @@ describe('monitor store', () => {
 
     expect(status.active).toBe(false)
     expect(invoke).toHaveBeenCalledWith('pull_and_merge_records', { serverId: '3090', cleanRemote: false })
-    expect(store.diskAttribution).toHaveLength(1)
-    expect(store.diskAttribution[0].mount).toBe('/data/data4')
+    // Frozen: the completed-scan merge still runs (mechanism intact), but the
+    // attribution refresh is a no-op while DISK_ATTRIBUTION_FROZEN is on, so
+    // no attribution records ever reach the store.
+    expect(store.diskAttribution).toHaveLength(0)
   })
 
   it('does not pull while a manual scan is still running', async () => {
@@ -446,7 +448,7 @@ describe('monitor store', () => {
     expect(pulls).toBe(2)
   })
 
-  it('refreshes disk attribution through the lightweight command only', async () => {
+  it('does not refresh disk attribution while the feature is frozen', async () => {
     setActivePinia(createPinia())
     const store = useMonitorStore()
     await store.init()
@@ -454,12 +456,12 @@ describe('monitor store', () => {
 
     await store.refreshDiskAttribution('2026-08-21')
 
-    // Regression guard: the 5-minute per-window poll used to invoke
-    // query_history, which parsed and shipped every metric record of the day
-    // just to read disk attribution. It must stay on query_disk_attribution.
-    expect(invoke).toHaveBeenCalledWith('query_disk_attribution', { day: '2026-08-21' })
+    // Frozen: while DISK_ATTRIBUTION_FROZEN is on, the attribution refresh is
+    // a complete no-op — no query_disk_attribution, no query_history, and no
+    // store mutation. (Before the freeze this test pinned the refresh to the
+    // lightweight query_disk_attribution command instead of query_history.)
+    expect(invoke).not.toHaveBeenCalledWith('query_disk_attribution', expect.anything())
     expect(invoke).not.toHaveBeenCalledWith('query_history', expect.anything())
-    expect(store.diskAttribution).toHaveLength(1)
-    expect(store.diskAttribution[0].mount).toBe('/data')
+    expect(store.diskAttribution).toHaveLength(0)
   })
 })

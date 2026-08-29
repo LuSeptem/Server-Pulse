@@ -9,6 +9,18 @@ pub use agent::*;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 
+/// Per-user disk attribution is frozen: the find-based scanner is never
+/// deployed or scheduled, manual triggers refuse to run, and attribution
+/// records are no longer pulled, merged, or served (existing records on
+/// disk are preserved, only new writes stop). All code paths stay intact
+/// behind this flag so the feature can be re-enabled — or fully removed
+/// when it is decommissioned — without re-implementing them.
+///
+/// Must be flipped together with the frontend `DISK_ATTRIBUTION_FROZEN`.
+/// Real-time disk capacity (df-based DISK row, per-mount lists and history
+/// curves) is NOT part of this freeze.
+pub const DISK_ATTRIBUTION_FROZEN: bool = true;
+
 #[derive(Debug, Error)]
 pub enum ServerPulseError {
     #[error("invalid metric output: {0}")]
@@ -932,10 +944,30 @@ GPU_USER_STATUS=ok"#;
         assert!(script.contains("sp_server_id=\"srv-1\""));
         assert!(script.contains("sp_server_label=\"My Server\""));
         assert!(script.contains("echo SAMPLE"));
-        assert!(script.contains("sp_scan_enabled=1"));
+        // The effective scan flag follows the freeze constant even when the
+        // caller requests the scan to be enabled.
+        let expected_scan_flag = if DISK_ATTRIBUTION_FROZEN { 0 } else { 1 };
+        assert!(script.contains(&format!("sp_scan_enabled={expected_scan_flag}")));
         assert!(script.contains("sp_scan_hour=3"));
         assert!(script.contains("m_d_keys"));
         assert!(script.contains("emit_disks"));
+    }
+
+    #[test]
+    fn frozen_attribution_generation_is_disabled() {
+        // Pins the code-level freeze: while DISK_ATTRIBUTION_FROZEN is on, no
+        // generated remote script may schedule, transfer, or delete
+        // attribution data — the feature is frozen, not removed.
+        assert!(DISK_ATTRIBUTION_FROZEN);
+        let script = generate_agent_script("srv-1", "My Server", "10.0.0.1", 10, 60, true, 3, "echo SAMPLE");
+        assert!(script.contains("sp_scan_enabled=0"));
+        let config = generate_agent_config("srv-1", "My Server", "10.0.0.1", 10, 60, true, 3);
+        assert!(config.contains("scan_enabled=0"));
+        let pull = generate_agent_pull_script(None);
+        assert!(!pull.contains("__SP_ATTR_FILE__"));
+        assert!(!pull.contains("attribution"));
+        let clean = generate_agent_clean_script("2026-08-20T03:00");
+        assert!(!clean.contains("attribution"));
     }
 
     #[test]

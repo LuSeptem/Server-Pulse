@@ -93,6 +93,14 @@ DISKS_END
 
 `assets/serverpulse-scan.sh` 由 agent 每日调度（服务器本地小时 ≥ 配置 `scan_hour` 且当日未扫，默认 3）或手动触发（`trigger_disk_scan`），以 detached 方式执行：`find <mount> -xdev -printf '%U\t%s\n'` 按 uid 汇总后写入 `~/.serverpulse/attribution/yyyy-MM-dd.jsonl`。锁文件 `state/scan.lock` 记录 PID 并做存活检测防重入；进度写入 `state/scan.status`，输出追加到 `scan.log`。记录只含 uid、用户名、字节数和挂载点信息。
 
+> **当前状态：功能已冻结（代码级开关，待后续下架）。** 由于该扫描在远端服务器非常占用内存与磁盘，按用户磁盘归因整体冻结：
+>
+> - 冻结开关共两处，必须同时翻转：Rust 层 `serverpulse_core::DISK_ATTRIBUTION_FROZEN`（`src-tauri/crates/serverpulse-core/src/lib.rs`）+ 前端 `DISK_ATTRIBUTION_FROZEN`（`frontend/src/diskAttribution.ts`）。
+> - 冻结生效点：agent 配置/脚本生成恒写 `scan_enabled=0`（`sp_maybe_scan` 永不触发）；拉取/清理脚本不再包含 attribution 段（远端数据保留、不跨线、不清理）；`trigger_disk_scan`/`get_disk_scan_status` 直接返回冻结结果、不发起 SSH；`pull_and_merge_records_impl` 不再合并归因记录；`query_history`/`query_disk_attribution` 不再返回归因数据；前端隐藏「立即扫描」、归属弹窗、History 按用户曲线与 agent 配置里的扫描开关，并关闭 5 分钟归属自动刷新。
+> - 实时磁盘容量（sampler 的 DISKS 段、DISK 行、挂载点列表、History 每挂载点使用率曲线）不在冻结范围内。
+> - 本地与远端已有归属历史原样保留，不做清理。
+> - 相关代码路径与单元测试完整保留（冻结行为本身有测试锁定：`frozen_attribution_generation_is_disabled` 等）；正式下架时删除上述代码路径并移除两个开关。
+
 ### UTC 历史
 
 新记录使用带 `Z` 的 RFC3339 UTC 时间戳，并按 UTC 日期写入 `yyyy-MM-dd.v2.jsonl`。`query_history(day)` 接收用户本地日期，将本地日界转换为 UTC 范围，读取可能跨越的 UTC 文件，再由前端按本地时间显示。旧版 JSON/JSONL 和无时区时间戳继续按兼容规则读取。分钟聚合按有效样本数加权，不可用样本不进入分母。
