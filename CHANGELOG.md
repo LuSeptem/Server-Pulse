@@ -14,6 +14,11 @@
   - 本地与远端已有的归属历史原样保留，不清理、不删除。
   - 实现方式：代码级功能开关——Rust 层 `serverpulse_core::DISK_ATTRIBUTION_FROZEN` + 前端 `DISK_ATTRIBUTION_FROZEN`，代码完整保留、翻转开关即可恢复；正式下架时整体删除相关代码路径。
 
+#### 修复
+
+- 修复历史查询内存占用过高的问题（快速采样下历史查询可冲到 3–4 GB）：日文件改为按时间戳预过滤的流式读取，不再整文件载入并逐行构建值树；去重改用结构化记录哈希，不再为每条记录保留再序列化副本。
+- 本地历史记录现在每台服务器每个 UTC 分钟最多落盘一行（实时卡片仍按所选采样间隔刷新），历史日文件体积缩小约 40 倍，也降低了对远端与本地的磁盘写入压力。
+
 ### English
 
 #### Changed
@@ -25,6 +30,11 @@
   - Real-time disk capacity monitoring (DISK row, mount list, per-mount usage curves) is unaffected.
   - Existing local and remote attribution history is preserved untouched — not cleaned up, not deleted.
   - Implementation: code-level feature flags — Rust `serverpulse_core::DISK_ATTRIBUTION_FROZEN` plus frontend `DISK_ATTRIBUTION_FROZEN`; all code is retained and flipping the flags re-enables the feature; decommissioning will remove the code paths entirely.
+
+#### Fixed
+
+- Fixed excessive memory usage in history queries (3–4 GB spikes at fast sampling): day files are now read through a streaming reader with a timestamp prefilter instead of loading each file in full and building a value tree per line; deduplication uses a structural record hash instead of a re-serialized copy of every record.
+- Local history now writes at most one line per server per UTC minute (live cards still refresh at the chosen sampling interval), shrinking day files roughly 40x and reducing disk-write pressure on both the local machine and the remote servers.
 
 ## v2.1.0 — 2026-08-22
 
