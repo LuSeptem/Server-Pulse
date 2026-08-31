@@ -78,7 +78,7 @@ button:active { transform: translateY(1px); }
 
 /* Floating widget styling */
 .widget-window {
-  min-height: 100vh;
+  height: 100vh;
   background: #0d100e;
   border: 1px solid rgba(143, 211, 168, 0.25);
   border-radius: 12px;
@@ -86,7 +86,23 @@ button:active { transform: translateY(1px); }
   padding: 16px;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, border-radius 0.2s ease;
+}
+
+/* The header (title + window controls) and summary row stay pinned; only the
+   server list scrolls. Previously the document scrolled as a whole, carrying
+   the minimize/close buttons off-screen when the list got long. */
+.widget-window > .window-header,
+.widget-window > .summary-row {
+  flex: 0 0 auto;
+}
+
+.widget-window > .server-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* Docked Window Border & Corner Radius Alignment */

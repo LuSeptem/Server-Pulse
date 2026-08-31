@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.1.3 — 2026-08-31
+
+### 中文
+
+#### 修复
+
+- **修复主界面滚动后标题栏与最小化/关闭按钮被滚出屏幕、无法关闭窗口的问题**：
+  - 根因：主窗口 `.widget-window` 原先是常规块级容器（`min-height: 100vh` + `overflow: hidden`）。当服务器卡片数量较多、内容超过窗口高度时，实际滚动的是**整个文档**（`html/body`），因此处于常规文档流中的 `.window-header`（标题「Server monitor」+ 贴边自动隐藏 / History / Manage / 最小化 / 关闭按钮）会随页面一起被滚出视口，滚动到底后按钮不可见、无法点击，窗口便无法关闭。
+  - 修复：将 `.widget-window` 改为固定视口高度的弹性纵向容器（`height: 100vh` + `display: flex` + `flex-direction: column`），并把滚动职责收敛到服务器卡片列表上——标题栏与状态摘要行固定不滚动（`flex: 0 0 auto`），仅 `.server-list` 在窗口内部独立滚动（`flex: 1 1 auto` + `min-height: 0` + `overflow-y: auto`）。这样无论卡片多少，顶部标题与窗口控制按钮始终钉在窗口顶部可见可点。
+  - 回归防护：新增 Playwright e2e 回归测试 `frontend/e2e/pinned-header.spec.ts`。该测试在 440×620（与真实主窗口一致）视口下，通过注入 `window.__TAURI_INTERNALS__` 桩向 store 提供 12 个受监控服务器，使卡片列表高度确实超过视口（触发原 bug 的滚动条件），随后把页面与列表都滚动到底，断言关闭按钮与整个标题栏仍完整落在视口内。
+
+### English
+
+#### Fixed
+
+- **Fixed the main window's title bar and minimize/close buttons scrolling off-screen, making the window impossible to close after scrolling down**:
+  - Root cause: the main window's `.widget-window` was a regular block container (`min-height: 100vh` + `overflow: hidden`). When enough server cards made the content taller than the window, the **document** (`html/body`) — not the widget — was what scrolled, so the in-flow `.window-header` (the "Server monitor" title plus the edge auto-hide / History / Manage / minimize / close buttons) was carried out of the viewport with the page. Scrolled to the bottom, the buttons were invisible and unclickable, so the widget could not be closed.
+  - Fix: `.widget-window` is now a fixed-viewport-height flex column (`height: 100vh` + `display: flex` + `flex-direction: column`) with the scrolling responsibility confined to the server-card list — the title bar and status summary row are pinned (`flex: 0 0 auto`), and only `.server-list` scrolls independently inside the window (`flex: 1 1 auto` + `min-height: 0` + `overflow-y: auto`). No matter how many cards there are, the top title and window controls now stay pinned, visible and clickable.
+  - Regression protection: new Playwright e2e regression test `frontend/e2e/pinned-header.spec.ts`. It runs at a 440×620 viewport (matching the real main window), injects a `window.__TAURI_INTERNALS__` stub that hands the store 12 monitored servers so the card list is genuinely taller than the viewport (the original scroll condition that triggered the bug), then scrolls both the page and the list to the bottom and asserts the close button and the whole title bar remain fully inside the viewport.
+
 ## v2.1.2 — 2026-08-31
 
 ### 中文

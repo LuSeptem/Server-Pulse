@@ -145,6 +145,10 @@ Each monitored server uses one long-lived SSH collection session. The remote sam
 - Move the pointer away from the edge, then touch that edge again to restore it. Keeping the pointer inside the expanded window does not start the retract timer; leaving the whole window does.
 - The `—` button hides the window to the tray; `×` exits. Left-click the tray icon to restore, or right-click for show, hide, and exit.
 
+### Scrolling
+
+- The title bar (window controls) and the online-count/interval row stay pinned at the top of the window. When the server cards no longer fit, only the card list scrolls inside the window, so minimize/close remain reachable at any scroll position (v2.1.3).
+
 ## Metrics and user details
 
 - **CPU** is the whole-server CPU percentage.
