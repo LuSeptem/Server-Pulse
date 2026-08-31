@@ -108,6 +108,8 @@ export interface ServerHistoryRecord {
   displayTimes: string[]
   cpu: (number | null)[]
   memory: (number | null)[]
+  memoryUsedGb: (number | null)[]
+  memoryTotalMib: number | null
   cpuUsers: (CpuUserUsageInfo | null)[]
   memoryUsers: (MemoryUserUsageInfo | null)[]
   gpus: GpuRecordInfo[]
@@ -272,6 +274,8 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
     displayTimes: string[]
     cpu: (number | null)[]
     memory: (number | null)[]
+    memoryUsedGb: (number | null)[]
+    memoryTotalMib: number | null
     cpuUsers: (CpuUserUsageInfo | null)[]
     memoryUsers: (MemoryUserUsageInfo | null)[]
     gpusMap: Map<number, GpuRecordInfo>
@@ -311,6 +315,8 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
           displayTimes: [],
           cpu: [],
           memory: [],
+          memoryUsedGb: [],
+          memoryTotalMib: null,
           cpuUsers: [],
           memoryUsers: [],
           gpusMap: new Map(),
@@ -325,6 +331,10 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
       item.displayTimes.push(displayTime)
       item.cpu.push(typeof s.CpuPercent === 'number' ? s.CpuPercent : null)
       item.memory.push(typeof s.MemoryPercent === 'number' ? s.MemoryPercent : null)
+      const memUsedMib = typeof s.MemoryUsedMiB === 'number' ? s.MemoryUsedMiB : (typeof s.memoryUsedMib === 'number' ? s.memoryUsedMib : null)
+      const memTotalMib = typeof s.MemoryTotalMiB === 'number' ? s.MemoryTotalMiB : (typeof s.memoryTotalMib === 'number' ? s.memoryTotalMib : null)
+      item.memoryUsedGb.push(memUsedMib != null ? Number((memUsedMib / 1024).toFixed(2)) : null)
+      if (memTotalMib != null && !item.memoryTotalMib) item.memoryTotalMib = memTotalMib
       item.cpuUsers.push(parseCpuUsers(s))
       item.memoryUsers.push(parseMemoryUsers(s))
 
@@ -500,6 +510,8 @@ const serverHistories = computed<ServerHistoryRecord[]>(() => {
       displayTimes: s.displayTimes,
       cpu: s.cpu,
       memory: s.memory,
+      memoryUsedGb: s.memoryUsedGb,
+      memoryTotalMib: s.memoryTotalMib,
       cpuUsers: s.cpuUsers,
       memoryUsers: s.memoryUsers,
       gpus,
@@ -549,6 +561,15 @@ interface PinnedHistoryPopupData {
 const pinnedPopup = ref<PinnedHistoryPopupData | null>(null)
 const pinnedExpanded = ref(false)
 const chartLegendState = reactive<Record<string, Record<string, boolean>>>({})
+
+// "used / total GB" detail for one memory datapoint; null when the history
+// record does not carry a total (older records / sampler failure).
+function memoryDetailAt(server: ServerHistoryRecord, idx: number): string | null {
+  const total = server.memoryTotalMib
+  if (!total) return null
+  const used = server.memoryUsedGb[idx]
+  return `${used != null ? used.toFixed(1) : '—'} / ${(total / 1024).toFixed(0)} GB`
+}
 
 function isSeriesVisible(serverId: string, kind: HistoryChartKind, seriesName: string): boolean {
   const key = `${serverId}_${kind}`
@@ -674,10 +695,16 @@ function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: His
     memory = isMemVisible ? server.memory[dataIdx] : null
     cpuUsers = isCpuVisible ? (server.cpuUsers[dataIdx]?.users || []) : []
     memoryUsers = isMemVisible ? (server.memoryUsers[dataIdx]?.users || []) : []
+    const memDetail = isMemVisible ? memoryDetailAt(server, dataIdx) : null
+    const memText = (val: number | null) => {
+      let text = `内存 ${val != null ? val.toFixed(1) + '%' : '—'}`
+      if (memDetail) text += ` · ${memDetail}`
+      return text
+    }
 
     if (isCpuVisible && isMemVisible) {
       title = `${server.label} · CPU & 内存`
-      statusLabel = `CPU ${cpu != null ? cpu.toFixed(1) + '%' : '—'} · 内存 ${memory != null ? memory.toFixed(1) + '%' : '—'}`
+      statusLabel = `CPU ${cpu != null ? cpu.toFixed(1) + '%' : '—'} · ${memText(memory)}`
       countLabel = `${cpuUsers.length + memoryUsers.length} 项用户占用`
     } else if (isCpuVisible) {
       title = `${server.label} · CPU 使用率`
@@ -685,7 +712,7 @@ function openPinnedPopup(server: ServerHistoryRecord, dataIdx: number, kind: His
       countLabel = `${cpuUsers.length} 项 CPU 占用`
     } else if (isMemVisible) {
       title = `${server.label} · 系统内存`
-      statusLabel = `内存 ${memory != null ? memory.toFixed(1) + '%' : '—'}`
+      statusLabel = memText(memory)
       countLabel = `${memoryUsers.length} 项内存占用`
     } else {
       title = `${server.label} · CPU & 内存`
@@ -820,17 +847,24 @@ const getCpuMemOption = (server: ServerHistoryRecord) => {
         const memUsers = (isMemVisible && memU && memU.users) ? memU.users : []
         const activeCount = cpuUsers.length + memUsers.length
 
+        const memDetail = isMemVisible ? memoryDetailAt(server, dataIdx) : null
+        const memSummary = (val: number | null | undefined) => {
+          let text = `内存 ${val != null ? Number(val).toFixed(1) + '%' : '—'}`
+          if (memDetail) text += ` · ${memDetail}`
+          return text
+        }
+
         let statusSummary = ''
         if (isCpuVisible && isMemVisible) {
           const cVal = params.find((p) => p.seriesName === 'CPU Utilization')?.value
           const mVal = params.find((p) => p.seriesName === 'System Memory')?.value
-          statusSummary = `CPU ${cVal != null ? Number(cVal).toFixed(1) + '%' : '—'} · 内存 ${mVal != null ? Number(mVal).toFixed(1) + '%' : '—'}`
+          statusSummary = `CPU ${cVal != null ? Number(cVal).toFixed(1) + '%' : '—'} · ${memSummary(mVal)}`
         } else if (isCpuVisible) {
           const cVal = params.find((p) => p.seriesName === 'CPU Utilization')?.value
           statusSummary = `CPU ${cVal != null ? Number(cVal).toFixed(1) + '%' : '—'}`
         } else if (isMemVisible) {
           const mVal = params.find((p) => p.seriesName === 'System Memory')?.value
-          statusSummary = `内存 ${mVal != null ? Number(mVal).toFixed(1) + '%' : '—'}`
+          statusSummary = memSummary(mVal)
         }
 
         let html = `
@@ -1863,9 +1897,9 @@ const getDiskOption = (server: ServerHistoryRecord) => {
               <span class="chip-label">CPU Peak / Avg</span>
               <strong class="chip-val">{{ server.peakCpu }} / {{ server.avgCpu }}</strong>
             </div>
-            <div class="stat-chip">
+            <div class="stat-chip" :title="server.memoryTotalMib ? `Total RAM: ${(server.memoryTotalMib / 1024).toFixed(0)} GB` : 'Total RAM unknown'">
               <span class="chip-label">RAM Peak / Avg</span>
-              <strong class="chip-val">{{ server.peakMem }} / {{ server.avgMem }}</strong>
+              <strong class="chip-val">{{ server.peakMem }} / {{ server.avgMem }}<template v-if="server.memoryTotalMib"> · {{ (server.memoryTotalMib / 1024).toFixed(0) }} GB</template></strong>
             </div>
             <div v-if="server.gpus.length" class="stat-chip gpu-chip">
               <span class="chip-label">GPUs</span>

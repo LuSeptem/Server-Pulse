@@ -151,6 +151,19 @@ function formatCapacity(usedMib: number | null, totalMib: number | null) {
   return `${fmt(usedMib)} / ${fmt(totalMib)} TB`
 }
 
+function formatMemory(usedMib: number | null, totalMib: number | null) {
+  const fmt = (v: number | null) => (v != null ? (v / 1024).toFixed(1) : '—')
+  return `${fmt(usedMib)} / ${fmt(totalMib)} GB`
+}
+
+// Memory capacity detail shown next to the percentage; hidden when the
+// sampler did not report either side of the used/total pair.
+const memoryDetail = computed(() => {
+  const s = props.snapshot
+  if (!s || (s.memoryUsedMib == null && s.memoryTotalMib == null)) return null
+  return formatMemory(s.memoryUsedMib, s.memoryTotalMib)
+})
+
 function attributionFor(mount: string) {
   return (props.diskAttribution ?? []).find((record) => record.mount === mount) ?? null
 }
@@ -266,7 +279,10 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
         @click.stop="handleMemClick"
       >
         <span>MEM</span>
-        <strong>{{ snapshot.memoryPercent != null ? snapshot.memoryPercent.toFixed(1) + '%' : '—' }}</strong>
+        <strong>
+          {{ snapshot.memoryPercent != null ? snapshot.memoryPercent.toFixed(1) + '%' : '—' }}
+          <template v-if="memoryDetail"> · {{ memoryDetail }}</template>
+        </strong>
       </div>
       <!-- Frozen: while per-user attribution is frozen the DISK row is a
            plain capacity readout (no hover/click attribution popup). -->

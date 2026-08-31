@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.1.4 — 2026-08-31
+
+### 中文
+
+#### 新增
+
+- **系统内存显示总内存（主界面 + 历史界面）**：
+  - 主界面：服务器卡片 MEM 行在百分比旁显示 `已用 / 总量 GB`（例如 `72.1% · 92.3 / 128.0 GB`），与 DISK 行风格一致。
+  - 历史界面：服务器 “RAM Peak / Avg” 统计芯片追加总内存（例如 `68.2% / 55.1% · 128 GB`）；CPU & 内存图表的固定弹窗与悬停 tooltip 的内存值追加 已用/总量 明细（例如 `内存 72.1% · 92.3 / 128 GB`）。
+  - 数据来源：历史采样记录本就包含 `MemoryUsedMiB` / `MemoryTotalMiB` 字段，此前前端未解析显示；旧记录缺失总内存时自动隐藏明细，不显示占位符。
+  - 回归防护：新增 Playwright e2e 测试 `frontend/e2e/memory-total.spec.ts` — 主界面通过 Pinia 实例注入真实形状快照后断言 MEM 行包含 `92.3 / 128.0 GB`；历史界面断言 RAM 芯片包含 `128 GB`。
+
+### English
+
+#### Added
+
+- **System memory now shows total memory on the main window and History page**:
+  - Main window: the server card's MEM row now shows `used / total GB` next to the percentage (e.g. `72.1% · 92.3 / 128.0 GB`), matching the DISK row style.
+  - History page: the server's "RAM Peak / Avg" stat chip appends the total memory (e.g. `68.2% / 55.1% · 128 GB`); the CPU & memory chart's pinned popup and hover tooltip append the used/total detail to the memory value (e.g. `内存 72.1% · 92.3 / 128 GB`).
+  - Data source: history samples already carried `MemoryUsedMiB` / `MemoryTotalMiB` — the frontend just never parsed or displayed them. Records without a total (older data) hide the detail instead of showing a placeholder.
+  - Regression protection: new Playwright e2e test `frontend/e2e/memory-total.spec.ts` — asserts the main window MEM row contains `92.3 / 128.0 GB` after injecting a real-shaped snapshot via the Pinia instance, and the history RAM chip contains `128 GB`.
+
 ## v2.1.3 — 2026-08-31
 
 ### 中文

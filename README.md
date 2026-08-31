@@ -152,7 +152,7 @@ Each monitored server uses one long-lived SSH collection session. The remote sam
 ## Metrics and user details
 
 - **CPU** is the whole-server CPU percentage.
-- **MEM** shows percentage and used/total memory, for example `73% · 92.2/125.5 GB`.
+- **MEM** shows the percentage plus used/total memory (total), for example `73.0% · 92.2 / 125.5 GB`.
 - **DISK** shows the percentage and used/total capacity of the filesystem with the highest usage, for example `78% · 3.1/4.0 TB`.
 - **GPU** cards show the model, utilization, used/total VRAM, and temperature.
 
@@ -173,6 +173,7 @@ History supports:
 - Independent visibility switches for GPU, VRAM, and temperature curves;
 - A disk view with one usage-percent curve per mount (the per-user stepped GB curves are frozen along with the per-user disk attribution feature);
 - Minute-level hover markers with the complete timestamp and all metrics from that minute;
+- Total system memory in the per-server RAM chip and in memory hover/pin details, for example `55.1% / 48.2% · 128 GB` (older records without a total omit the detail);
 - Click-to-pin detail panels and double-click-to-unpin behavior;
 - Up to three selected user curves per chart, with stable colors and removable labels;
 - Gaps for missing monitoring data instead of connecting points across the gap;
