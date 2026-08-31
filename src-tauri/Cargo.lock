@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "serverpulse-tauri"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "chrono",
  "serde",

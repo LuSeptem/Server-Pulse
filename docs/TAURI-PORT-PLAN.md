@@ -53,7 +53,7 @@ tests/fixtures/               # 从旧实现提取的协议/历史黄金样例
                         │ typed invoke / event stream
 ┌───────────────────────▼───────────────────────────────────┐
 │ Tauri shell                                                │
-│ commands · server.snapshot · server.status · server.error  │
+│ commands · server-snapshot · server-status · server-error  │
 │ tray · window lifecycle · cancellation                     │
 └──────────────┬────────────────────┬───────────────────────┘
                │                    │
@@ -104,12 +104,12 @@ close_main_window()
 
 ### 事件
 
-事件名称固定为：
+事件名称固定为（Tauri 2 事件名不允许点号，只允许字母、数字与 `-`、`/`、`:`、`_`）：
 
-- `server.snapshot`
-- `server.status`
-- `server.host_key_required`
-- `server.error`（最终错误专用事件；当前实现兼容将错误放在 status detail 中）
+- `server-snapshot`
+- `server-status`
+- `server-host-key-required`
+- `server-error`（最终错误专用事件；当前实现兼容将错误放在 status detail 中）
 
 每个事件必须包含 `server_id`、UTC `timestamp`、递增 `sequence` 和可序列化 `payload`。状态事件的错误结构为：
 

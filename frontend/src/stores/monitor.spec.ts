@@ -74,12 +74,27 @@ async function defaultInvoke(command: string, args?: any) {
   return undefined
 }
 
+// Faithful port of tauri 2.x `is_event_name_valid` (tauri/src/event/event_name.rs):
+// alphanumeric, `-`, `/`, `:`, `_`. No dots — Tauri rejects invalid names in
+// `listen` and silently drops them on `emit`, which once took down the whole
+// cross-window sync. The mock enforces the listen side so regressions fail here.
+function tauriEventNameValid(event: string): boolean {
+  return [...event].every((c) => /[A-Za-z0-9\-/:_]/.test(c))
+}
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(defaultInvoke),
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async () => () => undefined),
+  listen: vi.fn(async (event: string) => {
+    if (!tauriEventNameValid(event)) {
+      throw new Error(
+        `invalid args 'event' for command 'listen': Event name must include only alphanumeric characters, '-', '/', ':' and '_'.`,
+      )
+    }
+    return () => undefined
+  }),
 }))
 
 describe('monitor store', () => {
@@ -262,11 +277,33 @@ describe('monitor store', () => {
 
     const initPromise = store.init()
     await sshConfigStarted
-    listeners.get('servers.changed')?.({ payload: [selectedServer] })
+    listeners.get('servers-changed')?.({ payload: [selectedServer] })
     releaseSshConfig()
     await initPromise
 
     expect(store.servers).toEqual([selectedServer])
+  })
+
+  it('registers only Tauri-valid event names for cross-window sync (no dots)', async () => {
+    // Regression: dotted event names are rejected by Tauri 2's EventName rule
+    // (alphanumeric, `-`, `/`, `:`, `_`), which silently disabled every
+    // cross-window event listener. The mocked listen enforces the same rule,
+    // so a dotted name here fails exactly as it would in production.
+    setActivePinia(createPinia())
+    vi.mocked(listen).mockImplementation(async (event, handler) => {
+      if (!tauriEventNameValid(event)) {
+        throw new Error(`invalid args 'event' for command 'listen' (event: ${event})`)
+      }
+      return () => undefined
+    })
+    const store = useMonitorStore()
+    await store.init()
+
+    const events = vi.mocked(listen).mock.calls.map((call) => String(call[0]))
+    expect(events.length).toBeGreaterThanOrEqual(5)
+    for (const event of events) {
+      expect(event).toMatch(/^[A-Za-z0-9\-/:_]+$/)
+    }
   })
 
   it('loads disk attribution with history', async () => {

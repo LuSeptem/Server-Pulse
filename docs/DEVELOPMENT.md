@@ -118,7 +118,7 @@ DISKS_END
 - `get_disk_scan_status(server)` → `DiskScanStatusInfo`（installed/active/pid/state/startedAt/finishedAt/lastMount/lastFile）
 - `deploy_and_start_agent` / `update_agent_config(server, interval_seconds, retention_days, scan_enabled, scan_hour)` → `AgentServerState`（含 camelCase 序列化的 `scanEnabled`/`scanHour`）
 
-前端处理 `server.host_key_required` 及结构化 start/recheck 结果。确认指纹后自动重试原操作；提交、取消、停止后立即清空密码输入，不写入 `localStorage`。跨窗口服务器选择、采样间隔和 monitoring 状态通过 Tauri events 与 Pinia 状态同步。
+前端处理 `server-host-key-required` 及结构化 start/recheck 结果。确认指纹后自动重试原操作；提交、取消、停止后立即清空密码输入，不写入 `localStorage`。跨窗口服务器选择、采样间隔和 monitoring 状态通过 Tauri events 与 Pinia 状态同步。注意：Tauri 2 事件名只允许字母、数字与 `-`、`/`、`:`、`_`（不允许点号），含点号的事件名会被 `listen` 拒绝、被 `emit` 静默丢弃（当前事件名：`servers-changed`、`server-snapshot`、`server-status`、`server-host-key-required`、`interval-changed`、`edge_dock_state`）。
 
 ## 6. 数据与安全约束
 

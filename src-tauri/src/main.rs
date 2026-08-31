@@ -636,7 +636,7 @@ async fn host_key_gate(
         }),
         host_key: Some(challenge.clone()),
     };
-    let _ = app.emit("server.host_key_required", challenge);
+    let _ = app.emit("server-host-key-required", challenge);
     Ok(Some(result))
 }
 
@@ -668,7 +668,7 @@ fn spawn_monitoring_task(
             .await
             .insert(id.clone(), "connecting".to_owned());
         let _ = app.emit(
-            "server.status",
+            "server-status",
             StatusEvent {
                 server_id: id.clone(),
                 timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -702,7 +702,7 @@ fn spawn_monitoring_task(
                                 .await
                                 .insert(id.clone(), public.detail.clone().unwrap_or_default());
                             let _ = app.emit(
-                                "server.status",
+                                "server-status",
                                 StatusEvent {
                                     server_id: id.clone(),
                                     timestamp: Utc::now()
@@ -729,7 +729,7 @@ fn spawn_monitoring_task(
                             .await
                             .insert(id.clone(), public.detail.clone().unwrap_or_default());
                         let _ = app.emit(
-                            "server.status",
+                            "server-status",
                             StatusEvent {
                                 server_id: id.clone(),
                                 timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -793,7 +793,7 @@ fn spawn_monitoring_task(
                         .insert(id.clone(), "online".to_owned());
                     state_errors.lock().await.remove(&id);
                     let _ = app.emit(
-                        "server.snapshot",
+                        "server-snapshot",
                         SnapshotEvent {
                             server_id: id.clone(),
                             timestamp: event_timestamp,
@@ -802,7 +802,7 @@ fn spawn_monitoring_task(
                         },
                     );
                     let _ = app.emit(
-                        "server.status",
+                        "server-status",
                         StatusEvent {
                             server_id: id.clone(),
                             timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -850,7 +850,7 @@ fn spawn_monitoring_task(
                         .await
                         .insert(id.clone(), public.detail.clone().unwrap_or_default());
                     let _ = app.emit(
-                        "server.status",
+                        "server-status",
                         StatusEvent {
                             server_id: id.clone(),
                             timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -1063,7 +1063,7 @@ async fn persist_server(
             .await
             .insert(server.id.clone(), "stopped".to_owned());
     }
-    let _ = app.emit("servers.changed", &servers);
+    let _ = app.emit("servers-changed", &servers);
     Ok(servers)
 }
 
@@ -1177,7 +1177,7 @@ async fn save_server(
             .await
             .insert(server.id.clone(), "stopped".to_owned());
     }
-    let _ = app.emit("servers.changed", &servers);
+    let _ = app.emit("servers-changed", &servers);
     Ok(servers)
 }
 
@@ -1194,7 +1194,7 @@ async fn delete_server(
     state.snapshots.lock().await.remove(&server_id);
     state.statuses.lock().await.remove(&server_id);
     state.errors.lock().await.remove(&server_id);
-    let _ = app.emit("servers.changed", &servers);
+    let _ = app.emit("servers-changed", &servers);
     Ok(servers)
 }
 
@@ -1273,7 +1273,7 @@ async fn set_all_monitoring_intervals(
 ) -> Result<(), String> {
     let interval = interval_seconds.clamp(1, 300);
     *state.interval_seconds.lock().await = interval;
-    let _ = app.emit("interval.changed", interval);
+    let _ = app.emit("interval-changed", interval);
     let servers = load_servers()?;
     for server in servers {
         if server.monitored {

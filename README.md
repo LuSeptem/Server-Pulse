@@ -306,7 +306,7 @@ server_monitoring/
 
 **Recheck stays in progress.** Recheck uses the same structured result as Start. A new or changed host key opens the fingerprint confirmation dialog; a probe or SSH error changes the card to `offline` with the failure detail.
 
-**The main window says no servers are selected while Manage shows checked servers.** Main and Manage are separate webviews. The application registers the cross-window `servers.changed` event before loading SSH configuration and ignores an older initial server-list response, so a selection saved during startup is not lost. Close an older running instance and start the rebuilt portable executable once.
+**The main window says no servers are selected while Manage shows checked servers — or a checkbox change in Manage only appears in the main window after a restart.** Main and Manage are separate webviews. The application registers the cross-window `servers-changed` event before loading SSH configuration and ignores an older initial server-list response, so a selection saved during startup is not lost. All Tauri event names must avoid dots (Tauri 2 only allows alphanumerics, `-`, `/`, `:`, `_`) — dotted names are rejected on `listen` and silently dropped on `emit`, which would break cross-window sync. Close an older running instance and start the rebuilt portable executable once.
 
 **SSH aliases are not listed.** Open **Manage** and press **Reload**. Check the displayed config path, detected aliases, and read error. The application reads concrete `Host` entries from `~/.ssh/config` and simple `Include` files; wildcard-only entries are intentionally skipped.
 

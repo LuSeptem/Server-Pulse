@@ -159,53 +159,68 @@ export const useMonitorStore = defineStore('monitor', {
       const run = (async () => {
         const initialServerChangeVersion = serverChangeVersion
 
-        // Register the cross-window listener before loading any data. Otherwise
+        // Register the cross-window listeners before loading any data. Otherwise
         // a Manage window can save a selection while this window is still
         // resolving SSH config, leaving the main window with stale flags.
-        try {
-          unlisteners.forEach((unlisten) => unlisten())
-          unlisteners = [
-            await listen<ServerConfig[]>('servers.changed', (event) => {
-              if (Array.isArray(event.payload)) {
-                serverChangeVersion += 1
-                this.servers = event.payload
-                void this.refreshSshConfig()
-              }
-            }),
-            await listen<SnapshotEvent>('server.snapshot', (event) => {
-              const id = event.payload.serverId
-              this.snapshots = { ...this.snapshots, [id]: event.payload.payload }
-              this.statuses = { ...this.statuses, [id]: 'online' }
-              const nextErrors = { ...this.errors }
-              delete nextErrors[id]
-              this.errors = nextErrors
-            }),
-            await listen<StatusEvent>('server.status', (event) => {
-              const id = event.payload.serverId
-              this.statuses = { ...this.statuses, [id]: event.payload.payload.status }
-              if (event.payload.payload.status === 'online') {
-                const nextErrors = { ...this.errors }
-                delete nextErrors[id]
-                this.errors = nextErrors
-              } else if (event.payload.payload.detail?.detail) {
-                this.errors = { ...this.errors, [id]: event.payload.payload.detail.detail }
-              }
-            }),
-            await listen<HostKeyChallenge>('server.host_key_required', (event) => {
-              this.hostKeyChallenge = event.payload
-            }),
-            await listen<number>('interval.changed', (event) => {
-              if (event.payload && event.payload >= 1 && event.payload <= 300) {
-                this.intervalSeconds = event.payload
-                try {
-                  localStorage.setItem('serverpulse:interval_seconds', String(event.payload))
-                } catch {}
-              }
-            }),
-          ]
-        } catch (error) {
-          console.warn('Event listen not available:', error)
+        //
+        // Event names must satisfy Tauri's EventName rule (alphanumeric, `-`,
+        // `/`, `:`, `_` — no dots): an invalid name makes `listen` reject, and
+        // Tauri 2 silently drops such events on emit too.
+        //
+        // Each listener is registered independently: one failing registration
+        // must not silently disable the rest (this exact failure mode took
+        // down the whole cross-window sync once).
+        unlisteners.forEach((unlisten) => unlisten())
+        unlisteners = []
+        const registerListener = async (event: string, handler: (event: { payload: unknown }) => void) => {
+          try {
+            const unlisten = await listen(event, handler)
+            unlisteners.push(unlisten)
+          } catch (error) {
+            console.warn(`Event listen failed for ${event}:`, error)
+          }
         }
+        await registerListener('servers-changed', (event) => {
+          const payload = event.payload as ServerConfig[]
+          if (Array.isArray(payload)) {
+            serverChangeVersion += 1
+            this.servers = payload
+            void this.refreshSshConfig()
+          }
+        })
+        await registerListener('server-snapshot', (event) => {
+          const snapshotEvent = event.payload as SnapshotEvent
+          const id = snapshotEvent.serverId
+          this.snapshots = { ...this.snapshots, [id]: snapshotEvent.payload }
+          this.statuses = { ...this.statuses, [id]: 'online' }
+          const nextErrors = { ...this.errors }
+          delete nextErrors[id]
+          this.errors = nextErrors
+        })
+        await registerListener('server-status', (event) => {
+          const statusEvent = event.payload as StatusEvent
+          const id = statusEvent.serverId
+          this.statuses = { ...this.statuses, [id]: statusEvent.payload.status }
+          if (statusEvent.payload.status === 'online') {
+            const nextErrors = { ...this.errors }
+            delete nextErrors[id]
+            this.errors = nextErrors
+          } else if (statusEvent.payload.detail?.detail) {
+            this.errors = { ...this.errors, [id]: statusEvent.payload.detail.detail }
+          }
+        })
+        await registerListener('server-host-key-required', (event) => {
+          this.hostKeyChallenge = event.payload as HostKeyChallenge
+        })
+        await registerListener('interval-changed', (event) => {
+          const payload = event.payload as number
+          if (payload && payload >= 1 && payload <= 300) {
+            this.intervalSeconds = payload
+            try {
+              localStorage.setItem('serverpulse:interval_seconds', String(payload))
+            } catch {}
+          }
+        })
 
         try {
           const [servers, dataRoot] = await Promise.all([
