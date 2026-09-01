@@ -48,25 +48,17 @@
 
 #### 修复
 
-- **修复 Manage 页勾选/取消勾选服务器后主界面不实时同步的问题**（必须退出重进才生效）：
-  - 根因：Tauri 2 的事件名只允许字母、数字与 `-`、`/`、`:`、`_`，**不允许点号**。应用使用的 `servers.changed`、`server.snapshot`、`server.status`、`server.host_key_required`、`interval.changed` 全部含点号，导致所有 `listen()` 注册被 Tauri 拒绝（前端把监听注册包在同一个 try/catch 里，第一个失败就整体放弃，五个窗口级监听一个都没注册成功）；Rust 侧 `app.emit` 发出的同名事件也被 Tauri 静默丢弃。
-  - 此前主界面之所以仍能看到实时数据，是靠每 2 秒的 `get_monitoring_state` 轮询兜底（轮询只同步快照与状态，不同步服务器列表），所以只有「勾选/取消勾选」这类只走 `servers.changed` 事件的变更需要重启才生效。
-  - 所有事件名改为合法形式：`servers-changed`、`server-snapshot`、`server-status`、`server-host-key-required`、`interval-changed`（前后端同步修改）。
-  - 加固：每个事件监听独立注册，单个注册失败不再拖垮其余监听，并输出明确告警。
-  - 回归防护：前端测试中的 Tauri `listen` 模拟改为与 Tauri 相同的事件名校验规则（含点号即拒绝），并新增「仅注册合法事件名」回归测试；新增 Manage↔主界面双窗口选择同步的集成测试。
-- 重新构建并提交 `frontend/dist` 发布产物：此前提交的 dist 构建早于 v2.1.0 的磁盘归因改动（缺少 `query_disk_attribution` 等调用），导致 CI 以 `--ci` 方式发布的 Release 实际打包的是过期前端代码。
+- 修复 Manage 页勾选/取消勾选服务器后主界面不实时同步的问题（此前必须退出重进才生效）。
+- 跨窗口事件名改为合法形式（去除点号），事件监听改为独立注册，单个注册失败不再影响其余监听。
+- 重新构建并更新 `frontend/dist` 发布产物，修复 Release 打包到过期前端构建的问题。
 
 ### English
 
 #### Fixed
 
-- **Fixed selection changes in the Manage window not syncing live to the main window** (a quit-and-restart was required):
-  - Root cause: Tauri 2 event names may only contain alphanumerics and `-`, `/`, `:`, `_` — **no dots**. The app used `servers.changed`, `server.snapshot`, `server.status`, `server.host_key_required`, and `interval.changed`, all containing dots, so every `listen()` registration was rejected by Tauri (the frontend wrapped all listener registrations in one try/catch, so the first rejection abandoned the whole block and no window-level listener was ever registered); the same-named `app.emit` calls on the Rust side were silently dropped by Tauri too.
-  - The main window still showed live data only because of the 2-second `get_monitoring_state` poll as a fallback (the poll syncs snapshots and statuses, never the server list) — which is why only selection changes, which flow exclusively through the `servers.changed` event, appeared to need a restart.
-  - All event names are now Tauri-legal: `servers-changed`, `server-snapshot`, `server-status`, `server-host-key-required`, `interval-changed` (Rust and frontend updated together).
-  - Hardening: each event listener is registered independently — one failing registration no longer disables the rest — with an explicit warning.
-  - Regression protection: the `listen` mock in the frontend tests now enforces Tauri's exact event-name rule (dots rejected), a new regression test asserts only legal event names are registered, and a new Manage↔main two-window selection-sync integration test covers both directions.
-- Rebuilt and re-committed the `frontend/dist` release artifact: the previously committed dist predates the v2.1.0 disk-attribution changes (it lacked calls such as `query_disk_attribution`), so CI release builds (`--ci`, which skips `beforeBuildCommand`) were shipping a stale frontend bundle.
+- Fixed selection changes in the Manage window not syncing live to the main window (a quit-and-restart was previously required).
+- Cross-window event names changed to legal forms (no dots); event listeners are now registered independently so one failing registration no longer disables the rest.
+- Rebuilt and refreshed the `frontend/dist` release artifact, fixing releases shipping a stale frontend build.
 
 ## v2.1.1 — 2026-08-29
 
