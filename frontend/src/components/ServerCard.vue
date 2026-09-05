@@ -140,12 +140,6 @@ function handleGpuVramClick(gpu: GpuMetric, event: MouseEvent) {
 
 const disksExpanded = ref(false)
 
-const worstDisk = computed(() => {
-  const disks = (props.snapshot?.disks ?? []).filter((d) => d.percent != null)
-  if (!disks.length) return null
-  return disks.reduce((a, b) => ((b.percent ?? 0) > (a.percent ?? 0) ? b : a))
-})
-
 function formatCapacity(usedMib: number | null, totalMib: number | null) {
   const fmt = (v: number | null) => (v != null ? (v / 1048576).toFixed(1) : '—')
   return `${fmt(usedMib)} / ${fmt(totalMib)} TB`
@@ -221,8 +215,8 @@ onUnmounted(() => {
 })
 
 // While per-user disk attribution is frozen, hovering/clicking a disk no
-// longer opens the per-user attribution popup — the DISK row and mount list
-// remain pure capacity readouts.
+// longer opens the per-user attribution popup — the mount list remains a
+// pure capacity readout.
 function handleDiskEnter(disk: DiskMetric, event: MouseEvent) {
   if (DISK_ATTRIBUTION_FROZEN || !props.snapshot) return
   onTargetMouseEnter(
@@ -283,24 +277,6 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
           {{ snapshot.memoryPercent != null ? snapshot.memoryPercent.toFixed(1) + '%' : '—' }}
           <template v-if="memoryDetail"> · {{ memoryDetail }}</template>
         </strong>
-      </div>
-      <!-- Frozen: while per-user attribution is frozen the DISK row is a
-           plain capacity readout (no hover/click attribution popup). -->
-      <div
-        v-if="worstDisk"
-        class="metric"
-        :class="{
-          'is-interactive': !DISK_ATTRIBUTION_FROZEN,
-          'is-active': isTargetActive('disk', undefined, worstDisk.mount),
-          'is-pinned': isTargetActive('disk', undefined, worstDisk.mount) && isPinned
-        }"
-        :title="DISK_ATTRIBUTION_FROZEN ? '磁盘使用率（最高使用率挂载点）' : '查看磁盘各用户占用 (点击可固定)'"
-        @mouseenter="handleDiskEnter(worstDisk, $event)"
-        @mouseleave="onTargetMouseLeave"
-        @click.stop="handleDiskClick(worstDisk, $event)"
-      >
-        <span>DISK</span>
-        <strong>{{ worstDisk.percent != null ? worstDisk.percent.toFixed(0) + '%' : '—' }} · {{ formatCapacity(worstDisk.usedMib, worstDisk.totalMib) }}</strong>
       </div>
     </div>
 

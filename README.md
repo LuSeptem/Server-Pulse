@@ -153,7 +153,7 @@ Each monitored server uses one long-lived SSH collection session. The remote sam
 
 - **CPU** is the whole-server CPU percentage.
 - **MEM** shows the percentage plus used/total memory (total), for example `73.0% · 92.2 / 125.5 GB`.
-- **DISK** shows the percentage and used/total capacity of the filesystem with the highest usage, for example `78% · 3.1/4.0 TB`.
+- Disk usage is available under **全部磁盘** below the GPU cards; the separate **DISK** summary box is removed.
 - **GPU** cards show the model, utilization, used/total VRAM, and temperature.
 
 Hover a CPU, MEM, or per-card VRAM value/progress bar to preview user attribution. Click to pin the panel; click the same metric again, click empty space, or press `Esc` to close it. Clicking another metric replaces the pinned panel. The first eight users by current usage are shown, with **System / unattributed** always listed separately at the end.
