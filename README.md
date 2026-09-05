@@ -69,6 +69,7 @@ The images in `demo/` are sanitized examples; host addresses and usernames are b
 ### Start the application
 
 - **Direct Portable Run**: Double-click `ServerPulse-Portable.exe` in the repository root (standalone portable build).
+  After every feature update or bug fix, rebuild the frontend and Windows desktop executable, refresh this portable file, and verify its hash matches the build output before handing it over for testing. The executable is a local artifact and is not committed to Git.
 - **Development Mode**:
   ```powershell
   # Start desktop dev window
