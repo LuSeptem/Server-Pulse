@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.1.5 — 2026-09-05
+
+### 中文
+
+本次发布汇总自 v2.1.2 以来的更新，包含此前未发布的 v2.1.3、v2.1.4 改动。
+
+#### 新增
+
+- 主界面 MEM 指标显示内存百分比及已用/总容量；历史界面的 RAM 统计和图表提示同步显示总内存及容量明细。旧记录缺少总内存时自动隐藏相关明细。
+
+#### 变更
+
+- 移除服务器卡片中独立的 DISK 概览框，保留 GPU 卡片下方的“全部磁盘”入口及各挂载点的使用率、容量和进度条。
+- 每次功能更新或修复后重新构建并更新 portable exe，校验其与构建产物一致，便于直接测试。
+
+#### 修复
+
+- 修复服务器列表滚动后标题栏和最小化/关闭按钮被滚出屏幕的问题；现在仅服务器列表滚动，顶部标题栏和窗口控制始终可见。
+
+### English
+
+This release includes all updates since v2.1.2, including the previously unpublished v2.1.3 and v2.1.4 changes.
+
+#### Added
+
+- The main window's MEM metric now shows used/total memory alongside the percentage. History RAM statistics and chart tooltips also show total memory and capacity details. Details are hidden when older records lack total memory.
+
+#### Changed
+
+- Removed the separate DISK summary box from server cards. The “全部磁盘” (All disks) control below the GPU cards still expands per-mount usage, capacity, and progress bars.
+- Rebuild and refresh the portable executable after every feature update or bug fix, verifying it matches the build output for direct testing.
+
+#### Fixed
+
+- Fixed the title bar and minimize/close buttons scrolling off-screen with long server lists. Only the server list now scrolls; the title bar and window controls remain visible.
+
 ## v2.1.4 — 2026-08-31
 
 ### 中文
