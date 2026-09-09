@@ -159,7 +159,7 @@ Each monitored server uses one long-lived SSH collection session. The remote sam
 
 Hover a CPU, MEM, or per-card VRAM value/progress bar to preview user attribution. Click to pin the panel; click the same metric again, click empty space, or press `Esc` to close it. Clicking another metric replaces the pinned panel. The first eight users by current usage are shown, with **System / unattributed** always listed separately at the end.
 
-Below the GPU cards the disk section lists every real filesystem (snap/squashfs loop mounts and other virtual filesystems such as tmpfs/overlay are excluded automatically): click **All disks** to expand it (or collapse it again), where each mount row shows its percentage, used/total size, and a progress bar.
+Below the GPU cards the disk section lists every real filesystem (snap/squashfs loop mounts and other virtual filesystems such as tmpfs/overlay are excluded automatically): click **All disks** to expand it (or collapse it again), where each mount row shows its percentage and used/total capacity formatted to two decimal places (e.g. `85.91% · 1.54 / 1.79 TB`), and a progress bar.
 
 **Per-user disk attribution is frozen.** The hover/click per-user disk attribution panel, the on-demand **Scan now** button, the daily `find`-based scanner, and the per-user disk curves in History are all switched off behind a code flag (`DISK_ATTRIBUTION_FROZEN`) because the scanner is heavy on memory and disk on the remote server. The feature is kept in the codebase for a planned later removal rather than deleted. Existing attribution history files are preserved untouched; only new scans and new record pulls are suppressed. To re-enable, flip the flag in both the Rust and frontend layers (see `docs/DEVELOPMENT.md`).
 

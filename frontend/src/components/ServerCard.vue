@@ -141,7 +141,7 @@ function handleGpuVramClick(gpu: GpuMetric, event: MouseEvent) {
 const disksExpanded = ref(false)
 
 function formatCapacity(usedMib: number | null, totalMib: number | null) {
-  const fmt = (v: number | null) => (v != null ? (v / 1048576).toFixed(1) : '—')
+  const fmt = (v: number | null) => (v != null ? (v / 1048576).toFixed(2) : '—')
   return `${fmt(usedMib)} / ${fmt(totalMib)} TB`
 }
 
@@ -350,7 +350,7 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
           @click.stop="handleDiskClick(disk, $event)"
         >
           <span class="disk-mount" :title="disk.device">{{ disk.mount }}</span>
-          <span class="disk-val">{{ disk.percent != null ? disk.percent.toFixed(0) + '%' : '—' }} · {{ formatCapacity(disk.usedMib, disk.totalMib) }}</span>
+          <span class="disk-val">{{ disk.percent != null ? disk.percent.toFixed(2) + '%' : '—' }} · {{ formatCapacity(disk.usedMib, disk.totalMib) }}</span>
           <div class="gpu-bar-track">
             <div class="gpu-bar-fill vram-bar" :class="{ 'is-high': (disk.percent ?? 0) >= 80 }" :style="{ width: (disk.percent ?? 0) + '%' }" />
           </div>

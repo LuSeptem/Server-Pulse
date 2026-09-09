@@ -1524,7 +1524,7 @@ const getDiskOption = (server: ServerHistoryRecord) => {
           const isUserCurve = p.seriesName.endsWith(' (GB)')
           html += `<div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 2px 0;">
             <span><span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: ${p.color}; margin-right: 5px;"></span>${p.seriesName}</span>
-            <strong style="color: #ffffff;">${Number(p.value).toFixed(isUserCurve ? 2 : 1)}${isUserCurve ? ' GB' : '%'}</strong>
+            <strong style="color: #ffffff;">${Number(p.value).toFixed(2)}${isUserCurve ? ' GB' : '%'}</strong>
           </div>`
         }
 
@@ -1783,8 +1783,8 @@ const getDiskOption = (server: ServerHistoryRecord) => {
               >
                 <span class="user-name">{{ d.mount }}</span>
                 <span class="user-value">
-                  {{ d.percent != null ? d.percent.toFixed(1) + '%' : '—' }}
-                  {{ d.usedGb != null ? ` · ${d.usedGb.toFixed(1)} GB` : '' }}
+                  {{ d.percent != null ? d.percent.toFixed(2) + '%' : '—' }}
+                  {{ d.usedGb != null ? ` · ${d.usedGb.toFixed(2)} GB` : '' }}
                 </span>
               </div>
             </div>
