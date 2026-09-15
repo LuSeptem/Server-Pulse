@@ -68,7 +68,7 @@ The images in `demo/` are sanitized examples; host addresses and usernames are b
 
 ### Start the application
 
-- **Direct Portable Run**: Double-click `ServerPulse-Portable.exe` in the repository root (standalone portable build).
+- **Direct Portable Run**: Double-click `ServerPulse-Portable.exe` in the repository root (standalone portable build). GitHub Releases ship only this portable executable; the Windows NSIS installer is no longer published.
   After every feature update or bug fix, rebuild the frontend and Windows desktop executable, refresh this portable file, and verify its hash matches the build output before handing it over for testing. The executable is a local artifact and is not committed to Git.
 - **Development Mode**:
   ```powershell
@@ -82,6 +82,7 @@ The images in `demo/` are sanitized examples; host addresses and usernames are b
   npm run build --prefix frontend
   npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
   ```
+  Windows builds produce the app binary used as `ServerPulse-Portable.exe` only (`bundle.targets` excludes `nsis`).
 
 Before the first run, check existing passwordless SSH aliases:
 

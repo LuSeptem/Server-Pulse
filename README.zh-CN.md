@@ -68,7 +68,7 @@ npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --c
 
 ### 启动与运行
 
-- **便携版直接运行**：双击根目录的 `ServerPulse-Portable.exe`（已编译的独立便携版）。
+- **便携版直接运行**：双击根目录的 `ServerPulse-Portable.exe`（已编译的独立便携版）。GitHub Release 仅提供该便携版，不再发布 Windows NSIS 安装包。
 - **开发模式**：
   ```powershell
   # 启动 Tauri 桌面开发窗口
@@ -81,6 +81,7 @@ npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --c
   npm run build --prefix frontend
   npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
   ```
+  Windows 构建只产出用于 `ServerPulse-Portable.exe` 的应用二进制（`bundle.targets` 已排除 `nsis`）。
 
 首次运行前可以验证现有免密配置：
 

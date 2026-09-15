@@ -1,5 +1,23 @@
 # Changelog
 
+## Packaging — 2026-09-05 (after v2.1.5)
+
+### 中文
+
+#### 变更
+
+- GitHub Release 与 Windows 打包不再产出 NSIS 安装版（`Server.Pulse_*_x64-setup.exe`），仅保留 `ServerPulse-Portable.exe` 便携版。
+- `src-tauri/tauri.conf.json` 的 `bundle.targets` 已从 `["nsis", "dmg", "app"]` 调整为 `["dmg", "app"]`，后续 Windows 构建不再生成安装包。
+- 历史 Release（v2.0.0–v2.1.5）中的 `*-setup.exe` 资产已删除，每个 Release 只保留便携版。
+
+### English
+
+#### Changed
+
+- GitHub Releases and Windows packaging no longer produce the NSIS installer (`Server.Pulse_*_x64-setup.exe`); only `ServerPulse-Portable.exe` is published.
+- `bundle.targets` in `src-tauri/tauri.conf.json` changed from `["nsis", "dmg", "app"]` to `["dmg", "app"]`, so Windows builds no longer emit an installer.
+- The `*-setup.exe` assets on historical Releases (v2.0.0–v2.1.5) have been deleted; each Release keeps only the portable executable.
+
 ## v2.1.5 — 2026-09-05
 
 ### 中文

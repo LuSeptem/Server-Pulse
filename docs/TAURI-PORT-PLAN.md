@@ -248,7 +248,7 @@ DataRootManager
 `.github/workflows/tauri-preview.yml` 执行：
 
 1. Windows runner：`npm ci --prefix frontend`、类型检查、Vitest、`cargo test --workspace`；
-2. Windows x64：使用 Tauri CLI 构建 NSIS/便携产物；
+2. Windows x64：使用 Tauri CLI 构建便携 exe（不产出 NSIS 安装包）；
 3. macOS matrix：Intel `x86_64-apple-darwin` 与 Apple Silicon `aarch64-apple-darwin`，生成 DMG/ZIP；
 4. 手动触发或 `tauri-v*` tag 上传构建产物；
 5. 不配置签名、公证或自动更新器。

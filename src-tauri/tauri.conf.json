@@ -33,7 +33,7 @@
   "bundle": {
     "active": true,
     "icon": ["../assets/server-pulse.ico"],
-    "targets": ["nsis", "dmg", "app"],
+    "targets": ["dmg", "app"],
     "createUpdaterArtifacts": false
   }
 }
