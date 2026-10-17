@@ -201,11 +201,47 @@ fi
 echo "GPUS_END"
 [ -z "$gpu_metrics_status" ] || echo "GPU_QUERY_STATUS=$gpu_metrics_status"
 
-if [ -n "$metrics_tmp" ] && [ -f "$metrics_tmp/gpus" ]; then
+if [ -n "$metrics_tmp" ] && [ -s "$metrics_tmp/gpus" ]; then
   : > "$metrics_tmp/gpu-users"
   : > "$metrics_tmp/gpu-unmapped"
-  if nvidia-smi --query-compute-apps=gpu_uuid,pid,used_gpu_memory --format=csv,noheader,nounits > "$metrics_tmp/gpu-processes" 2>/dev/null; then
+  gpu_process_fields=gpu_uuid,pid,used_gpu_memory
+  gpu_process_success=0
+  awk -F, '{ print $1 + 0 }' "$metrics_tmp/gpus" > "$metrics_tmp/gpu-readable-ids"
+  if nvidia-smi --query-compute-apps="$gpu_process_fields" --format=csv,noheader,nounits > "$metrics_tmp/gpu-processes-raw" 2>/dev/null; then
     gpu_query_status=ok
+    gpu_process_success=1
+    while read -r gpu_id; do
+      printf 'GPU_USER_STATUS_%s=ok\n' "$gpu_id"
+    done < "$metrics_tmp/gpu-readable-ids"
+  else
+    # Process queries can fail on the same inaccessible card as metrics.
+    # Retry only the readable indices, including GPUs with no compute process.
+    gpu_query_status=ok
+    while read -r gpu_id; do
+      if nvidia-smi -i "$gpu_id" --query-compute-apps="$gpu_process_fields" --format=csv,noheader,nounits > "$metrics_tmp/gpu-processes-device" 2>/dev/null; then
+        gpu_device_status=ok
+        gpu_process_success=1
+      else
+        gpu_query_status=partial
+        gpu_device_status=unavailable
+        if awk -F, 'NF == 3 && $2 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ { found=1 } END { exit !found }' "$metrics_tmp/gpu-processes-device"; then
+          gpu_device_status=partial
+        fi
+      fi
+      printf 'GPU_USER_STATUS_%s=%s\n' "$gpu_id" "$gpu_device_status"
+      cat "$metrics_tmp/gpu-processes-device" >> "$metrics_tmp/gpu-processes-raw"
+    done < "$metrics_tmp/gpu-readable-ids"
+  fi
+  # Failed queries can contain diagnostics or repeat rows returned by retries.
+  # Keep one row per UUID/PID; multiple processes of the same user still sum.
+  awk -F, 'NF == 3 && $2 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ {
+    for (i=1; i<=3; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i);
+    rows[$1 SUBSEP $2]=$1 "," $2 "," $3
+  } END { for (key in rows) print rows[key] }' "$metrics_tmp/gpu-processes-raw" > "$metrics_tmp/gpu-processes"
+  if [ "$gpu_process_success" -eq 0 ] && [ ! -s "$metrics_tmp/gpu-processes" ]; then
+    gpu_query_status=unavailable
+  fi
+  if [ "$gpu_query_status" != unavailable ]; then
     while IFS=, read gpu_uuid gpu_pid gpu_memory extra; do
       gpu_uuid=$(printf '%s' "$gpu_uuid" | awk '{$1=$1; print}')
       gpu_pid=$(printf '%s' "$gpu_pid" | awk '{$1=$1; print}')
@@ -219,7 +255,7 @@ if [ -n "$metrics_tmp" ] && [ -f "$metrics_tmp/gpus" ]; then
       esac
       gpu_uid=$(awk -v wanted_pid="$gpu_pid" '$1 == wanted_pid { print $3; exit }' "$metrics_tmp/processes-2" 2>/dev/null)
       if [ -z "$gpu_uid" ]; then
-        gpu_uid=$(awk '/^Uid:/ { print $2; exit }' "/proc/$gpu_pid/status" 2>/dev/null)
+        gpu_uid=$(awk '/^Uid:/ { print $2; exit }' "/proc/$gpu_pid/status" 2>/dev/null || true)
       fi
       if [ -n "$gpu_uid" ]; then
         printf '%s\t%s\t%s\n' "$gpu_uuid" "$gpu_uid" "$gpu_memory" >> "$metrics_tmp/gpu-users"

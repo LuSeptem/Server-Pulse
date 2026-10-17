@@ -521,6 +521,19 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
                     .filter(|total| *total > 0.0)
                     .map(|total| user.used_mib * 100.0 / total);
             }
+            let unmapped_processes = uuid
+                .as_ref()
+                .and_then(|key| gpu_unmapped.remove(key))
+                .unwrap_or(0);
+            let status_key = format!("GPU_USER_STATUS_{}", fields[0]);
+            let mut user_memory_status = parse_status(
+                values.get(&status_key).or_else(|| values.get("GPU_USER_STATUS")),
+            );
+            if (user_memory_status == UserUsageStatus::Ok && unmapped_processes > 0)
+                || (user_memory_status == UserUsageStatus::Unavailable && !users.is_empty())
+            {
+                user_memory_status = UserUsageStatus::Partial;
+            }
             Some(GpuMetric {
                 index: fields[0].parse().ok()?,
                 name: if fields[1].is_empty() {
@@ -536,11 +549,9 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
                 power_draw_w: fields[7].parse().ok(),
                 power_limit_w: fields[8].parse().ok(),
                 fan_percent: fields[9].parse().ok(),
-                user_memory_status: parse_status(values.get("GPU_USER_STATUS")),
+                user_memory_status,
                 user_memory: users,
-                unmapped_processes: uuid
-                    .and_then(|key| gpu_unmapped.remove(&key))
-                    .unwrap_or(0),
+                unmapped_processes,
             })
         })
         .collect();
@@ -895,6 +906,34 @@ GPU_USER_STATUS=ok"#;
         assert_eq!(snapshot.gpus.len(), 1);
         assert_eq!(snapshot.gpus[0].utilization, Some(80.0));
         assert_eq!(snapshot.cpu_percent, Some(42.5));
+    }
+
+    #[test]
+    fn keeps_gpu_user_status_independent_for_readable_and_failed_devices() {
+        let output = SAMPLE
+            .replace("GPUS_END", "2,NVIDIA RTX 3090,uuid-2,0,0,24000,30,20,350,0\nGPUS_END")
+            .replace("GPU_USER_STATUS=ok", "GPU_USER_STATUS=partial\nGPU_USER_STATUS_0=ok\nGPU_USER_STATUS_2=unavailable");
+        let snapshot = parse_metric_output(&output).unwrap();
+        assert_eq!(snapshot.gpus[0].user_memory_status, UserUsageStatus::Ok);
+        assert_eq!(snapshot.gpus[0].user_memory[0].name, "alice");
+        assert_eq!(snapshot.gpus[0].user_memory[0].used_mib, 4000.0);
+        assert_eq!(snapshot.gpus[0].user_memory[0].process_count, Some(2));
+        assert_eq!(snapshot.gpus[1].user_memory_status, UserUsageStatus::Unavailable);
+        let empty = parse_metric_output(&output.replace("GPU_USER_STATUS_2=unavailable", "GPU_USER_STATUS_2=ok")).unwrap();
+        assert_eq!(empty.gpus[1].user_memory_status, UserUsageStatus::Ok);
+        assert!(empty.gpus[1].user_memory.is_empty());
+    }
+
+    #[test]
+    fn retains_partial_gpu_user_data_and_marks_unmapped_processes() {
+        let output = format!("{SAMPLE}\nGPU_USER_STATUS_0=ok\nGPU_UNMAPPED=uuid-0\t1");
+        let snapshot = parse_metric_output(&output).unwrap();
+        assert_eq!(snapshot.gpus[0].user_memory_status, UserUsageStatus::Partial);
+        assert_eq!(snapshot.gpus[0].unmapped_processes, 1);
+        assert_eq!(snapshot.gpus[0].user_memory.len(), 1);
+        let retained = parse_metric_output(&SAMPLE.replace("GPU_USER_STATUS=ok", "GPU_USER_STATUS=unavailable")).unwrap();
+        assert_eq!(retained.gpus[0].user_memory_status, UserUsageStatus::Partial);
+        assert_eq!(retained.gpus[0].user_memory.len(), 1);
     }
 
     #[test]

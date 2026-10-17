@@ -32,7 +32,12 @@ for (const status of ['partial', 'unavailable', 'ok', null] as const) {
           index, name: 'NVIDIA GeForce RTX 3090', uuid: `GPU-test-${index}`,
           utilization: 12, memoryUsedMib: 1024, memoryTotalMib: 24576, temperatureC: 30,
           powerDrawW: 20, powerLimitW: 350, fanPercent: 0,
-          userMemoryStatus: 'unavailable', userMemory: [], unmappedProcesses: 0,
+          userMemoryStatus: index === 2 && gpuQueryStatus === 'partial' ? 'unavailable' : 'ok',
+          userMemory: index === 0 ? [
+            { uid: '1000', name: 'alice', usedMib: 512, percent: 512 / 24576 * 100, processCount: 2 },
+            { uid: '1001', name: 'bob', usedMib: 256, percent: 256 / 24576 * 100, processCount: 1 },
+          ] : [],
+          unmappedProcesses: 0,
         })),
       }
       if (gpuQueryStatus !== null) snapshot.gpuQueryStatus = gpuQueryStatus
@@ -52,6 +57,29 @@ for (const status of ['partial', 'unavailable', 'ok', null] as const) {
       )
     } else {
       await expect(page.locator('.gpu-query-warning')).toHaveCount(0)
+    }
+    if (status !== 'unavailable') {
+      await page.locator('.gpu-card-vram-row').first().click()
+      const popup = page.locator('.user-usage-popup')
+      await expect(popup).toBeVisible()
+      await expect(popup.locator('.user-popup-status')).toHaveText('完整')
+      await expect(popup.locator('.user-usage-row', { hasText: 'alice' })).toContainText('0.5 GB · 2.1%')
+      await expect(popup.locator('.user-usage-row', { hasText: 'alice' })).toContainText('(x2)')
+      await expect(popup.locator('.user-popup-count')).toHaveText('2 位用户活跃')
+      await expect(popup.locator('.is-system')).toContainText('系统 / 未归属')
+      await page.evaluate(() => {
+        const app = (document.querySelector('#app') as any).__vue_app__
+        app.config.globalProperties.$pinia.state.value.monitor.snapshots['test-gpu'].gpus[0].userMemoryStatus = 'partial'
+      })
+      await expect(popup.locator('.user-popup-status')).toHaveText('部分可用')
+      await expect(popup).toContainText('alice')
+      if (status === 'partial') {
+        await popup.locator('button').first().click()
+        await page.locator('.gpu-card-vram-row').last().click()
+        await expect(popup.locator('.user-popup-status')).toHaveText('不可用')
+        await expect(popup.locator('.user-popup-count')).toHaveText('用户明细不可用')
+        await expect(popup.locator('.user-popup-empty')).toHaveText('用户占用数据采集失败，暂无法显示明细。')
+      }
     }
   })
 }

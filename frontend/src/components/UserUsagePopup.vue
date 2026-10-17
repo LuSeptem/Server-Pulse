@@ -62,7 +62,7 @@ const statusLabel = computed(() => {
     case 'ok':
       return '完整'
     case 'partial':
-      return '部分未映射'
+      return '部分可用'
     default:
       return '不可用'
   }
@@ -231,7 +231,7 @@ const footnote = computed(() => {
           {{ statusLabel }}
         </span>
         <span class="user-popup-count">
-          {{ target?.kind === 'disk'
+          {{ status === 'unavailable' ? '用户明细不可用' : target?.kind === 'disk'
             ? `已扫描 ${userRows.length} 位用户`
             : `${userRows.length} 位用户活跃` }}
         </span>
@@ -243,7 +243,7 @@ const footnote = computed(() => {
 
       <div class="user-popup-content">
         <div v-if="userRows.length === 0" class="user-popup-empty">
-          {{ target?.kind === 'disk' ? '暂无用户占用数据' : '暂无用户活跃进程' }}
+          {{ status === 'unavailable' ? '用户占用数据采集失败，暂无法显示明细。' : target?.kind === 'disk' ? '暂无用户占用数据' : '暂无用户活跃进程' }}
         </div>
 
         <div v-else class="user-rows-list">

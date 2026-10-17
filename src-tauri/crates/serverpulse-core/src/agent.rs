@@ -122,6 +122,7 @@ function reset_sample() {
   delete s_gu_uid_list
   delete s_gu_attr
   delete s_gu_unmap
+  delete s_gpu_device_status
   s_d_list = ""
   delete s_d_dev
   delete s_d_total
@@ -157,9 +158,11 @@ function finalize_sample() {
       if (s_g_plim_has[idx]) { m_g_plim_sum[idx] += s_g_plim[idx]; m_g_plim_cnt[idx]++ }
       if (s_g_fan_has[idx]) { m_g_fan_sum[idx] += s_g_fan[idx]; m_g_fan_cnt[idx]++ }
       uuid = s_g_uuid[idx]
-      if (uuid != "" && (s_gpu_status == "ok" || s_gpu_status == "partial")) {
+      gpu_status = (idx in s_gpu_device_status) ? s_gpu_device_status[idx] : s_gpu_status
+      if ((gpu_status == "ok" && s_gu_unmap[uuid] > 0) || (gpu_status == "unavailable" && s_gu_attr[uuid] > 0)) gpu_status = "partial"
+      if (uuid != "" && (gpu_status == "ok" || gpu_status == "partial")) {
         m_gu_valid[uuid]++
-        if (s_gpu_status == "partial") m_gu_partial[uuid] = 1
+        if (gpu_status == "partial") m_gu_partial[uuid] = 1
         m_gu_attr_sum[uuid] += s_gu_attr[uuid]
         m_gu_attr_cnt[uuid]++
         if (s_g_used_has[idx]) { m_gu_unattr_sum[uuid] += max0(s_g_used[idx] - s_gu_attr[uuid]); m_gu_unattr_cnt[uuid]++ }
@@ -475,6 +478,10 @@ BEGIN {
     next
   }
   if (key == "GPU_USER_STATUS") { if (value == "ok" || value == "partial" || value == "unavailable") s_gpu_status = value; next }
+  if (key ~ /^GPU_USER_STATUS_[0-9]+$/) {
+    if (value == "ok" || value == "partial" || value == "unavailable") s_gpu_device_status[substr(key, 17) + 0] = value
+    next
+  }
 }
 END {
   if (!s_started && m_total == 0) exit 0
