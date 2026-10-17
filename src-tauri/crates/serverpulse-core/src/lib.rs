@@ -313,6 +313,8 @@ pub struct MetricSnapshot {
     pub cpu_users: Vec<CpuUserUsage>,
     pub memory_user_status: UserUsageStatus,
     pub memory_users: Vec<MemoryUserUsage>,
+    #[serde(default)]
+    pub gpu_query_status: Option<UserUsageStatus>,
     pub gpus: Vec<GpuMetric>,
     pub disks: Vec<DiskMetric>,
 }
@@ -558,6 +560,7 @@ pub fn parse_metric_output(output: &str) -> Result<MetricSnapshot, ServerPulseEr
         cpu_users,
         memory_user_status: parse_status(values.get("MEMORY_USER_STATUS")),
         memory_users,
+        gpu_query_status: values.get("GPU_QUERY_STATUS").map(|_| parse_status(values.get("GPU_QUERY_STATUS"))),
         gpus,
         disks,
     })
@@ -882,6 +885,32 @@ GPU_USER_STATUS=ok"#;
     fn rejects_incomplete_output() {
         let error = parse_metric_output("CPU_PERCENT=1").expect_err("must reject");
         assert_eq!(error.code(), "invalid_metric_output");
+    }
+
+    #[test]
+    fn parses_partial_gpu_collection_without_dropping_healthy_cards() {
+        let output = SAMPLE.replace("GPUS_END", "GPUS_END\nGPU_QUERY_STATUS=partial");
+        let snapshot = parse_metric_output(&output).expect("partial GPU collection should parse");
+        assert_eq!(snapshot.gpu_query_status, Some(UserUsageStatus::Partial));
+        assert_eq!(snapshot.gpus.len(), 1);
+        assert_eq!(snapshot.gpus[0].utilization, Some(80.0));
+        assert_eq!(snapshot.cpu_percent, Some(42.5));
+    }
+
+    #[test]
+    fn parses_unavailable_gpu_collection_and_legacy_snapshots() {
+        let output = SAMPLE
+            .replace("0,NVIDIA RTX 3090,uuid-0,80,4000,24000,55,100,350,50", "")
+            .replace("GPUS_END", "GPUS_END\nGPU_QUERY_STATUS=unavailable");
+        let snapshot = parse_metric_output(&output).expect("CPU-only snapshot should parse");
+        assert_eq!(snapshot.gpu_query_status, Some(UserUsageStatus::Unavailable));
+        assert!(snapshot.gpus.is_empty());
+        let legacy = parse_metric_output(SAMPLE).expect("legacy snapshot should parse");
+        assert_eq!(legacy.gpu_query_status, None);
+        let mut json = serde_json::to_value(&legacy).unwrap();
+        json.as_object_mut().unwrap().remove("gpuQueryStatus");
+        let restored: MetricSnapshot = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.gpu_query_status, None);
     }
 
     #[test]

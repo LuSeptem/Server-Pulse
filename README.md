@@ -157,6 +157,8 @@ Each monitored server uses one long-lived SSH collection session. The remote sam
 - **MEM** shows the percentage plus used/total memory (total), for example `73.0% · 92.2 / 125.5 GB`.
 - Disk usage is available under **全部磁盘** below the GPU cards; the separate **DISK** summary box is removed.
 - **GPU** cards show the model, utilization, used/total VRAM, and temperature.
+  If a failed GPU causes `nvidia-smi`'s bulk query to fail, the sampler retries individually by the indices reported by `nvidia-smi -L` and keeps all readable GPUs. Index selection also avoids UUID lookup failures caused by another inaccessible device. The server card reports partial or unavailable GPU data instead of silently hiding a driver failure. An inaccessible GPU still requires server-side driver/hardware diagnosis.
+  GPU collection regression checks run with `sh tests/sampler-gpu.test.sh` (POSIX shell or Git Bash).
 
 Hover a CPU, MEM, or per-card VRAM value/progress bar to preview user attribution. Click to pin the panel; click the same metric again, click empty space, or press `Esc` to close it. Clicking another metric replaces the pinned panel. The first eight users by current usage are shown, with **System / unattributed** always listed separately at the end.
 

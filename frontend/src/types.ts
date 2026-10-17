@@ -91,6 +91,7 @@ export interface MetricSnapshot {
   cpuUsers: CpuUserUsage[]
   memoryUserStatus: UserUsageStatus
   memoryUsers: MemoryUserUsage[]
+  gpuQueryStatus?: UserUsageStatus | null
   gpus: GpuMetric[]
   disks: DiskMetric[]
 }

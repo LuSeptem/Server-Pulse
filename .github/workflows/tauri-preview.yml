@@ -27,6 +27,9 @@ jobs:
       - run: npm --prefix frontend run test:unit
       - run: npm --prefix frontend exec -- playwright install chromium
       - run: npm --prefix frontend run test:e2e
+      - name: GPU sampler regression tests
+        shell: bash
+        run: sh tests/sampler-gpu.test.sh
       - run: cargo test --workspace --manifest-path src-tauri/Cargo.toml
 
   windows-build:

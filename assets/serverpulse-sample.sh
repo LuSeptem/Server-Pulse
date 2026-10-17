@@ -164,12 +164,42 @@ echo "MEMORY_USER_SKIPPED=$process_skipped"
 
 echo "GPUS_BEGIN"
 gpu_query_status=unavailable
+gpu_metrics_status=
 if command -v nvidia-smi >/dev/null 2>&1; then
-  if [ -n "$metrics_tmp" ] && nvidia-smi --query-gpu=index,name,uuid,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed --format=csv,noheader,nounits > "$metrics_tmp/gpus" 2>/dev/null; then
+  gpu_metrics_status=unavailable
+  if [ -n "$metrics_tmp" ]; then
+    gpu_fields=index,name,uuid,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed
+    if nvidia-smi --query-gpu="$gpu_fields" --format=csv,noheader,nounits > "$metrics_tmp/gpus-raw" 2>/dev/null; then
+      gpu_metrics_status=ok
+    else
+      # A single inaccessible device can fail the entire query. -L still
+      # lists healthy devices on these drivers, even when it exits nonzero.
+      # Query indices individually: UUID lookup can itself enumerate all devices
+      # and fail on the same broken card. Keep valid rows from the bulk query.
+      gpu_metrics_status=partial
+      nvidia-smi -L > "$metrics_tmp/gpu-list" 2>/dev/null || true
+      sed -n 's/^GPU \([0-9][0-9]*\):.*/\1/p' \
+        "$metrics_tmp/gpu-list" > "$metrics_tmp/gpu-ids"
+      while IFS= read -r gpu_id; do
+        [ -n "$gpu_id" ] || continue
+        nvidia-smi -i "$gpu_id" --query-gpu="$gpu_fields" --format=csv,noheader,nounits \
+          >> "$metrics_tmp/gpus-raw" 2>/dev/null || true
+      done < "$metrics_tmp/gpu-ids"
+    fi
+    # Driver diagnostics may appear on stdout. Only emit metric rows, once
+    # per GPU index, so partial output and retries cannot duplicate cards.
+    awk -F, 'NF >= 10 && $1 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ {
+      index_key = $1 + 0;
+      if (!seen[index_key]++) print
+    }' "$metrics_tmp/gpus-raw" > "$metrics_tmp/gpus"
+    if [ "$gpu_metrics_status" != ok ] && [ ! -s "$metrics_tmp/gpus" ]; then
+      gpu_metrics_status=unavailable
+    fi
     cat "$metrics_tmp/gpus"
   fi
 fi
 echo "GPUS_END"
+[ -z "$gpu_metrics_status" ] || echo "GPU_QUERY_STATUS=$gpu_metrics_status"
 
 if [ -n "$metrics_tmp" ] && [ -f "$metrics_tmp/gpus" ]; then
   : > "$metrics_tmp/gpu-users"

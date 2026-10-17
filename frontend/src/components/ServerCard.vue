@@ -280,6 +280,13 @@ function handleDiskClick(disk: DiskMetric, event: MouseEvent) {
       </div>
     </div>
 
+    <p v-if="snapshot?.gpuQueryStatus === 'partial'" class="error-text gpu-query-warning" role="status">
+      部分 GPU 数据不可用；其余 GPU 继续显示。请检查服务器上的 nvidia-smi 和 NVIDIA 驱动。
+    </p>
+    <p v-else-if="snapshot?.gpuQueryStatus === 'unavailable'" class="error-text gpu-query-warning" role="status">
+      GPU 数据采集失败。请检查服务器上的 nvidia-smi 和 NVIDIA 驱动。
+    </p>
+
     <!-- GPU Mini Cards Grid (Multi-column responsive) -->
     <div v-if="snapshot && snapshot.gpus && snapshot.gpus.length" class="gpu-cards-grid">
       <div v-for="gpu in snapshot.gpus" :key="gpu.index" class="gpu-mini-card">
