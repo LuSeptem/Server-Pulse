@@ -6,7 +6,7 @@ Server Pulse is a native Windows desktop widget for watching GPU, VRAM, CPU, and
 
 The repository seed configuration contains two SSH aliases, `3090` and `a6000`. Existing key-based SSH and `ssh-agent` setups continue to work, and the server manager can also use an ordinary account password.
 
-Current release: **v2.1.5** · [Bilingual release notes](CHANGELOG.md)
+Current release: **v2.1.6** · [Bilingual release notes](CHANGELOG.md)
 
 ## Tauri 2.0
 
@@ -83,6 +83,7 @@ The images in `demo/` are sanitized examples; host addresses and usernames are b
   npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci
   ```
   Windows builds produce the app binary used as `ServerPulse-Portable.exe` only (`bundle.targets` excludes `nsis`).
+  The **Server Pulse Tauri Preview** GitHub Actions workflow can also be dispatched with `windows_only=true`; its `server-pulse-windows-x64` artifact contains the portable executable and a verified SHA-256 checksum.
 
 Before the first run, check existing passwordless SSH aliases:
 

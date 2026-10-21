@@ -6,7 +6,9 @@ Server Pulse 是一个 Windows 原生桌面浮窗，用来实时查看 SSH 服�
 
 仓库种子配置默认提供 `3090` 和 `a6000` 两个 SSH 别名。已有的密钥免密登录和 `ssh-agent` 配置可以继续使用，也可以在服务器管理窗口中使用普通账户密码。
 
-当前版本：**v2.1.5** · [中英双语更新说明](CHANGELOG.md)
+当前版本：**v2.1.6** · [中英双语更新说明](CHANGELOG.md)
+
+可手动运行 GitHub Actions 的 **Server Pulse Tauri Preview** 工作流并设置 `windows_only=true`；`server-pulse-windows-x64` 产物包含便携版 exe 及经过核对的 SHA-256 校验文件。
 
 ## Tauri 2.0
 

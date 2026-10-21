@@ -3,6 +3,11 @@ name: Server Pulse Tauri Preview
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Run Windows validation and portable build only
+        type: boolean
+        default: false
   push:
     tags:
       - "tauri-v*"
@@ -42,15 +47,29 @@ jobs:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci --prefix frontend
-      - uses: tauri-apps/tauri-action@v1
+      - name: Build Windows portable executable
+        run: npm --prefix frontend exec -- tauri build --config src-tauri/tauri.conf.json --ci --no-bundle
+      - name: Stage and verify portable executable
+        shell: pwsh
+        run: |
+          $buildExe = 'src-tauri/target/release/serverpulse-tauri.exe'
+          Copy-Item -LiteralPath $buildExe -Destination 'ServerPulse-Portable.exe'
+          $buildHash = (Get-FileHash -LiteralPath $buildExe -Algorithm SHA256).Hash
+          $portableHash = (Get-FileHash -LiteralPath 'ServerPulse-Portable.exe' -Algorithm SHA256).Hash
+          if ($buildHash -ne $portableHash) { throw 'Portable executable hash mismatch' }
+          "$portableHash  ServerPulse-Portable.exe" | Set-Content -LiteralPath 'ServerPulse-Portable.exe.sha256' -Encoding ascii
+          Write-Output "Verified portable SHA256: $portableHash"
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/tauri-v')
         with:
-          projectPath: .
-          tauriScript: npm --prefix frontend exec -- tauri
-          args: --config src-tauri/tauri.conf.json --ci
-          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/tauri-v') }}
-          workflowArtifactNamePattern: server-pulse-windows-x64
+          name: server-pulse-windows-x64
+          path: |
+            ServerPulse-Portable.exe
+            ServerPulse-Portable.exe.sha256
+          if-no-files-found: error
 
   macos-build:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_only
     name: macOS ${{ matrix.arch }} Tauri build
     runs-on: ${{ matrix.runner }}
     strategy:

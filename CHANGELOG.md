@@ -1,5 +1,55 @@
 # Changelog
 
+## v2.1.6 — 2026-10-21
+
+### 中文
+
+#### 新增
+
+- GPU 数据部分不可用或采集失败时，在服务器卡片上显示明确提示。
+- 增加 GPU 采集、用户显存明细、服务端历史汇总及明细弹窗的回归测试。
+
+#### 变更
+
+- GPU 指标和进程查询失败时，按设备编号逐卡重试，保留正常设备的数据，并避免重复计算显存和进程数。
+- 实时监控和服务端历史分别记录每张 GPU 的用户显存采集状态。
+- 磁盘使用率及已用/总容量统一保留两位小数。
+- Windows Release 仅提供 `ServerPulse-Portable.exe` 便携版，不再提供 NSIS 安装包。
+- Windows CI 直接构建并上传便携版及 SHA-256 校验文件，支持手动仅运行 Windows 验证与构建。
+
+#### 修复
+
+- 修复一张 GPU 出现设备句柄错误时，整台服务器的 GPU 卡片全部消失的问题。
+- 修复能看到显存总占用、但用户明细弹窗显示“不可用”的问题；正常 GPU 现在继续显示用户名、显存占用和进程数。
+- 修复采集失败被误显示为“0 位用户活跃”或“暂无用户活跃进程”的问题，改为明确提示用户明细不可用。
+- 修复单卡查询失败或进程无法映射用户时，影响其他正常 GPU 明细状态及历史汇总的问题。
+
+故障 GPU 本身仍需在服务器端排查驱动、PCIe 链路或硬件；本次更新使正常 GPU 的监控和用户明细能够继续工作。
+
+### English
+
+#### Added
+
+- Explicit server-card notices when GPU data is partially available or collection fails.
+- Regression coverage for GPU collection, per-user VRAM details, server-side history aggregation, and detail popups.
+
+#### Changed
+
+- Failed GPU metric and process queries now retry by device index, preserving readable devices without double-counting VRAM or processes.
+- Live monitoring and server-side history track per-user VRAM collection status independently for each GPU.
+- Disk usage percentages and used/total capacity now consistently display two decimal places.
+- Windows Releases provide only the `ServerPulse-Portable.exe` portable executable; the NSIS installer is no longer included.
+- Windows CI builds and uploads the portable executable with a SHA-256 checksum and supports manually running Windows validation and builds only.
+
+#### Fixed
+
+- Fixed all GPU cards disappearing from a server when one GPU reports a device-handle error.
+- Fixed occupied VRAM being visible while the per-user popup reported unavailable data. Readable GPUs now retain usernames, VRAM usage, and process counts.
+- Fixed collection failures appearing as zero active users or no active processes. The popup now explicitly reports unavailable user details.
+- Fixed a failed device query or an unmapped process affecting other GPUs' attribution status and history aggregation.
+
+The failed GPU still requires server-side driver, PCIe-link, or hardware diagnosis. This update allows monitoring and user details for readable GPUs to continue working.
+
 ## Packaging — 2026-09-05 (after v2.1.5)
 
 ### 中文
