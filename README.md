@@ -160,6 +160,8 @@ Each monitored server uses one long-lived SSH collection session. The remote sam
 - **GPU** cards show the model, utilization, used/total VRAM, and temperature.
   If a failed GPU causes `nvidia-smi`'s bulk query to fail, the sampler retries individually by the indices reported by `nvidia-smi -L` and keeps all readable GPUs. Index selection also avoids UUID lookup failures caused by another inaccessible device. The server card reports partial or unavailable GPU data instead of silently hiding a driver failure. An inaccessible GPU still requires server-side driver/hardware diagnosis.
   GPU collection regression checks run with `sh tests/sampler-gpu.test.sh` (POSIX shell or Git Bash).
+  Temporary-storage regression checks run with `sh tests/sampler-temp.test.sh`; GPU metrics remain available when temporary files cannot be created, and attribution uses a writable fallback directory when available.
+  The sampler tries the configured `TMPDIR`, `/tmp`, then `/dev/shm`, checking that the selected directory accepts file writes. GPU metric queries use memory rather than temporary files; if every temporary location is unavailable, GPU cards still update while user attribution is marked unavailable. Temporary workspaces are private and removed after each sample. This fallback does not free space on a full server filesystem.
   Per-user VRAM details also retry process queries per readable GPU when a bulk query fails; regression checks cover user totals, process counts, empty devices, and failures isolated to one device.
   Live snapshots and server-side history use independent attribution status per GPU. Unavailable detail popups report a collection failure instead of implying that no user is using the GPU.
 

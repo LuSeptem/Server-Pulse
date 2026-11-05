@@ -61,7 +61,26 @@ user_name() {
   fi
 }
 
-metrics_tmp=$(mktemp -d "${TMPDIR:-/tmp}/serverpulse.XXXXXX" 2>/dev/null || true)
+create_metrics_tmp() {
+  metrics_tmp_previous_root=
+  for metrics_tmp_root in "${TMPDIR:-/tmp}" /tmp /dev/shm; do
+    [ "$metrics_tmp_root" != "$metrics_tmp_previous_root" ] || continue
+    metrics_tmp_previous_root=$metrics_tmp_root
+    metrics_tmp_candidate=$(mktemp -d "$metrics_tmp_root/serverpulse.XXXXXX" 2>/dev/null) || continue
+    [ -n "$metrics_tmp_candidate" ] && [ -d "$metrics_tmp_candidate" ] || continue
+    # Directory creation alone does not guarantee that files can be written.
+    if (printf 'serverpulse\n' > "$metrics_tmp_candidate/.write-test") 2>/dev/null; then
+      rm -f "$metrics_tmp_candidate/.write-test" 2>/dev/null
+      printf '%s\n' "$metrics_tmp_candidate"
+      return 0
+    fi
+    rm -f "$metrics_tmp_candidate/.write-test" 2>/dev/null || true
+    rmdir "$metrics_tmp_candidate" 2>/dev/null || true
+  done
+  return 1
+}
+
+metrics_tmp=$(create_metrics_tmp || true)
 if [ -n "$metrics_tmp" ]; then
   trap 'rm -rf "$metrics_tmp"' EXIT HUP INT TERM
 fi
@@ -166,36 +185,37 @@ echo "GPUS_BEGIN"
 gpu_query_status=unavailable
 gpu_metrics_status=
 if command -v nvidia-smi >/dev/null 2>&1; then
-  gpu_metrics_status=unavailable
+  gpu_fields=index,name,uuid,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed
+  # GPU metric output is small. Keep it in memory so a full filesystem cannot
+  # hide otherwise readable GPUs, even when no attribution workspace is usable.
+  if gpu_metrics_raw=$(nvidia-smi --query-gpu="$gpu_fields" --format=csv,noheader,nounits 2>/dev/null); then
+    gpu_metrics_status=ok
+  else
+    # Numeric selection avoids UUID enumeration failing on another broken GPU.
+    gpu_metrics_status=partial
+    gpu_inventory=$(nvidia-smi -L 2>/dev/null || true)
+    gpu_ids=$(printf '%s\n' "$gpu_inventory" | sed -n 's/^GPU \([0-9][0-9]*\):.*/\1/p')
+    for gpu_id in $gpu_ids; do
+      gpu_metric_device_raw=$(nvidia-smi -i "$gpu_id" --query-gpu="$gpu_fields" --format=csv,noheader,nounits 2>/dev/null || true)
+      gpu_metrics_raw="$gpu_metrics_raw
+$gpu_metric_device_raw"
+    done
+  fi
+  # Exclude stdout diagnostics and duplicate indices from bulk/individual retries.
+  gpu_metric_rows=$(printf '%s\n' "$gpu_metrics_raw" | awk -F, 'NF >= 10 && $1 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ {
+    index_key = $1 + 0;
+    if (!seen[index_key]++) print
+  }')
+  if [ "$gpu_metrics_status" != ok ] && [ -z "$gpu_metric_rows" ]; then
+    gpu_metrics_status=unavailable
+  fi
+  printf '%s\n' "$gpu_metric_rows"
   if [ -n "$metrics_tmp" ]; then
-    gpu_fields=index,name,uuid,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed
-    if nvidia-smi --query-gpu="$gpu_fields" --format=csv,noheader,nounits > "$metrics_tmp/gpus-raw" 2>/dev/null; then
-      gpu_metrics_status=ok
+    (if [ -n "$gpu_metric_rows" ]; then
+      printf '%s\n' "$gpu_metric_rows" > "$metrics_tmp/gpus"
     else
-      # A single inaccessible device can fail the entire query. -L still
-      # lists healthy devices on these drivers, even when it exits nonzero.
-      # Query indices individually: UUID lookup can itself enumerate all devices
-      # and fail on the same broken card. Keep valid rows from the bulk query.
-      gpu_metrics_status=partial
-      nvidia-smi -L > "$metrics_tmp/gpu-list" 2>/dev/null || true
-      sed -n 's/^GPU \([0-9][0-9]*\):.*/\1/p' \
-        "$metrics_tmp/gpu-list" > "$metrics_tmp/gpu-ids"
-      while IFS= read -r gpu_id; do
-        [ -n "$gpu_id" ] || continue
-        nvidia-smi -i "$gpu_id" --query-gpu="$gpu_fields" --format=csv,noheader,nounits \
-          >> "$metrics_tmp/gpus-raw" 2>/dev/null || true
-      done < "$metrics_tmp/gpu-ids"
-    fi
-    # Driver diagnostics may appear on stdout. Only emit metric rows, once
-    # per GPU index, so partial output and retries cannot duplicate cards.
-    awk -F, 'NF >= 10 && $1 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ {
-      index_key = $1 + 0;
-      if (!seen[index_key]++) print
-    }' "$metrics_tmp/gpus-raw" > "$metrics_tmp/gpus"
-    if [ "$gpu_metrics_status" != ok ] && [ ! -s "$metrics_tmp/gpus" ]; then
-      gpu_metrics_status=unavailable
-    fi
-    cat "$metrics_tmp/gpus"
+      : > "$metrics_tmp/gpus"
+    fi) 2>/dev/null || true
   fi
 fi
 echo "GPUS_END"

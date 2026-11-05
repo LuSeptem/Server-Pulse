@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### 中文
+
+- 修复服务器磁盘已满、无法创建采样临时目录时，正常 GPU 卡片全部消失的问题。采样器会尝试可写的临时目录，GPU 基础指标不再依赖临时文件；存在可写目录时，用户占用明细也能继续采集。
+
+### English
+
+- Fixed readable GPU cards disappearing when a full server filesystem prevents temporary workspace creation. The sampler tries writable fallback directories and collects basic GPU metrics without temporary files; user attribution continues when a writable workspace is available.
+
 ## v2.1.6 — 2026-10-21
 
 ### 中文
