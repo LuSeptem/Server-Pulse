@@ -473,15 +473,22 @@ fn host_field_matches(field: &str, names: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn temp_paths() -> (PathBuf, PathBuf) {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("serverpulse-known-hosts-{suffix}"));
-        fs::create_dir_all(&root).expect("temp root");
+        let root = std::env::temp_dir().join(format!(
+            "serverpulse-known-hosts-{}-{suffix}-{}",
+            std::process::id(),
+            TEMP_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("unique temp root");
         (root.join("app-known_hosts"), root.join("user-known_hosts"))
     }
 
